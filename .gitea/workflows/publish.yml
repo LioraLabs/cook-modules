@@ -1,0 +1,85 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - "*-*.*.*-*"
+
+jobs:
+  publish:
+    runs-on: native
+    steps:
+      - name: Tag-format guard
+        id: parse
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-}"
+          if [[ -z "$TAG" ]]; then
+            echo "ERROR: no GITHUB_REF_NAME present (expected on tag push)" >&2
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^([a-z_]+)-([0-9]+\.[0-9]+\.[0-9]+-[0-9]+)$ ]]; then
+            echo "ERROR: tag '$TAG' does not match <module>-<MAJOR>.<MINOR>.<PATCH>-<rockrev>" >&2
+            exit 1
+          fi
+          MODULE="${BASH_REMATCH[1]}"
+          VERSION="${BASH_REMATCH[2]}"
+          echo "module=$MODULE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Parsed: module=$MODULE version=$VERSION"
+
+      - name: Checkout cook-modules at the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          path: cook-modules
+
+      - name: Pack the rock
+        working-directory: cook-modules/${{ steps.parse.outputs.module }}
+        run: |
+          set -euo pipefail
+          MODULE="${{ steps.parse.outputs.module }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+          luarocks pack "${MODULE}-${VERSION}.rockspec"
+          ls -la "${MODULE}-${VERSION}.src.rock"
+
+      - name: Checkout cook-rocks-index
+        uses: actions/checkout@v4
+        with:
+          repository: alex/cook-rocks-index
+          token: ${{ secrets.GITEA_INDEX_TOKEN }}
+          path: cook-rocks-index
+
+      - name: Stage artifacts + regenerate manifest
+        working-directory: cook-rocks-index
+        run: |
+          set -euo pipefail
+          MODULE="${{ steps.parse.outputs.module }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+          cp "../cook-modules/${MODULE}/${MODULE}-${VERSION}.rockspec" .
+          cp "../cook-modules/${MODULE}/${MODULE}-${VERSION}.src.rock" .
+          luarocks-admin make-manifest .
+          ls -la "${MODULE}-${VERSION}".*
+
+      - name: Commit and push to Gitea (idempotent)
+        working-directory: cook-rocks-index
+        run: |
+          set -euo pipefail
+          MODULE="${{ steps.parse.outputs.module }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+          git config user.email "ci@lioralabs.dev"
+          git config user.name "cook-modules CI"
+          git add manifest manifest-5.* "${MODULE}-${VERSION}".rockspec "${MODULE}-${VERSION}".src.rock
+          if git diff --quiet --staged; then
+            echo "No changes to commit (idempotent re-run)"
+          else
+            git commit -m "publish: ${MODULE}-${VERSION}"
+            git push origin main
+          fi
+
+      - name: Force-push to GitHub mirror (Cloudflare Pages source)
+        working-directory: cook-rocks-index
+        run: |
+          set -euo pipefail
+          git remote add github "https://x-access-token:${{ secrets.GITHUB_MIRROR_TOKEN }}@github.com/lioralabs/cook-rocks-index.git" || true
+          git push --force github main
