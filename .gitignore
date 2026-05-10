@@ -1,0 +1,6 @@
+# luarocks pack outputs (regenerated per release; not source of truth)
+*.src.rock
+*.tar.gz
+
+# common
+.DS_Store
