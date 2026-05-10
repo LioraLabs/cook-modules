@@ -98,13 +98,13 @@ jobs:
           MIRROR_TOKEN: ${{ secrets.ROCKS_MIRROR_TOKEN }}
         run: |
           set -euo pipefail
-          # GitHub fine-grained PAT — authenticate via URL-embedded basic auth
-          # with username "x-access-token" (canonical convention for PATs over
-          # HTTPS). Earlier attempts using only an Authorization header tripped
-          # GitHub's "Duplicate header: Authorization" guard because the host's
-          # default git credential helper was also injecting one. Disabling all
-          # credential helpers for this single invocation eliminates that
-          # collision.
+          # Fine-grained PAT auth via URL-scoped Authorization header — same
+          # convention the Gitea clone steps use. `credential.helper=` is
+          # mandatory: the runner's default helper otherwise injects a second
+          # Authorization for github.com, which GitHub rejects with HTTP 400
+          # "Duplicate header: Authorization" (cf. SHI-193).
           git remote remove github 2>/dev/null || true
-          git remote add github "https://x-access-token:${MIRROR_TOKEN}@github.com/LioraLabs/cook-rocks-index.git"
-          git -c "credential.helper=" push --force github main
+          git remote add github "https://github.com/LioraLabs/cook-rocks-index.git"
+          git -c "credential.helper=" \
+              -c "http.https://github.com/.extraHeader=Authorization: Bearer ${MIRROR_TOKEN}" \
+              push --force github main
