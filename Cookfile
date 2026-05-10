@@ -1,27 +1,41 @@
 # Cookfile for cook-modules — the source-of-truth monorepo for blessed
 # Cook modules published to rocks.usecook.com.
 #
-# Quick reference (v1, manual):
-#   cook pack <module>             - run luarocks pack against the live tag for one module
-#   cook publish-to-index <module> - copy artifacts into ~/dev/cook-rocks/ + regen manifest
-#   cook tag-module <module>=<ver> - shortcut to git tag <module>-<ver>
+# Publishing a new revision (canonical flow, run from this directory):
+#   1. Edit/add cook_<name>/cook_<name>-<X.Y.Z>-<R>.rockspec on a clean main
+#   2. git commit
+#   3. MODULE=cook_<name> VERSION=<X.Y.Z>-<R> cook publish
 #
-# Phase 4 will wire these into CI on tag push.
+# `cook publish` runs the whole pipeline locally — tag HEAD, push to Gitea
+# (origin) and GitHub (github) so luarocks pack can fetch the source.url
+# tag, pack the rock, stage it in ~/dev/cook-rocks, commit there, and
+# invoke that repo's own `cook publish` which pushes to Gitea and force-
+# pushes the GitHub orphan snapshot Cloudflare Pages serves.
+#
+# `pack` and `publish-to-index` are piecewise helpers for debugging; both
+# require MODULE and VERSION.
 
-# Pack one module's rockspec into a .src.rock. Requires the module's tag
-# to be pushed to GitHub (luarocks fetches source via git+https).
 chore pack
-    > local mod = cook.env.MODULE or error("set MODULE=<name>")
-    > local cd = "cd " .. mod
-    > local cmd = cd .. " && luarocks pack " .. mod .. "-*.rockspec"
-    > cook.exec(cmd)
+    : "${MODULE:?set MODULE=<name>}" "${VERSION:?set VERSION=<x.y.z-rockrev>}"
+    cd "${MODULE}" && luarocks pack "${MODULE}-${VERSION}.rockspec"
 
-# Copy a module's rockspec + .src.rock into ~/dev/cook-rocks/, regenerate
-# the manifest, and stage them for commit. Does not push.
 chore publish-to-index
-    > local mod = cook.env.MODULE or error("set MODULE=<name>")
-    > local index = os.getenv("HOME") .. "/dev/cook-rocks"
-    > cook.exec("cp " .. mod .. "/" .. mod .. "-*.rockspec " .. index .. "/")
-    > cook.exec("cp " .. mod .. "/" .. mod .. "-*.src.rock " .. index .. "/")
-    > cook.exec("cd " .. index .. " && luarocks-admin make-manifest .")
-    > print("Staged in " .. index .. " — review with `git -C " .. index .. " status` then `cook publish` from there.")
+    : "${MODULE:?set MODULE=<name>}" "${VERSION:?set VERSION=<x.y.z-rockrev>}"
+    cp "${MODULE}/${MODULE}-${VERSION}.rockspec" "${HOME}/dev/cook-rocks/"
+    cp "${MODULE}/${MODULE}-${VERSION}.src.rock" "${HOME}/dev/cook-rocks/"
+    cd "${HOME}/dev/cook-rocks" && luarocks-admin make-manifest .
+    echo "Staged in ${HOME}/dev/cook-rocks — review, then run 'cook publish' from there."
+
+chore publish
+    : "${MODULE:?set MODULE=<name>}" "${VERSION:?set VERSION=<x.y.z-rockrev>}"
+    @test -f "${MODULE}/${MODULE}-${VERSION}.rockspec"
+    git tag -a "${MODULE}-${VERSION}" -m "${MODULE}-${VERSION}"
+    git push github main "${MODULE}-${VERSION}"
+    git push origin main "${MODULE}-${VERSION}"
+    cd "${MODULE}" && luarocks pack "${MODULE}-${VERSION}.rockspec"
+    cp "${MODULE}/${MODULE}-${VERSION}.rockspec" "${HOME}/dev/cook-rocks/"
+    cp "${MODULE}/${MODULE}-${VERSION}.src.rock" "${HOME}/dev/cook-rocks/"
+    cd "${HOME}/dev/cook-rocks" && luarocks-admin make-manifest .
+    cd "${HOME}/dev/cook-rocks" && git add manifest manifest-5.* "${MODULE}-${VERSION}.rockspec" "${MODULE}-${VERSION}.src.rock"
+    cd "${HOME}/dev/cook-rocks" && git commit -m "publish: ${MODULE}-${VERSION}"
+    cd "${HOME}/dev/cook-rocks" && cook publish

@@ -2,5 +2,8 @@
 *.src.rock
 *.tar.gz
 
+# cook build cache
+.cook/
+
 # common
 .DS_Store
