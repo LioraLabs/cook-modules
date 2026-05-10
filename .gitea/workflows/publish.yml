@@ -34,19 +34,19 @@ jobs:
 
       - name: Checkout cook-modules at the tag
         env:
-          # Auto-provided by Gitea per job; scoped to the running repo.
-          JOB_TOKEN: ${{ github.token }}
+          INDEX_TOKEN: ${{ secrets.ROCKS_INDEX_TOKEN }}
         run: |
           set -euo pipefail
           # Plain git clone — actions/checkout would need node on the runner.
-          # Gitea exposes the job token via github.token; embed as basic auth.
-          # ${GITHUB_SERVER_URL} → e.g. http://gilberthouse.story-pike.ts.net:3000
+          # ROCKS_INDEX_TOKEN is alex's user token; covers both cook-modules
+          # and cook-rocks-index reads.
+          # ${GITHUB_SERVER_URL} → e.g. http://localhost:3000 (inside runner)
           AUTHED_URL="${GITHUB_SERVER_URL%/}"
-          AUTHED_URL="${AUTHED_URL/http:\/\//http://x-access-token:${JOB_TOKEN}@}"
-          AUTHED_URL="${AUTHED_URL/https:\/\//https://x-access-token:${JOB_TOKEN}@}"
+          AUTHED_URL="${AUTHED_URL/http:\/\//http://alex:${INDEX_TOKEN}@}"
+          AUTHED_URL="${AUTHED_URL/https:\/\//https://alex:${INDEX_TOKEN}@}"
           git clone --depth 1 --branch "${GITHUB_REF_NAME}" \
               "${AUTHED_URL}/${GITHUB_REPOSITORY}.git" cook-modules 2>&1 \
-              | sed "s|${JOB_TOKEN}|***|g"
+              | sed "s|${INDEX_TOKEN}|***|g"
           ls -la cook-modules/
 
       - name: Pack the rock
@@ -63,11 +63,9 @@ jobs:
           INDEX_TOKEN: ${{ secrets.ROCKS_INDEX_TOKEN }}
         run: |
           set -euo pipefail
-          # Use the Gitea index token as basic-auth password.
-          # ${GITHUB_SERVER_URL} → e.g. http://gilberthouse.story-pike.ts.net:3000
           AUTHED_URL="${GITHUB_SERVER_URL%/}"
-          AUTHED_URL="${AUTHED_URL/http:\/\//http://x-access-token:${INDEX_TOKEN}@}"
-          AUTHED_URL="${AUTHED_URL/https:\/\//https://x-access-token:${INDEX_TOKEN}@}"
+          AUTHED_URL="${AUTHED_URL/http:\/\//http://alex:${INDEX_TOKEN}@}"
+          AUTHED_URL="${AUTHED_URL/https:\/\//https://alex:${INDEX_TOKEN}@}"
           git clone "${AUTHED_URL}/alex/cook-rocks-index.git" cook-rocks-index 2>&1 \
               | sed "s|${INDEX_TOKEN}|***|g"
           ls -la cook-rocks-index/ | head
