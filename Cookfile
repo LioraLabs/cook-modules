@@ -36,6 +36,6 @@ chore publish
     cp "${MODULE}/${MODULE}-${VERSION}.rockspec" "${HOME}/dev/cook-rocks/"
     cp "${MODULE}/${MODULE}-${VERSION}.src.rock" "${HOME}/dev/cook-rocks/"
     cd "${HOME}/dev/cook-rocks" && luarocks-admin make-manifest .
-    cd "${HOME}/dev/cook-rocks" && git add manifest manifest-5.* "${MODULE}-${VERSION}.rockspec" "${MODULE}-${VERSION}.src.rock"
+    cd "${HOME}/dev/cook-rocks" && git add manifest manifest-5.* index.html "${MODULE}-${VERSION}.rockspec" "${MODULE}-${VERSION}.src.rock"
     cd "${HOME}/dev/cook-rocks" && git commit -m "publish: ${MODULE}-${VERSION}"
     cd "${HOME}/dev/cook-rocks" && cook publish
