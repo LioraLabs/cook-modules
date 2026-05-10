@@ -3,7 +3,6 @@ version = "0.1.0-1"
 source = {
    url = "git+https://github.com/lioralabs/cook-modules.git",
    tag = "cook_smoke-0.1.0-1",
-   dir = "cook_smoke",
 }
 description = {
    summary = "Phase 3 acceptance fixture for cook modules pipeline",
@@ -22,6 +21,6 @@ dependencies = {
 build = {
    type = "builtin",
    modules = {
-      cook_smoke = "cook_smoke.lua",
+      cook_smoke = "cook_smoke/cook_smoke.lua",
    },
 }
