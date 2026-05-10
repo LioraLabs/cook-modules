@@ -33,10 +33,12 @@ jobs:
           echo "Parsed: module=$MODULE version=$VERSION"
 
       - name: Checkout cook-modules at the tag
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
-          path: cook-modules
+        run: |
+          set -euo pipefail
+          # Plain git clone — actions/checkout would need node on the runner.
+          git clone --depth 1 --branch "${GITHUB_REF_NAME}" \
+              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" cook-modules
+          ls -la cook-modules/
 
       - name: Pack the rock
         working-directory: cook-modules/${{ steps.parse.outputs.module }}
@@ -48,11 +50,14 @@ jobs:
           ls -la "${MODULE}-${VERSION}.src.rock"
 
       - name: Checkout cook-rocks-index
-        uses: actions/checkout@v4
-        with:
-          repository: alex/cook-rocks-index
-          token: ${{ secrets.ROCKS_INDEX_TOKEN }}
-          path: cook-rocks-index
+        env:
+          INDEX_TOKEN: ${{ secrets.ROCKS_INDEX_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Use the Gitea token as the basic-auth password for the clone.
+          git clone "http://alex:${INDEX_TOKEN}@${GITHUB_SERVER_URL#http://}/alex/cook-rocks-index.git" cook-rocks-index 2>&1 \
+              | sed "s|${INDEX_TOKEN}|***|g"
+          ls -la cook-rocks-index/ | head
 
       - name: Stage artifacts + regenerate manifest
         working-directory: cook-rocks-index
@@ -83,7 +88,10 @@ jobs:
 
       - name: Force-push to GitHub mirror (Cloudflare Pages source)
         working-directory: cook-rocks-index
+        env:
+          MIRROR_TOKEN: ${{ secrets.ROCKS_MIRROR_TOKEN }}
         run: |
           set -euo pipefail
-          git remote add github "https://x-access-token:${{ secrets.ROCKS_MIRROR_TOKEN }}@github.com/lioralabs/cook-rocks-index.git" || true
-          git push --force github main
+          git remote remove github 2>/dev/null || true
+          git remote add github "https://x-access-token:${MIRROR_TOKEN}@github.com/lioralabs/cook-rocks-index.git"
+          git push --force github main 2>&1 | sed "s|${MIRROR_TOKEN}|***|g"
