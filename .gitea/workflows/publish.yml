@@ -9,9 +9,10 @@ jobs:
   publish:
     runs-on: native
     env:
-      # NAS act_runner runs under adminadmin; Entware tools live in /opt/bin
-      # and luarocks is at $HOME/.local/bin (built per SHI-176 Phase 4 D.2).
-      PATH: /share/homes/adminadmin/.local/bin:/opt/bin:/opt/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+      # NAS act_runner runs under adminadmin; Entware tools live in /opt/bin,
+      # luarocks at $HOME/.local/bin (built per SHI-176 Phase 4 D.2), and
+      # QNAP ships Info-ZIP zip at /usr/local/sbin (needed by luarocks pack).
+      PATH: /share/homes/adminadmin/.local/bin:/opt/bin:/opt/sbin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
     steps:
       - name: Tag-format guard
         id: parse
