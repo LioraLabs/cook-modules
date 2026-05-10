@@ -38,15 +38,10 @@ jobs:
         run: |
           set -euo pipefail
           # Plain git clone — actions/checkout would need node on the runner.
-          # ROCKS_INDEX_TOKEN is alex's user token; covers both cook-modules
-          # and cook-rocks-index reads.
-          # ${GITHUB_SERVER_URL} → e.g. http://localhost:3000 (inside runner)
-          AUTHED_URL="${GITHUB_SERVER_URL%/}"
-          AUTHED_URL="${AUTHED_URL/http:\/\//http://alex:${INDEX_TOKEN}@}"
-          AUTHED_URL="${AUTHED_URL/https:\/\//https://alex:${INDEX_TOKEN}@}"
-          git clone --depth 1 --branch "${GITHUB_REF_NAME}" \
-              "${AUTHED_URL}/${GITHUB_REPOSITORY}.git" cook-modules 2>&1 \
-              | sed "s|${INDEX_TOKEN}|***|g"
+          # Use Gitea API token via Authorization header (works with read scope).
+          git -c "http.extraHeader=Authorization: token ${INDEX_TOKEN}" \
+              clone --depth 1 --branch "${GITHUB_REF_NAME}" \
+              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" cook-modules
           ls -la cook-modules/
 
       - name: Pack the rock
@@ -63,11 +58,10 @@ jobs:
           INDEX_TOKEN: ${{ secrets.ROCKS_INDEX_TOKEN }}
         run: |
           set -euo pipefail
-          AUTHED_URL="${GITHUB_SERVER_URL%/}"
-          AUTHED_URL="${AUTHED_URL/http:\/\//http://alex:${INDEX_TOKEN}@}"
-          AUTHED_URL="${AUTHED_URL/https:\/\//https://alex:${INDEX_TOKEN}@}"
-          git clone "${AUTHED_URL}/alex/cook-rocks-index.git" cook-rocks-index 2>&1 \
-              | sed "s|${INDEX_TOKEN}|***|g"
+          git -c "http.extraHeader=Authorization: token ${INDEX_TOKEN}" \
+              clone "${GITHUB_SERVER_URL}/alex/cook-rocks-index.git" cook-rocks-index
+          # Cache the auth header in the cloned repo so subsequent push works.
+          git -C cook-rocks-index config "http.extraHeader" "Authorization: token ${INDEX_TOKEN}"
           ls -la cook-rocks-index/ | head
 
       - name: Stage artifacts + regenerate manifest
