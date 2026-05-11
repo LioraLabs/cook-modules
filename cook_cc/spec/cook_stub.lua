@@ -36,9 +36,7 @@ function M.install()
         add_unit = function(u) added_units[#added_units + 1] = u end,
         sh = function(cmd)
             for prefix, fn in pairs(sh_handlers) do
-                if cmd:sub(1, #prefix) == cmd:sub(1, #prefix) and cmd:sub(1, #prefix) == prefix then
-                    return fn(cmd)
-                end
+                if cmd:sub(1, #prefix) == prefix then return fn(cmd) end
             end
             error("[cook_stub] unhandled sh: " .. cmd)
         end,
