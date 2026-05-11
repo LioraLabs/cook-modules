@@ -50,6 +50,23 @@ describe("cc.bin", function()
         assert.has_error(function() targets.bin("app", {}) end,
             "[cc.bin] no sources found for target 'app'")
     end)
+
+    it("CS-cook_cc-0.1.1: bin's link command includes archive paths from cc.lib links", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", { sources = { "src/foo.c" } })
+        -- After lib is registered, cook.import("foolib").lib_path must surface.
+        local exported = cook.import("foolib")
+        assert.equals("build/lib/libfoolib.a", exported.lib_path)
+
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        local units = stub.added_units()
+        local link_unit = units[#units]  -- last unit is the link command
+        assert.matches("build/lib/libfoolib%.a", link_unit.command,
+            "link command must include the foolib archive path")
+    end)
 end)
 
 describe("cc.lib", function()

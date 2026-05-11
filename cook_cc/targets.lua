@@ -49,13 +49,14 @@ local function build_opts(opts, kind)
     }
 end
 
-local function record_export(name, sources, b)
+local function record_export(name, sources, b, lib_path)
     cook.export(name, {
         includes      = b.export_includes or b.includes,
         defines       = b.defines,
         system_libs   = b.system_libs,
         extra_ldflags = b.extra_ldflags or "",
         links         = b.links,
+        lib_path      = lib_path or "",
         compile_info  = {
             sources  = sources,
             includes = b.includes,
@@ -82,6 +83,32 @@ local function compile_all(name, sources, b)
     return objs
 end
 
+-- Merge system_libs: transitive first, then local (dedup, first occurrence wins).
+local function merge_system_libs(merged_transitive, local_libs)
+    local seen = {}
+    local result = {}
+    for _, v in ipairs(merged_transitive or {}) do
+        if not seen[v] then seen[v] = true; result[#result + 1] = v end
+    end
+    for _, v in ipairs(local_libs or {}) do
+        if not seen[v] then seen[v] = true; result[#result + 1] = v end
+    end
+    return result
+end
+
+-- Build extra_ldflags string: prepend archive paths, then transitive ldflags, then local.
+local function build_ldflags(lib_paths, transitive_ldflags, local_ldflags)
+    local parts = {}
+    for _, p in ipairs(lib_paths or {}) do parts[#parts + 1] = p end
+    if transitive_ldflags and transitive_ldflags ~= "" then
+        parts[#parts + 1] = transitive_ldflags
+    end
+    if local_ldflags and local_ldflags ~= "" then
+        parts[#parts + 1] = local_ldflags
+    end
+    return table.concat(parts, " ")
+end
+
 function M.bin(name, opts)
     local b = build_opts(opts, "bin")
     local sources = gather_sources(opts or {})
@@ -89,12 +116,12 @@ function M.bin(name, opts)
         error("[cc.bin] no sources found for target '" .. name .. "'", 2)
     end
     register_known(name)
-    record_export(name, sources, b)
+    record_export(name, sources, b, "")
     local objs = compile_all(name, sources, b)
     local merged = transitive.resolve_links(b.links)
     cc.link(objs, "build/bin/" .. name, {
-        system_libs   = (#merged.system_libs > 0) and merged.system_libs or b.system_libs,
-        extra_ldflags = (merged.extra_ldflags ~= "" and merged.extra_ldflags) or b.extra_ldflags,
+        system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
+        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
     })
     return name
 end
@@ -105,10 +132,11 @@ function M.lib(name, opts)
     if #sources == 0 then
         error("[cc.lib] no sources found for target '" .. name .. "'", 2)
     end
+    local archive_path = "build/lib/lib" .. name .. ".a"
     register_known(name)
-    record_export(name, sources, b)
+    record_export(name, sources, b, archive_path)
     local objs = compile_all(name, sources, b)
-    cc.archive(objs, "build/lib/lib" .. name .. ".a")
+    cc.archive(objs, archive_path)
     return name
 end
 
@@ -118,13 +146,14 @@ function M.shared(name, opts)
     if #sources == 0 then
         error("[cc.shared] no sources found for target '" .. name .. "'", 2)
     end
+    local so_path = "build/lib/lib" .. name .. ".so"
     register_known(name)
-    record_export(name, sources, b)
+    record_export(name, sources, b, so_path)
     local objs = compile_all(name, sources, b)
     local merged = transitive.resolve_links(b.links)
-    cc.link(objs, "build/lib/lib" .. name .. ".so", {
-        system_libs   = (#merged.system_libs > 0) and merged.system_libs or b.system_libs,
-        extra_ldflags = (merged.extra_ldflags ~= "" and merged.extra_ldflags) or b.extra_ldflags,
+    cc.link(objs, so_path, {
+        system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
+        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
         shared        = true,
     })
     return name
@@ -133,7 +162,7 @@ end
 function M.headers(name, opts)
     local b = build_opts(opts, "headers")
     register_known(name)
-    record_export(name, {}, b)
+    record_export(name, {}, b, "")
     return name
 end
 

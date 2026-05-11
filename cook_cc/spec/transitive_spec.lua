@@ -60,4 +60,18 @@ describe("transitive", function()
         table.sort(merged.includes)
         assert.same({ "ai", "bi" }, merged.includes)
     end)
+
+    it("CS-cook_cc-0.1.1: resolve_links collects lib_path from each link's export", function()
+        cook.export("foolib", {
+            includes  = {},
+            defines   = {},
+            system_libs = {},
+            extra_ldflags = "",
+            links     = {},
+            lib_path  = "build/lib/libfoolib.a",
+        })
+        local t = require("cook_cc.transitive")
+        local merged = t.resolve_links({ "foolib" })
+        assert.same({ "build/lib/libfoolib.a" }, merged.lib_paths)
+    end)
 end)
