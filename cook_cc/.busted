@@ -3,6 +3,7 @@ return {
         ROOT = { "spec" },
         pattern = "_spec",
         helper = "spec/cook_stub.lua",
+        lpath = "./spec/?.lua;../?/?.lua;../?.lua;./src/?.lua;./src/?/init.lua",
     },
     default = {
         verbose = true,
