@@ -15,9 +15,10 @@ function M.resolve_links(links)
         includes      = {},
         defines       = {},
         system_libs   = {},
+        lib_paths     = {},
         extra_ldflags = "",
     }
-    local seen_inc, seen_def, seen_lib = {}, {}, {}
+    local seen_inc, seen_def, seen_lib, seen_path = {}, {}, {}, {}
     local visited = {}
 
     local function walk(name)
@@ -28,6 +29,11 @@ function M.resolve_links(links)
         add_unique(merged.includes,    info.includes,    seen_inc)
         add_unique(merged.defines,     info.defines,     seen_def)
         add_unique(merged.system_libs, info.system_libs, seen_lib)
+        -- Collect the archive/shared-lib path for local targets so the linker
+        -- can include it.  Exported by M.lib / M.shared via lib_path.
+        if info.lib_path and info.lib_path ~= "" then
+            add_unique(merged.lib_paths, { info.lib_path }, seen_path)
+        end
         if info.extra_ldflags and info.extra_ldflags ~= "" then
             if merged.extra_ldflags ~= "" then
                 merged.extra_ldflags = merged.extra_ldflags .. " " .. info.extra_ldflags
