@@ -67,6 +67,31 @@ describe("cc.bin", function()
         assert.matches("build/lib/libfoolib%.a", link_unit.command,
             "link command must include the foolib archive path")
     end)
+
+    it("CS-cook_cc-0.1.2: bin's compile commands include export_includes from cc.lib links", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources = { "src/foo.c" },
+            export_includes = { "foolib/include/" },
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        -- All compile units for app must include -Ifoolib/include/
+        local units = stub.added_units()
+        local app_compiles = {}
+        for _, u in ipairs(units) do
+            if u.output and u.output:match("^build/obj/app/") then
+                app_compiles[#app_compiles + 1] = u
+            end
+        end
+        assert.is_true(#app_compiles > 0, "expected at least one compile for app")
+        for _, u in ipairs(app_compiles) do
+            assert.matches(" %-Ifoolib/include/ ", u.command,
+                "app compile command must include -Ifoolib/include/")
+        end
+    end)
 end)
 
 describe("cc.lib", function()
@@ -87,6 +112,30 @@ describe("cc.lib", function()
         assert.equals("build/lib/libmathlib.a", units[2].output)
         assert.matches("^ar rcs ", units[2].command)
     end)
+
+    it("CS-cook_cc-0.1.2: lib's compile commands include export_includes from cc.lib links", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("baselib", {
+            sources = { "src/base.c" },
+            export_includes = { "baselib/include/" },
+        })
+        targets.lib("extlib", {
+            sources = { "src/ext.c" },
+            links   = { "baselib" },
+        })
+        local units = stub.added_units()
+        local extlib_compiles = {}
+        for _, u in ipairs(units) do
+            if u.output and u.output:match("^build/obj/extlib/") then
+                extlib_compiles[#extlib_compiles + 1] = u
+            end
+        end
+        assert.is_true(#extlib_compiles > 0, "expected at least one compile for extlib")
+        for _, u in ipairs(extlib_compiles) do
+            assert.matches(" %-Ibaselib/include/ ", u.command,
+                "extlib compile command must include -Ibaselib/include/")
+        end
+    end)
 end)
 
 describe("cc.shared", function()
@@ -106,6 +155,30 @@ describe("cc.shared", function()
         assert.matches(" %-fPIC ", compile.command)
         assert.matches(" %-shared", link.command)
         assert.equals("build/lib/libplug.so", link.output)
+    end)
+
+    it("CS-cook_cc-0.1.2: shared's compile commands include export_includes from cc.lib links", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("iface", {
+            sources = { "src/iface.c" },
+            export_includes = { "iface/include/" },
+        })
+        targets.shared("plug", {
+            sources = { "src/plug.c" },
+            links   = { "iface" },
+        })
+        local units = stub.added_units()
+        local plug_compiles = {}
+        for _, u in ipairs(units) do
+            if u.output and u.output:match("^build/obj/plug/") then
+                plug_compiles[#plug_compiles + 1] = u
+            end
+        end
+        assert.is_true(#plug_compiles > 0, "expected at least one compile for plug")
+        for _, u in ipairs(plug_compiles) do
+            assert.matches(" %-Iiface/include/ ", u.command,
+                "plug compile command must include -Iiface/include/")
+        end
     end)
 end)
 

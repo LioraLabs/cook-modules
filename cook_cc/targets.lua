@@ -109,6 +109,19 @@ local function build_ldflags(lib_paths, transitive_ldflags, local_ldflags)
     return table.concat(parts, " ")
 end
 
+-- Merge transitive includes into b.includes (dedup, local first).
+local function merge_includes(local_incs, transitive_incs)
+    local seen = {}
+    local result = {}
+    for _, v in ipairs(local_incs or {}) do
+        if not seen[v] then seen[v] = true; result[#result + 1] = v end
+    end
+    for _, v in ipairs(transitive_incs or {}) do
+        if not seen[v] then seen[v] = true; result[#result + 1] = v end
+    end
+    return result
+end
+
 function M.bin(name, opts)
     local b = build_opts(opts, "bin")
     local sources = gather_sources(opts or {})
@@ -116,9 +129,10 @@ function M.bin(name, opts)
         error("[cc.bin] no sources found for target '" .. name .. "'", 2)
     end
     register_known(name)
+    local merged = transitive.resolve_links(b.links)
+    b.includes = merge_includes(b.includes, merged.includes)
     record_export(name, sources, b, "")
     local objs = compile_all(name, sources, b)
-    local merged = transitive.resolve_links(b.links)
     cc.link(objs, "build/bin/" .. name, {
         system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
         extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
@@ -134,6 +148,8 @@ function M.lib(name, opts)
     end
     local archive_path = "build/lib/lib" .. name .. ".a"
     register_known(name)
+    local merged = transitive.resolve_links(b.links)
+    b.includes = merge_includes(b.includes, merged.includes)
     record_export(name, sources, b, archive_path)
     local objs = compile_all(name, sources, b)
     cc.archive(objs, archive_path)
@@ -148,9 +164,10 @@ function M.shared(name, opts)
     end
     local so_path = "build/lib/lib" .. name .. ".so"
     register_known(name)
+    local merged = transitive.resolve_links(b.links)
+    b.includes = merge_includes(b.includes, merged.includes)
     record_export(name, sources, b, so_path)
     local objs = compile_all(name, sources, b)
-    local merged = transitive.resolve_links(b.links)
     cc.link(objs, so_path, {
         system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
         extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
