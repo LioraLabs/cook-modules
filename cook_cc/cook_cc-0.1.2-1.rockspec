@@ -1,8 +1,8 @@
 package = "cook_cc"
-version = "0.1.1-1"
+version = "0.1.2-1"
 source = {
    url = "git+https://github.com/lioralabs/cook-modules.git",
-   tag = "cook_cc-0.1.1-1",
+   tag = "cook_cc-0.1.2-1",
 }
 description = {
    summary  = "Cook C-family (C + C++) native build module",
