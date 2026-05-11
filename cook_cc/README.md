@@ -1,7 +1,49 @@
-# cook_cpp
+# cook_cc
 
-**Stub rock for the cook C/C++ build module.** Real implementation tracked in [SHI-133](https://linear.app/shiny-guru/issue/SHI-133).
+Cook C-family (C + C++) native build module. Provides declarative target
+makers (`cc.bin` / `cc.lib` / `cc.shared` / `cc.headers`), low-level
+primitives (`cc.compile` / `cc.archive` / `cc.link`), pkg-config discovery
+(`cc.find`), transitive link propagation, and compile_commands.json
+generation.
 
-This rock currently exposes only `cook_cpp.placeholder()`, which raises an error pointing at the real-implementation ticket. It exists to reserve the `cook_cpp` name on `rocks.usecook.com` and to exercise the publish pipeline at multi-rock scale (SHI-176 Phase 4).
+## Specification
 
-When SHI-133 ships, replace this directory's contents with the real implementation and bump the rock version to `0.1.0-1` (or higher). The Gitea Actions publish CI on tag push handles the rest.
+The module's public surface is normatively specified at §9.2 of the Cook
+Standard. See `standard/src/content/docs/09-standard-modules.mdx` in the
+cook repo.
+
+## Install
+
+In your project's `cook.toml`:
+
+```toml
+[modules]
+cook_cc = "^0.1"
+```
+
+Then `cook modules install`.
+
+## Use
+
+```
+use cook_cc as cc
+
+config
+    cc.toolchain({ standard = "c++17", warnings = "strict" })
+
+recipe app
+    cc.bin("app", { sources = { "src/main.cpp" } })
+```
+
+## Development
+
+```sh
+luarocks install --local busted
+cd cook_cc && busted .
+```
+
+or from the cook-modules root:
+
+```sh
+MODULE=cook_cc cook spec
+```
