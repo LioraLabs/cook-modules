@@ -1,0 +1,10 @@
+return {
+    _all = {
+        ROOT = { "spec" },
+        pattern = "_spec",
+        helper = "spec/cook_stub.lua",
+    },
+    default = {
+        verbose = true,
+    },
+}

@@ -39,3 +39,7 @@ chore publish
     cd "${HOME}/dev/cook-rocks" && git add manifest manifest-5.* index.html "${MODULE}-${VERSION}.rockspec" "${MODULE}-${VERSION}.src.rock"
     cd "${HOME}/dev/cook-rocks" && git commit -m "publish: ${MODULE}-${VERSION}"
     cd "${HOME}/dev/cook-rocks" && cook publish
+
+chore spec
+    : "${MODULE:=cook_cc}"
+    cd "${MODULE}" && busted .
