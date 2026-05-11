@@ -61,10 +61,12 @@ function M.merge_defaults(opts)
     append_list(state.defaults.includes,    opts.includes)
     append_list(state.defaults.system_libs, opts.system_libs)
     if opts.extra_cflags then
-        state.defaults.extra_cflags = (state.defaults.extra_cflags or "") .. " " .. opts.extra_cflags
+        local prev = state.defaults.extra_cflags
+        state.defaults.extra_cflags = prev and (prev .. " " .. opts.extra_cflags) or opts.extra_cflags
     end
     if opts.extra_ldflags then
-        state.defaults.extra_ldflags = (state.defaults.extra_ldflags or "") .. " " .. opts.extra_ldflags
+        local prev = state.defaults.extra_ldflags
+        state.defaults.extra_ldflags = prev and (prev .. " " .. opts.extra_ldflags) or opts.extra_ldflags
     end
     if opts.standard then state.default_standard = opts.standard end
     if opts.warnings then state.warnings = opts.warnings end
