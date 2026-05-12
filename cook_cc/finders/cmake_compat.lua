@@ -18,6 +18,51 @@ local function parse_compile(s)
     return compile_line:match(s or "") or {}
 end
 
+local function classify_link_token(tok)
+    if tok == "-framework"                  then return "framework-marker" end
+    if tok:sub(1, 2) == "-l"                then return "syslib" end
+    if tok:sub(1, 2) == "-L"                then return "libdir" end
+    if tok:match("[/\\][^/\\]*Config%.cmake$")  then return "config-file-ref" end
+    if tok:match("[/\\][^/\\]*Targets%.cmake$") then return "config-file-ref" end
+    if tok:match("%.so$") or tok:match("%.so%.[%d.]+$") then return "abs-lib" end
+    if tok:match("%.dylib$")                then return "abs-lib" end
+    if tok:match("%.a$") or tok:match("%.lib$") then return "abs-lib" end
+    return "other"
+end
+
+local function parse_link(out)
+    local tokens = {}
+    for tok in (out or ""):gmatch("%S+") do tokens[#tokens + 1] = tok end
+
+    local result = { include_dirs = {}, lib_dirs = {}, system_libs = {},
+                     frameworks = {}, abs_libs = {}, other = {},
+                     has_config_ref = false }
+    local i = 1
+    while i <= #tokens do
+        local k = classify_link_token(tokens[i])
+        if k == "framework-marker" and tokens[i + 1] then
+            result.frameworks[#result.frameworks + 1] = tokens[i + 1]
+            i = i + 2
+        elseif k == "syslib" then
+            result.system_libs[#result.system_libs + 1] = tokens[i]:sub(3)
+            i = i + 1
+        elseif k == "libdir" then
+            result.lib_dirs[#result.lib_dirs + 1] = tokens[i]:sub(3)
+            i = i + 1
+        elseif k == "config-file-ref" then
+            result.has_config_ref = true
+            i = i + 1
+        elseif k == "abs-lib" then
+            result.abs_libs[#result.abs_libs + 1] = tokens[i]
+            i = i + 1
+        else
+            result.other[#result.other + 1] = tokens[i]
+            i = i + 1
+        end
+    end
+    return result
+end
+
 local function detect_cmake()
     local cached = cook.cache.get("cc.cmake-compat:driver")
     if cached then return cached end
@@ -102,11 +147,16 @@ function M.main_chain(name, opts)
                  reason = "cmake --find-package returned a non-zero exit in LINK mode" }
     end
 
+    local lt = parse_link(link_out)
+    -- has_config_ref handled in Task 8
+
     local payload = {
         cflags = compile_out,
-        libs = link_out,                       -- raw passthrough; Task 7 bucketizes
-        include_dirs = {}, lib_dirs = {}, system_libs = {}, frameworks = {},
-        version = nil,
+        libs   = link_out,                  -- raw stdout retained for extra_ldflags piping
+        include_dirs = {}, lib_dirs = lt.lib_dirs,
+        system_libs  = lt.system_libs,
+        frameworks   = lt.frameworks,
+        version      = nil,
     }
     for _, t in ipairs(parse_compile(compile_out)) do
         if t.kind == "include" then

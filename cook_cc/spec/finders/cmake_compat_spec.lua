@@ -89,4 +89,25 @@ describe("cmake_compat strategy", function()
         assert.equals("/usr/include", a.payload.include_dirs[1])
         assert.matches("-I/usr/include", a.payload.cflags)
     end)
+
+    it("classifies -framework / -l / -L tokens in LINK output", function()
+        install_cmake_present()
+        stub.set_sh_handler("cmake --find-package -DNAME=Mixed",
+            function(cmd)
+                if cmd:match("MODE=EXIST")   then return "Mixed found.\n" end
+                if cmd:match("MODE=COMPILE") then return "-I/opt/mixed/include\n" end
+                if cmd:match("MODE=LINK")    then
+                    return "/opt/mixed/lib/libmixed.dylib -framework Foundation "
+                        .. "-L/opt/mixed/lib -lextra\n"
+                end
+                error("[stub] unexpected mode: " .. cmd)
+            end)
+        local mod = require("cook_cc.finders.cmake_compat")
+        local a = mod.main_chain("Mixed")
+        assert.equals("hit", a.outcome)
+        assert.same({"Foundation"}, a.payload.frameworks)
+        assert.same({"extra"}, a.payload.system_libs)
+        assert.same({"/opt/mixed/lib"}, a.payload.lib_dirs)
+        assert.matches("/opt/mixed/lib/libmixed%.dylib", a.payload.libs)
+    end)
 end)
