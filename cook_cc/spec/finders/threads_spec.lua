@@ -1,0 +1,32 @@
+local stub = require("cook_stub")
+
+describe("finders.threads", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        package.loaded["cook_cc.finders.threads"] = nil
+    end)
+
+    it("Linux returns -pthread on both cflags and libs", function()
+        local f = require("cook_cc.finders.threads")
+        local a = f.find({})
+        assert.equals("hit", a.outcome)
+        assert.equals("-pthread", a.payload.cflags)
+        assert.equals("-pthread", a.payload.libs)
+    end)
+
+    it("macOS returns found with empty fields", function()
+        stub.set_platform_os("macos")
+        local f = require("cook_cc.finders.threads")
+        local a = f.find({})
+        assert.equals("hit", a.outcome)
+        assert.equals("", a.payload.cflags)
+        assert.equals("", a.payload.libs)
+    end)
+
+    it("opts.version returns skip", function()
+        local f = require("cook_cc.finders.threads")
+        local a = f.find({ version = ">=1.0" })
+        assert.equals("skip", a.outcome)
+        assert.matches("no detectable version", a.reason)
+    end)
+end)
