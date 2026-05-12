@@ -76,6 +76,12 @@ function M.link(objects, output, opts)
     for _, lib in ipairs(opts.system_libs or {}) do
         parts[#parts + 1] = "-l" .. lib
     end
+    if cook.platform.os == "macos" then
+        for _, fw in ipairs(opts.frameworks or {}) do
+            parts[#parts + 1] = "-framework"
+            parts[#parts + 1] = fw
+        end
+    end
     if opts.extra_ldflags and opts.extra_ldflags ~= "" then
         parts[#parts + 1] = opts.extra_ldflags
     end

@@ -112,3 +112,28 @@ describe("cc.link", function()
         assert.matches(" %-lpthread ", cmd)
     end)
 end)
+
+describe("cc.link frameworks", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        package.loaded["cook_cc.cc"] = nil
+        package.loaded["cook_cc.toolchain"] = nil
+        with_toolchain()
+    end)
+
+    it("emits -framework <name> on macOS", function()
+        stub.set_platform_os("macos")
+        local cc = require("cook_cc.cc")
+        cc.link({ "a.o" }, "build/bin/x", { frameworks = { "OpenGL", "Cocoa" } })
+        local cmd = stub.added_units()[1].command
+        assert.matches("%-framework OpenGL", cmd)
+        assert.matches("%-framework Cocoa", cmd)
+    end)
+
+    it("ignores frameworks on Linux", function()
+        local cc = require("cook_cc.cc")
+        cc.link({ "a.o" }, "build/bin/x", { frameworks = { "OpenGL" } })
+        local cmd = stub.added_units()[1].command
+        assert.is_nil(cmd:find("%-framework"))
+    end)
+end)
