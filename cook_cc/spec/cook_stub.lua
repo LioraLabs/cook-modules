@@ -85,6 +85,17 @@ function M.install()
             for prefix, fn in pairs(sh_handlers) do
                 if cmd:sub(1, #prefix) == prefix then return fn(cmd) end
             end
+            -- CS-0045: bare_probe and other system-path checks now route
+            -- existence probes through `cook.sh ("test -e '<path>' && echo y || echo n")`
+            -- because the sandbox blocks `fs.exists` on /usr paths. Reuse
+            -- the file_exists_set the spec already populates via
+            -- `stub.set_file_exists(...)` so tests can stay declarative
+            -- about which paths exist regardless of which API the impl
+            -- chose to probe with.
+            local probe = cmd:match("^test %-e '(.+)' && echo y || echo n$")
+            if probe then
+                return file_exists_set[probe] and "y\n" or "n\n"
+            end
             error("[cook_stub] unhandled sh: " .. cmd)
         end,
     }
