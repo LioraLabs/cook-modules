@@ -6,6 +6,12 @@ local function reset_all()
     package.loaded["cook_cc.finders.cmake_compat.hints"] = nil
 end
 
+local function install_cmake_present()
+    stub.set_sh_handler("command -v cmake", function() return "/usr/bin/cmake\n" end)
+    stub.set_sh_handler("cmake --find-package -DNAME=ZLIB",
+        function() return "ZLIB found.\n" end)
+end
+
 describe("cmake_compat strategy", function()
     before_each(reset_all)
 
@@ -42,5 +48,17 @@ describe("cmake_compat strategy", function()
         local a = mod.main_chain("SDL3")
         assert.equals("skip", a.outcome)
         assert.matches("legacy mode", a.reason)
+    end)
+
+    it("returns miss when EXIST reports not found", function()
+        install_cmake_present()
+        stub.set_sh_handler("cmake --find-package -DNAME=DoesNotExist",
+            function() error("[stub] cmake exit 1: DoesNotExist not found.") end)
+        local mod = require("cook_cc.finders.cmake_compat")
+        local a = mod.main_chain("DoesNotExist")
+        assert.equals("miss", a.outcome)
+        assert.matches("cmake found no Config or Find module", a.reason)
+        -- Generic hint fallback because DoesNotExist not in catalog
+        assert.matches("cmake %-%-find%-package %-DNAME=DoesNotExist", a.hint)
     end)
 end)
