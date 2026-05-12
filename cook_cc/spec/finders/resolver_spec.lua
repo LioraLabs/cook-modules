@@ -105,4 +105,29 @@ describe("finder resolver", function()
         assert.equals("pkg-config",      strategies[3])
         assert.equals("cmake-compat",    strategies[4])
     end)
+
+    it("lifts cmake-compat to position 3 when opts.cmake=true; pkg-config skipped", function()
+        stub.set_sh_handler("command -v cmake", function() return "/usr/bin/cmake\n" end)
+        stub.set_sh_handler("cmake --find-package -DNAME=ZLIB",
+            function() return "ZLIB found.\n" end)
+        stub.set_sh_handler("cmake --find-package -DNAME=SDL3",
+            function(cmd)
+                if cmd:match("MODE=EXIST")   then return "SDL3 found.\n" end
+                if cmd:match("MODE=COMPILE") then return "-I/usr/include/SDL3\n" end
+                if cmd:match("MODE=LINK")    then return "/usr/lib/libSDL3.so\n" end
+                error("unhandled")
+            end)
+        -- pkg-config would also succeed; assert it is NOT consulted
+        stub.set_pkg_config_response("SDL3", { exists = true, libs = "-lSDL3" })
+
+        local f = require("cook_cc.finder")
+        local r = f.find("SDL3", { cmake = true })
+        assert.is_true(r.found)
+        local strategies = {}
+        for _, a in ipairs(r.tried) do strategies[#strategies + 1] = a.strategy end
+        assert.equals("project:SDL3",   strategies[1])
+        assert.equals("curated:SDL3",   strategies[2])
+        assert.equals("cmake-compat",   strategies[3])
+        assert.is_nil(strategies[4])  -- chain stops at hit
+    end)
 end)
