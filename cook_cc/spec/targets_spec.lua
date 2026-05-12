@@ -13,6 +13,7 @@ end
 describe("cc.bin", function()
     before_each(function()
         stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
         for _, m in ipairs({
             "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
         }) do reset_module(m) end
@@ -97,6 +98,7 @@ end)
 describe("cc.lib", function()
     before_each(function()
         stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
         for _, m in ipairs({
             "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
         }) do reset_module(m) end
@@ -141,6 +143,7 @@ end)
 describe("cc.shared", function()
     before_each(function()
         stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
         for _, m in ipairs({
             "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
         }) do reset_module(m) end
@@ -185,6 +188,7 @@ end)
 describe("cc.headers", function()
     before_each(function()
         stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
         for _, m in ipairs({
             "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
         }) do reset_module(m) end

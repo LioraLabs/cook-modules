@@ -10,6 +10,7 @@ end
 describe("cc.compile", function()
     before_each(function()
         stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
         package.loaded["cook_cc.cc"] = nil
         package.loaded["cook_cc.toolchain"] = nil
         with_toolchain()
@@ -71,6 +72,7 @@ end)
 describe("cc.archive", function()
     before_each(function()
         stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
         package.loaded["cook_cc.cc"] = nil
         package.loaded["cook_cc.toolchain"] = nil
         with_toolchain()
@@ -90,6 +92,7 @@ end)
 describe("cc.link", function()
     before_each(function()
         stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
         package.loaded["cook_cc.cc"] = nil
         package.loaded["cook_cc.toolchain"] = nil
         with_toolchain()

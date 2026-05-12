@@ -93,7 +93,8 @@ function M.install()
         exists = function(p)
             if file_exists_set[p] ~= nil then return file_exists_set[p] end
             local h = sh_handlers["__exists"]
-            return h and h(p) or true
+            if h then return h(p) end
+            return false
         end,
         read = function(p)
             local h = sh_handlers["__read"]
