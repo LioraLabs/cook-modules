@@ -29,16 +29,20 @@ local function build_opts(opts, kind)
     local merged_includes = {}
     local merged_defines  = {}
     local merged_libs     = {}
+    local merged_fw       = {}
     for _, v in ipairs(d.includes    or {}) do merged_includes[#merged_includes + 1] = v end
     for _, v in ipairs(opts.includes or {}) do merged_includes[#merged_includes + 1] = v end
     for _, v in ipairs(d.defines     or {}) do merged_defines [#merged_defines  + 1] = v end
     for _, v in ipairs(opts.defines  or {}) do merged_defines [#merged_defines  + 1] = v end
     for _, v in ipairs(d.system_libs    or {}) do merged_libs[#merged_libs + 1] = v end
     for _, v in ipairs(opts.system_libs or {}) do merged_libs[#merged_libs + 1] = v end
+    for _, v in ipairs(d.frameworks    or {}) do merged_fw[#merged_fw + 1] = v end
+    for _, v in ipairs(opts.frameworks or {}) do merged_fw[#merged_fw + 1] = v end
     return {
         includes      = merged_includes,
         defines       = merged_defines,
         system_libs   = merged_libs,
+        frameworks    = merged_fw,
         standard      = opts.standard,
         warnings      = opts.warnings,
         extra_cflags  = opts.extra_cflags,
@@ -54,6 +58,7 @@ local function record_export(name, sources, b, lib_path)
         includes      = b.export_includes or b.includes,
         defines       = b.defines,
         system_libs   = b.system_libs,
+        frameworks    = b.frameworks,
         extra_ldflags = b.extra_ldflags or "",
         links         = b.links,
         lib_path      = lib_path or "",
@@ -81,6 +86,19 @@ local function compile_all(name, sources, b)
         })
     end
     return objs
+end
+
+-- Merge frameworks: transitive first, then local (dedup, first occurrence wins).
+local function merge_frameworks(merged_transitive, local_fw)
+    local seen = {}
+    local result = {}
+    for _, v in ipairs(merged_transitive or {}) do
+        if not seen[v] then seen[v] = true; result[#result + 1] = v end
+    end
+    for _, v in ipairs(local_fw or {}) do
+        if not seen[v] then seen[v] = true; result[#result + 1] = v end
+    end
+    return result
 end
 
 -- Merge system_libs: transitive first, then local (dedup, first occurrence wins).
@@ -135,6 +153,7 @@ function M.bin(name, opts)
     local objs = compile_all(name, sources, b)
     cc.link(objs, "build/bin/" .. name, {
         system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
+        frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
         extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
     })
     return name
@@ -170,6 +189,7 @@ function M.shared(name, opts)
     local objs = compile_all(name, sources, b)
     cc.link(objs, so_path, {
         system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
+        frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
         extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
         shared        = true,
     })
