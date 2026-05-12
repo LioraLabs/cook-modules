@@ -21,6 +21,19 @@ local function detect_cmake()
     return r
 end
 
+local FLAG_BASE = " -DCOMPILER_ID=GNU -DLANGUAGE=C -DQUIET=TRUE "
+
+local function probe_exist(name)
+    local cmd = "cmake --find-package -DNAME=" .. name .. FLAG_BASE
+              .. "-DMODE=EXIST 2>&1"
+    local ok, out = pcall(cook.sh, cmd)
+    if not ok then return false end
+    out = out or ""
+    if out:match(name .. " not found%.") then return false end
+    if out:match(name .. " found%.") then return true end
+    return false
+end
+
 function M.main_chain(name, opts)
     opts = opts or {}
     if opts.version then
@@ -36,6 +49,12 @@ function M.main_chain(name, opts)
     if not driver.legacy_supported then
         return { strategy = "cmake-compat", outcome = "skip",
                  reason = "this cmake build does not support --find-package legacy mode" }
+    end
+    if not probe_exist(name) then
+        local hints = require("cook_cc.finders.cmake_compat.hints")
+        return { strategy = "cmake-compat", outcome = "miss",
+                 reason = "cmake found no Config or Find module for '" .. name .. "'",
+                 hint = hints.for_package(name) }
     end
     return { strategy = "cmake-compat", outcome = "skip",
              reason = "not implemented yet" }
