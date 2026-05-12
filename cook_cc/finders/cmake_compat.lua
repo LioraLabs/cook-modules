@@ -148,7 +148,11 @@ function M.main_chain(name, opts)
     end
 
     local lt = parse_link(link_out)
-    -- has_config_ref handled in Task 8
+    if lt.has_config_ref then
+        return { strategy = "cmake-compat", outcome = "miss",
+                 reason = "imported-target chain too complex for legacy --find-package",
+                 hint = "register a project finder for '" .. name .. "' via cc.register_finder" }
+    end
 
     local payload = {
         cflags = compile_out,
