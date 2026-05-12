@@ -61,4 +61,16 @@ describe("cmake_compat strategy", function()
         -- Generic hint fallback because DoesNotExist not in catalog
         assert.matches("cmake %-%-find%-package %-DNAME=DoesNotExist", a.hint)
     end)
+
+    it("emits package-specific hint for known catalogue entries", function()
+        install_cmake_present()
+        -- Make SDL3 EXIST fail without being unhandled
+        stub.set_sh_handler("cmake --find-package -DNAME=SDL3",
+            function() return "SDL3 not found.\n" end)
+        local mod = require("cook_cc.finders.cmake_compat")
+        local a = mod.main_chain("SDL3")
+        assert.equals("miss", a.outcome)
+        assert.matches("libsdl3%-dev", a.hint)
+        assert.matches("brew: sdl3", a.hint)
+    end)
 end)
