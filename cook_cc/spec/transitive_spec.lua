@@ -74,4 +74,14 @@ describe("transitive", function()
         local merged = t.resolve_links({ "foolib" })
         assert.same({ "build/lib/libfoolib.a" }, merged.lib_paths)
     end)
+
+    it("propagates frameworks from a linked target", function()
+        cook.export("gfx", {
+            includes = {}, system_libs = {}, frameworks = { "OpenGL" },
+            extra_ldflags = "", links = {}, lib_path = "",
+        })
+        local t = require("cook_cc.transitive")
+        local merged = t.resolve_links({ "gfx" })
+        assert.same({ "OpenGL" }, merged.frameworks)
+    end)
 end)
