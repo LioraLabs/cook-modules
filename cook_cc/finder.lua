@@ -1,37 +1,7 @@
-local lpeg = require("lpeg")
-local P, S, C, Ct = lpeg.P, lpeg.S, lpeg.C, lpeg.Ct
-
 local M = {}
 
--- Grammar: parses a pkg-config-output line into structured tokens.
-local space     = S(" \t")^0
-local non_space = (P(1) - S(" \t"))^1
-local include   = P("-I") * C(non_space)
-local libdir    = P("-L") * C(non_space)
-local syslib    = P("-l") * C(non_space)
-local define    = P("-D") * C(non_space)
-local framework = P("-framework") * S(" \t")^1 * C(non_space)
-local other     = C(non_space)
-
-local token = framework / function(v) return { kind = "framework", value = v } end
-            + include   / function(v) return { kind = "include",   value = v } end
-            + libdir    / function(v) return { kind = "libdir",    value = v } end
-            + syslib    / function(v) return { kind = "syslib",    value = v } end
-            + define    / function(v) return { kind = "define",    value = v } end
-            + other     / function(v) return { kind = "other",     value = v } end
-
-local line_pattern = Ct((space * token)^0 * space)
-
-local function parse_tokens(s)
-    return line_pattern:match(s or "") or {}
-end
-
-local function shell_chomp(s) return (s or ""):gsub("%s+$", "") end
-
-local function try_sh(cmd)
-    local ok, out = pcall(cook.sh, cmd)
-    return ok, ok and shell_chomp(out) or nil
-end
+-- Per-VM project-registered finder registry.
+M._registry = M._registry or {}
 
 local function blank_result()
     return {
@@ -43,40 +13,109 @@ local function blank_result()
         lib_dirs     = {},
         frameworks   = {},
         version      = nil,
+        tried        = {},
     }
 end
 
-function M.find(name, _opts)
-    local cache_key = "pkg:" .. name
+local function canonical_opts(opts)
+    if not opts then return "" end
+    local keys = {}
+    for k in pairs(opts) do keys[#keys + 1] = tostring(k) end
+    table.sort(keys)
+    local parts = {}
+    for _, k in ipairs(keys) do
+        local v = opts[k]
+        if type(v) == "table" then v = table.concat(v, ",") end
+        parts[#parts + 1] = k .. "=" .. tostring(v)
+    end
+    return table.concat(parts, ",")
+end
+
+local function build_result(hit, tried)
+    if not hit then
+        local r = blank_result()
+        r.tried = tried
+        return r
+    end
+    local p = hit.payload
+    return {
+        found        = true,
+        cflags       = p.cflags or "",
+        libs         = p.libs or "",
+        system_libs  = p.system_libs or {},
+        include_dirs = p.include_dirs or {},
+        lib_dirs     = p.lib_dirs or {},
+        frameworks   = p.frameworks or {},
+        version      = p.version,
+        tried        = tried,
+    }
+end
+
+function M.register(name, finder)
+    if type(finder) ~= "function" then
+        error("[cc.register_finder] register_finder for '" .. tostring(name)
+              .. "' requires a function, got " .. type(finder), 2)
+    end
+    M._registry[name] = finder
+end
+
+local function project_strategy(name, opts)
+    local fn = M._registry[name]
+    if not fn then
+        return { strategy = "project:" .. name, outcome = "skip",
+                 reason = "no project finder registered" }
+    end
+    local rec = fn(opts)
+    if rec and rec.found then
+        return { strategy = "project:" .. name, outcome = "hit", reason = "",
+                 payload = {
+                     cflags       = rec.cflags or "",
+                     libs         = rec.libs or "",
+                     system_libs  = rec.system_libs or {},
+                     include_dirs = rec.include_dirs or {},
+                     lib_dirs     = rec.lib_dirs or {},
+                     frameworks   = rec.frameworks or {},
+                     version      = rec.version,
+                 } }
+    end
+    return { strategy = "project:" .. name, outcome = "miss",
+             reason = "project finder returned found=false" }
+end
+
+local function curated_strategy(name, opts)
+    local curated = require("cook_cc.finders")
+    local fn = curated.lookup(name)
+    if not fn then
+        return { strategy = "curated:" .. name, outcome = "skip",
+                 reason = "no curated finder for '" .. name .. "'" }
+    end
+    return fn(opts)
+end
+
+function M.find(name, opts)
+    opts = opts or {}
+    local cache_key = "cc.find:" .. name .. ":" .. canonical_opts(opts)
     local cached = cook.cache.get(cache_key)
     if cached then return cached end
 
-    local ok = try_sh("pkg-config --exists " .. name)
-    if not ok then
-        local r = blank_result()
-        cook.cache.set(cache_key, r)
-        return r
+    local pkg  = require("cook_cc.finders.pkg_config")
+    local bare = require("cook_cc.finders.bare_probe")
+
+    local chain = {
+        function() return project_strategy(name, opts) end,
+        function() return curated_strategy(name, opts) end,
+        function() return pkg.main_chain(name, opts) end,
+        function() return bare.main_chain(name, opts) end,
+    }
+
+    local tried, hit = {}, nil
+    for _, step in ipairs(chain) do
+        local attempt = step()
+        tried[#tried + 1] = attempt
+        if attempt.outcome == "hit" then hit = attempt; break end
     end
-    local _, cflags = try_sh("pkg-config --cflags " .. name)
-    local _, libs   = try_sh("pkg-config --libs "   .. name)
 
-    local result = blank_result()
-    result.found  = true
-    result.cflags = cflags or ""
-    result.libs   = libs   or ""
-
-    local function bucket(toks)
-        for _, t in ipairs(toks) do
-            if     t.kind == "include"   then result.include_dirs[#result.include_dirs + 1] = t.value
-            elseif t.kind == "libdir"    then result.lib_dirs[#result.lib_dirs + 1] = t.value
-            elseif t.kind == "syslib"    then result.system_libs[#result.system_libs + 1] = t.value
-            elseif t.kind == "framework" then result.frameworks[#result.frameworks + 1] = t.value
-            end
-        end
-    end
-    bucket(parse_tokens(result.cflags))
-    bucket(parse_tokens(result.libs))
-
+    local result = build_result(hit, tried)
     cook.cache.set(cache_key, result)
     return result
 end
