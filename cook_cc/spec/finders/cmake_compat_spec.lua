@@ -110,4 +110,37 @@ describe("cmake_compat strategy", function()
         assert.same({"/opt/mixed/lib"}, a.payload.lib_dirs)
         assert.matches("/opt/mixed/lib/libmixed%.dylib", a.payload.libs)
     end)
+
+    it("rejects LINK output containing *Config.cmake (imported-target chain)", function()
+        install_cmake_present()
+        stub.set_sh_handler("cmake --find-package -DNAME=ChainedFoo",
+            function(cmd)
+                if cmd:match("MODE=EXIST")   then return "ChainedFoo found.\n" end
+                if cmd:match("MODE=COMPILE") then return "-I/usr/include\n" end
+                if cmd:match("MODE=LINK")    then
+                    return "/usr/lib/libFoo.so /usr/lib/cmake/Bar/BarConfig.cmake\n"
+                end
+                error("unhandled")
+            end)
+        local mod = require("cook_cc.finders.cmake_compat")
+        local a = mod.main_chain("ChainedFoo")
+        assert.equals("miss", a.outcome)
+        assert.matches("imported%-target chain too complex", a.reason)
+        assert.matches("cc%.register_finder", a.hint)
+    end)
+
+    it("also rejects *Targets.cmake references", function()
+        install_cmake_present()
+        stub.set_sh_handler("cmake --find-package -DNAME=ChainedBar",
+            function(cmd)
+                if cmd:match("MODE=EXIST")   then return "ChainedBar found.\n" end
+                if cmd:match("MODE=COMPILE") then return "\n" end
+                if cmd:match("MODE=LINK")    then return "/usr/lib/cmake/Baz/BazTargets.cmake\n" end
+                error("unhandled")
+            end)
+        local mod = require("cook_cc.finders.cmake_compat")
+        local a = mod.main_chain("ChainedBar")
+        assert.equals("miss", a.outcome)
+        assert.matches("imported%-target", a.reason)
+    end)
 end)
