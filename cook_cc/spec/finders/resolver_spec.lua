@@ -130,4 +130,31 @@ describe("finder resolver", function()
         assert.equals("cmake-compat",   strategies[3])
         assert.is_nil(strategies[4])  -- chain stops at hit
     end)
+
+    it("uses distinct cache keys for cc.find('X') vs cc.find('X', {cmake=true})", function()
+        stub.set_sh_handler("command -v cmake", function() return "/usr/bin/cmake\n" end)
+        stub.set_sh_handler("cmake --find-package -DNAME=ZLIB",
+            function() return "ZLIB found.\n" end)
+        local cmake_calls = 0
+        stub.set_sh_handler("cmake --find-package -DNAME=SDL3",
+            function(cmd)
+                if cmd:match("MODE=EXIST")   then cmake_calls = cmake_calls + 1; return "SDL3 found.\n" end
+                if cmd:match("MODE=COMPILE") then return "-I/usr/include/SDL3\n" end
+                if cmd:match("MODE=LINK")    then return "/usr/lib/libSDL3.so\n" end
+                error("unhandled")
+            end)
+
+        local f = require("cook_cc.finder")
+        local r1 = f.find("SDL3")                  -- default order
+        local r2 = f.find("SDL3", { cmake = true }) -- opt-in
+        assert.is_true(r1.found)
+        assert.is_true(r2.found)
+        -- Each invocation drove a separate EXIST probe (distinct cache slots)
+        assert.equals(2, cmake_calls)
+
+        -- Repeat each — should re-use cache
+        local _ = f.find("SDL3")
+        local _ = f.find("SDL3", { cmake = true })
+        assert.equals(2, cmake_calls)
+    end)
 end)
