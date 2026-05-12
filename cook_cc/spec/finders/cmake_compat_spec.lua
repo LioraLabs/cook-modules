@@ -143,4 +143,21 @@ describe("cmake_compat strategy", function()
         assert.equals("miss", a.outcome)
         assert.matches("imported%-target", a.reason)
     end)
+
+    it("invokes 'command -v cmake' at most once per invocation", function()
+        local cmd_v_calls = 0
+        stub.set_sh_handler("command -v cmake",
+            function() cmd_v_calls = cmd_v_calls + 1; return "/usr/bin/cmake\n" end)
+        stub.set_sh_handler("cmake --find-package -DNAME=ZLIB",
+            function() return "ZLIB found.\n" end)
+        stub.set_sh_handler("cmake --find-package -DNAME=DoesNotExist",
+            function() error("DoesNotExist not found.") end)
+        stub.set_sh_handler("cmake --find-package -DNAME=AlsoMissing",
+            function() error("AlsoMissing not found.") end)
+
+        local mod = require("cook_cc.finders.cmake_compat")
+        mod.main_chain("DoesNotExist")
+        mod.main_chain("AlsoMissing")
+        assert.equals(1, cmd_v_calls)  -- memoized in cook.cache
+    end)
 end)
