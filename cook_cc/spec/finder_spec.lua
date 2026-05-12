@@ -8,8 +8,11 @@ describe("cc.find integration", function()
         package.loaded["cook_cc.finders"] = nil
         package.loaded["cook_cc.finders.pkg_config"] = nil
         package.loaded["cook_cc.finders.bare_probe"] = nil
+        package.loaded["cook_cc.finders.cmake_compat"] = nil
+        package.loaded["cook_cc.finders.cmake_compat.hints"] = nil
         stub.set_sh_handler("cc -print-search-dirs",
             function() return "libraries: =/usr/lib\n" end)
+        stub.set_sh_handler("command -v cmake", function() return "" end)
     end)
 
     it("pkg-config hit populates v0.2 fields", function()
@@ -42,8 +45,11 @@ describe("cc.find_or_error", function()
         package.loaded["cook_cc.finders"] = nil
         package.loaded["cook_cc.finders.pkg_config"] = nil
         package.loaded["cook_cc.finders.bare_probe"] = nil
+        package.loaded["cook_cc.finders.cmake_compat"] = nil
+        package.loaded["cook_cc.finders.cmake_compat.hints"] = nil
         stub.set_sh_handler("cc -print-search-dirs",
             function() return "libraries: =/usr/lib\n" end)
+        stub.set_sh_handler("command -v cmake", function() return "" end)
     end)
 
     it("returns the result on hit", function()

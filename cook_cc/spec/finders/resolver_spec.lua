@@ -5,9 +5,15 @@ local function reset_all()
     package.loaded["cook_cc.finder"] = nil
     package.loaded["cook_cc.finders.pkg_config"] = nil
     package.loaded["cook_cc.finders.bare_probe"] = nil
+    package.loaded["cook_cc.finders.cmake_compat"] = nil
+    package.loaded["cook_cc.finders.cmake_compat.hints"] = nil
     package.loaded["cook_cc.finders"] = nil
     stub.set_sh_handler("cc -print-search-dirs",
         function() return "libraries: =/usr/lib\n" end)
+    -- Default: cmake not on PATH, so cmake-compat skips cleanly.
+    -- Individual tests override this when they want cmake-compat to run.
+    stub.set_sh_handler("command -v cmake",
+        function() return "" end)
 end
 
 describe("finder resolver", function()
@@ -75,5 +81,28 @@ describe("finder resolver", function()
         local r2 = f.find("zlib", { version = ">=99.0" })
         assert.is_true(r1.found)
         assert.is_false(r2.found)
+    end)
+
+    it("consults cmake-compat after pkg-config in the default chain", function()
+        stub.set_sh_handler("command -v cmake", function() return "/usr/bin/cmake\n" end)
+        stub.set_sh_handler("cmake --find-package -DNAME=ZLIB",
+            function() return "ZLIB found.\n" end)  -- driver-detect probe
+        stub.set_sh_handler("cmake --find-package -DNAME=Vendor",
+            function(cmd)
+                if cmd:match("MODE=EXIST")   then return "Vendor found.\n" end
+                if cmd:match("MODE=COMPILE") then return "-I/opt/vendor/include\n" end
+                if cmd:match("MODE=LINK")    then return "/opt/vendor/lib/libvendor.so\n" end
+                error("unhandled")
+            end)
+        local f = require("cook_cc.finder")
+        local r = f.find("Vendor")
+        assert.is_true(r.found)
+        local strategies = {}
+        for _, a in ipairs(r.tried) do strategies[#strategies + 1] = a.strategy end
+        -- chain order: project, curated, pkg-config, cmake-compat
+        assert.equals("project:Vendor",  strategies[1])
+        assert.equals("curated:Vendor",  strategies[2])
+        assert.equals("pkg-config",      strategies[3])
+        assert.equals("cmake-compat",    strategies[4])
     end)
 end)
