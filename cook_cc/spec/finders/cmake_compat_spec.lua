@@ -73,4 +73,20 @@ describe("cmake_compat strategy", function()
         assert.matches("libsdl3%-dev", a.hint)
         assert.matches("brew: sdl3", a.hint)
     end)
+
+    it("parses COMPILE output into include_dirs and cflags", function()
+        install_cmake_present()
+        stub.set_sh_handler("cmake --find-package -DNAME=ZLIB",
+            function(cmd)
+                if cmd:match("MODE=EXIST")   then return "ZLIB found.\n" end
+                if cmd:match("MODE=COMPILE") then return "-I/usr/include\n" end
+                if cmd:match("MODE=LINK")    then return "/usr/lib/libz.so\n" end
+                error("[stub] unexpected mode: " .. cmd)
+            end)
+        local mod = require("cook_cc.finders.cmake_compat")
+        local a = mod.main_chain("ZLIB")
+        assert.equals("hit", a.outcome)
+        assert.equals("/usr/include", a.payload.include_dirs[1])
+        assert.matches("-I/usr/include", a.payload.cflags)
+    end)
 end)
