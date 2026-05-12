@@ -1,61 +1,76 @@
 local stub = require("cook_stub")
 
-describe("cc.find", function()
+describe("cc.find integration", function()
     before_each(function()
         stub.reset(); stub.install()
+        package.loaded["cook_cc"] = nil
+        package.loaded["cook_cc.finder"] = nil
+        package.loaded["cook_cc.finders"] = nil
+        package.loaded["cook_cc.finders.pkg_config"] = nil
+        package.loaded["cook_cc.finders.bare_probe"] = nil
+        stub.set_sh_handler("cc -print-search-dirs",
+            function() return "libraries: =/usr/lib\n" end)
+    end)
+
+    it("pkg-config hit populates v0.2 fields", function()
+        stub.set_pkg_config_response("foo", {
+            exists = true, cflags = "-I/usr/include/foo -DFOO=1",
+            libs = "-L/usr/lib -lfoo -lpthread", version = "1.0",
+        })
+        local cc = require("cook_cc")
+        local r = cc.find("foo")
+        assert.is_true(r.found)
+        assert.equals("-I/usr/include/foo -DFOO=1", r.cflags)
+        assert.same({ "foo", "pthread" }, r.system_libs)
+        assert.is_table(r.tried)
+    end)
+
+    it("miss returns blank result with tried list", function()
+        local cc = require("cook_cc")
+        local r = cc.find("definitely_no_such_package_xyz_42")
+        assert.is_false(r.found)
+        assert.same({}, r.system_libs)
+        assert.is_table(r.tried)
+    end)
+end)
+
+describe("cc.find_or_error", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        package.loaded["cook_cc"] = nil
+        package.loaded["cook_cc.finder"] = nil
+        package.loaded["cook_cc.finders"] = nil
+        package.loaded["cook_cc.finders.pkg_config"] = nil
+        package.loaded["cook_cc.finders.bare_probe"] = nil
+        stub.set_sh_handler("cc -print-search-dirs",
+            function() return "libraries: =/usr/lib\n" end)
+    end)
+
+    it("returns the result on hit", function()
+        stub.set_pkg_config_response("zlib", {
+            exists = true, cflags = "", libs = "-lz", version = "1.2.13",
+        })
+        local cc = require("cook_cc")
+        local r = cc.find_or_error("zlib")
+        assert.is_true(r.found)
+    end)
+
+    it("raises on miss with formatted tried list", function()
+        local cc = require("cook_cc")
+        assert.error_matches(function() cc.find_or_error("nonesuch") end,
+            "%[cc%.find_or_error%].*nonesuch")
+    end)
+end)
+
+describe("cc.register_finder", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        package.loaded["cook_cc"] = nil
         package.loaded["cook_cc.finder"] = nil
     end)
 
-    local function with_pkg(name, cflags, libs)
-        stub.set_sh_handler("pkg-config --exists " .. name,
-            function() return "" end)
-        stub.set_sh_handler("pkg-config --cflags " .. name,
-            function() return cflags .. "\n" end)
-        stub.set_sh_handler("pkg-config --libs " .. name,
-            function() return libs .. "\n" end)
-    end
-
-    it("returns the M1 record shape on a hit", function()
-        with_pkg("foo", "-I/usr/include/foo -DFOO=1", "-L/usr/lib -lfoo -lpthread")
-        local finder = require("cook_cc.finder")
-        local r = finder.find("foo")
-        assert.is_true(r.found)
-        assert.equals("-I/usr/include/foo -DFOO=1", r.cflags)
-        assert.equals("-L/usr/lib -lfoo -lpthread", r.libs)
-        assert.same({ "/usr/include/foo" }, r.include_dirs)
-        assert.same({ "/usr/lib" }, r.lib_dirs)
-        assert.same({ "foo", "pthread" }, r.system_libs)
-        assert.same({}, r.frameworks)
-        assert.is_nil(r.version)
-    end)
-
-    it("returns found=false with empty fields on a miss", function()
-        stub.set_sh_handler("pkg-config --exists missing",
-            function() error("[cook_stub] pkg-config exists missing failed") end)
-        local finder = require("cook_cc.finder")
-        local r = finder.find("missing")
-        assert.is_false(r.found)
-        assert.same({}, r.system_libs)
-    end)
-
-    it("caches the result keyed by name", function()
-        local calls = 0
-        local cflags = "-I/a"
-        local libs   = "-lfoo"
-        stub.set_sh_handler("pkg-config --exists foo", function() return "" end)
-        stub.set_sh_handler("pkg-config --cflags foo",
-            function() calls = calls + 1; return cflags .. "\n" end)
-        stub.set_sh_handler("pkg-config --libs foo",
-            function() return libs .. "\n" end)
-        local finder = require("cook_cc.finder")
-        finder.find("foo"); finder.find("foo")
-        assert.equals(1, calls)
-    end)
-
-    it("parses framework flags (macOS-style)", function()
-        with_pkg("gl", "-I/x", "-lGL -framework OpenGL")
-        local finder = require("cook_cc.finder")
-        local r = finder.find("gl")
-        assert.same({ "OpenGL" }, r.frameworks)
+    it("raises when finder is not a function", function()
+        local cc = require("cook_cc")
+        assert.has_error(function() cc.register_finder("bad", "not a fn") end)
     end)
 end)
