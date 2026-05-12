@@ -185,6 +185,34 @@ describe("cc.shared", function()
     end)
 end)
 
+describe("targets frameworks", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        package.loaded["cook_cc.targets"] = nil
+        package.loaded["cook_cc.cc"] = nil
+        package.loaded["cook_cc.toolchain"] = nil
+        stub.set_sh_handler("command -v g++", function() return "/usr/bin/g++\n" end)
+        stub.set_sh_handler("__exists", function() return true end)
+        local toolchain = require("cook_cc.toolchain")
+        toolchain.rehydrate()
+        stub.set_platform_os("macos")
+    end)
+
+    it("cc.bin passes frameworks through to link command", function()
+        local t = require("cook_cc.targets")
+        t.bin("app", { sources = { "src/main.c" }, frameworks = { "OpenGL" } })
+        local link_unit = stub.added_units()[#stub.added_units()]
+        assert.matches("%-framework OpenGL", link_unit.command)
+    end)
+
+    it("cc.lib exports frameworks via cook.export", function()
+        local t = require("cook_cc.targets")
+        t.lib("gfx", { sources = { "src/lib.c" }, frameworks = { "OpenGL" } })
+        local info = cook.import("gfx")
+        assert.same({ "OpenGL" }, info.frameworks)
+    end)
+end)
+
 describe("cc.headers", function()
     before_each(function()
         stub.reset(); stub.install()
