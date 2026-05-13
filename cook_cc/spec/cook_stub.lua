@@ -77,6 +77,7 @@ function M.install()
         export = function(name, info) export_store[name] = info end,
         import = function(name) return export_store[name] end,
         add_unit = function(u) added_units[#added_units + 1] = u end,
+        recipe = function(_name, _opts, body_fn) body_fn() end,
         sh = function(cmd)
             local pkg = pkg_dispatch(cmd)
             if pkg ~= nil then return pkg end
