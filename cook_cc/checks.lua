@@ -103,4 +103,9 @@ function M.has_define(name, opts)
     return "$<" .. key .. ">"
 end
 
+function M.sizeof(type_name, opts)
+    local key = register_check("sizeof", type_name, opts or {})
+    return "$<" .. key .. ">"
+end
+
 return M
