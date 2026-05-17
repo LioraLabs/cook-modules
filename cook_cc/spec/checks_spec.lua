@@ -158,3 +158,30 @@ describe("cook_cc.checks.endian", function()
         assert.is_true(found)
     end)
 end)
+
+describe("cook_cc.checks.has_compile_flag", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("returns a sigil string with kind=has-compile-flag and the sanitised flag name", function()
+        local checks = reload()
+        local s = checks.has_compile_flag("-Wno-unused")
+        assert.matches("^%$<cc:check:has%-compile%-flag:%-Wno%-unused:[0-9a-f]+>$", s)
+    end)
+
+    it("sanitises characters not valid in probe keys", function()
+        local checks = reload()
+        local s = checks.has_compile_flag("-Wl,--as-needed")
+        -- ',' becomes '_'
+        assert.matches("^%$<cc:check:has%-compile%-flag:%-Wl_%-%-as%-needed:[0-9a-f]+>$", s)
+    end)
+end)
+
+describe("cook_cc.checks.has_link_flag", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("returns a sigil string with kind=has-link-flag", function()
+        local checks = reload()
+        local s = checks.has_link_flag("-Wl,-no-undefined")
+        assert.matches("^%$<cc:check:has%-link%-flag:[^>]+:[0-9a-f]+>$", s)
+    end)
+end)
