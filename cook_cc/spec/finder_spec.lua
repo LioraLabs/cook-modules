@@ -1,82 +1,80 @@
 local stub = require("cook_stub")
 
-describe("cc.find integration", function()
-    before_each(function()
-        stub.reset(); stub.install()
-        package.loaded["cook_cc"] = nil
-        package.loaded["cook_cc.finder"] = nil
-        package.loaded["cook_cc.finders"] = nil
-        package.loaded["cook_cc.finders.pkg_config"] = nil
-        package.loaded["cook_cc.finders.bare_probe"] = nil
-        package.loaded["cook_cc.finders.cmake_compat"] = nil
-        package.loaded["cook_cc.finders.cmake_compat.hints"] = nil
-        stub.set_sh_handler("cc -print-search-dirs",
-            function() return "libraries: =/usr/lib\n" end)
-        stub.set_sh_handler("command -v cmake", function() return "" end)
+local function reload()
+    package.loaded["cook_cc.finder"] = nil
+    package.loaded["cook_cc.toolchain"] = nil
+    package.loaded["cook_cc.finders.bare_probe"] = nil
+    package.loaded["cook_cc.finders.cmake_compat"] = nil
+    return require("cook_cc.finder")
+end
+
+describe("cc.find probe registration", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("find(name) registers cc:find:<name> probe", function()
+        local finder = reload()
+        finder.find("raylib")
+        assert.is_not_nil(stub.probe_opts("cc:find:raylib"))
     end)
 
-    it("pkg-config hit populates v0.2 fields", function()
-        stub.set_pkg_config_response("foo", {
-            exists = true, cflags = "-I/usr/include/foo -DFOO=1",
-            libs = "-L/usr/lib -lfoo -lpthread", version = "1.0",
-        })
-        local cc = require("cook_cc")
-        local r = cc.find("foo")
-        assert.is_true(r.found)
-        assert.equals("-I/usr/include/foo -DFOO=1", r.cflags)
-        assert.same({ "foo", "pthread" }, r.system_libs)
-        assert.is_table(r.tried)
+    it("find(name) returns a sigil-record", function()
+        local finder = reload()
+        local r = finder.find("raylib")
+        assert.equals("$<cc:find:raylib.cflags>",       r.cflags)
+        assert.equals("$<cc:find:raylib.libs>",         r.libs)
+        assert.equals("$<cc:find:raylib.include_dirs>", r.include_dirs)
+        assert.equals("$<cc:find:raylib.system_libs>",  r.system_libs)
+        assert.equals("$<cc:find:raylib.frameworks>",   r.frameworks)
+        assert.equals("$<cc:find:raylib.found>",        r.found)
     end)
 
-    it("miss returns blank result with tried list", function()
-        local cc = require("cook_cc")
-        local r = cc.find("definitely_no_such_package_xyz_42")
-        assert.is_false(r.found)
-        assert.same({}, r.system_libs)
-        assert.is_table(r.tried)
-    end)
-end)
-
-describe("cc.find_or_error", function()
-    before_each(function()
-        stub.reset(); stub.install()
-        package.loaded["cook_cc"] = nil
-        package.loaded["cook_cc.finder"] = nil
-        package.loaded["cook_cc.finders"] = nil
-        package.loaded["cook_cc.finders.pkg_config"] = nil
-        package.loaded["cook_cc.finders.bare_probe"] = nil
-        package.loaded["cook_cc.finders.cmake_compat"] = nil
-        package.loaded["cook_cc.finders.cmake_compat.hints"] = nil
-        stub.set_sh_handler("cc -print-search-dirs",
-            function() return "libraries: =/usr/lib\n" end)
-        stub.set_sh_handler("command -v cmake", function() return "" end)
+    it("find(name) is idempotent — duplicate calls do not duplicate probe registration", function()
+        local finder = reload()
+        finder.find("raylib")
+        finder.find("raylib")
+        local count = 0
+        for _, k in ipairs(stub.probe_keys()) do
+            if k == "cc:find:raylib" then count = count + 1 end
+        end
+        assert.equals(1, count)
     end)
 
-    it("returns the result on hit", function()
-        stub.set_pkg_config_response("zlib", {
-            exists = true, cflags = "", libs = "-lz", version = "1.2.13",
-        })
-        local cc = require("cook_cc")
-        local r = cc.find_or_error("zlib")
-        assert.is_true(r.found)
+    it("find(name, opts) with conflicting opts on second call raises", function()
+        local finder = reload()
+        finder.find("raylib", { version = ">=4.0" })
+        assert.has_error(function()
+            finder.find("raylib", { version = ">=5.0" })
+        end)
     end)
 
-    it("raises on miss with formatted tried list", function()
-        local cc = require("cook_cc")
-        assert.error_matches(function() cc.find_or_error("nonesuch") end,
-            "%[cc%.find_or_error%].*nonesuch")
-    end)
-end)
-
-describe("cc.register_finder", function()
-    before_each(function()
-        stub.reset(); stub.install()
-        package.loaded["cook_cc"] = nil
-        package.loaded["cook_cc.finder"] = nil
+    it("find_or_error registers probe and returns sigil-record", function()
+        local finder = reload()
+        local r = finder.find_or_error("raylib")
+        assert.equals("$<cc:find:raylib.cflags>", r.cflags)
     end)
 
-    it("raises when finder is not a function", function()
-        local cc = require("cook_cc")
-        assert.has_error(function() cc.register_finder("bad", "not a fn") end)
+    it("probe inputs include cc:compiler:auto, cc:linker-search-dirs, cc:cmake-driver in requires", function()
+        local finder = reload()
+        finder.find("raylib")
+        local opts = stub.probe_opts("cc:find:raylib")
+        local reqs = {}
+        for _, k in ipairs(opts.inputs.requires or {}) do reqs[k] = true end
+        assert.is_true(reqs["cc:compiler:auto"], "expected cc:compiler:auto in requires")
+        assert.is_true(reqs["cc:linker-search-dirs"], "expected cc:linker-search-dirs in requires")
+        assert.is_true(reqs["cc:cmake-driver"], "expected cc:cmake-driver in requires")
+    end)
+
+    it("register_finder still works for project strategy", function()
+        local finder = reload()
+        finder.register("raylib", function(_)
+            return { found = true, cflags = "-I/from-project", libs = "-lraylib" }
+        end)
+        -- register() should not raise; it's a function-typecheck only.
+    end)
+
+    it("sigil-record cannot be mutated", function()
+        local finder = reload()
+        local r = finder.find("raylib")
+        assert.has_error(function() r.cflags = "spoofed" end)
     end)
 end)
