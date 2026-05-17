@@ -7,3 +7,6 @@
 
 # common
 .DS_Store
+
+# Local worktrees for isolated feature work
+.worktrees/
