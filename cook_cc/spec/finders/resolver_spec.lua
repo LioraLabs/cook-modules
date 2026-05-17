@@ -84,9 +84,11 @@ describe("finder resolver", function()
     end)
 
     it("consults cmake-compat after pkg-config in the default chain", function()
-        stub.set_sh_handler("command -v cmake", function() return "/usr/bin/cmake\n" end)
-        stub.set_sh_handler("cmake --find-package -DNAME=ZLIB",
-            function() return "ZLIB found.\n" end)  -- driver-detect probe
+        -- Driver detection moved to the cc:cmake-driver probe (SHI-221 T4);
+        -- inject the probe value directly instead of stubbing `command -v cmake`.
+        stub.set_probe_value("cc:cmake-driver",
+            { ok = true, path = "/usr/bin/cmake", binary = "/usr/bin/cmake",
+              version = "3.27.0", legacy_supported = true })
         stub.set_sh_handler("cmake --find-package -DNAME=Vendor",
             function(cmd)
                 if cmd:match("MODE=EXIST")   then return "Vendor found.\n" end
@@ -107,9 +109,9 @@ describe("finder resolver", function()
     end)
 
     it("lifts cmake-compat to position 3 when opts.cmake=true; pkg-config skipped", function()
-        stub.set_sh_handler("command -v cmake", function() return "/usr/bin/cmake\n" end)
-        stub.set_sh_handler("cmake --find-package -DNAME=ZLIB",
-            function() return "ZLIB found.\n" end)
+        stub.set_probe_value("cc:cmake-driver",
+            { ok = true, path = "/usr/bin/cmake", binary = "/usr/bin/cmake",
+              version = "3.27.0", legacy_supported = true })
         stub.set_sh_handler("cmake --find-package -DNAME=SDL3",
             function(cmd)
                 if cmd:match("MODE=EXIST")   then return "SDL3 found.\n" end
@@ -132,9 +134,9 @@ describe("finder resolver", function()
     end)
 
     it("uses distinct cache keys for cc.find('X') vs cc.find('X', {cmake=true})", function()
-        stub.set_sh_handler("command -v cmake", function() return "/usr/bin/cmake\n" end)
-        stub.set_sh_handler("cmake --find-package -DNAME=ZLIB",
-            function() return "ZLIB found.\n" end)
+        stub.set_probe_value("cc:cmake-driver",
+            { ok = true, path = "/usr/bin/cmake", binary = "/usr/bin/cmake",
+              version = "3.27.0", legacy_supported = true })
         local cmake_calls = 0
         stub.set_sh_handler("cmake --find-package -DNAME=SDL3",
             function(cmd)
