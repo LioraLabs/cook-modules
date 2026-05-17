@@ -1,9 +1,8 @@
 local stub = require("cook_stub")
 
 local function with_toolchain()
-    stub.set_sh_handler("command -v g++", function() return "/usr/bin/g++\n" end)
-    stub.set_sh_handler("command -v clang++", function() error("nope") end)
-    require("cook_cc.toolchain").rehydrate()
+    stub.set_probe_value("cc:compiler:auto", { cxx = "g++", cc = "gcc" })
+    require("cook_cc.toolchain").ensure_probe_registered()
 end
 
 local function reset_module(name)
@@ -30,11 +29,10 @@ describe("cc.bin", function()
         assert.equals("build/bin/app",     units[3].output)
     end)
 
-    it("registers known_targets in cook.cache", function()
+    it("registers known_targets in module-local state", function()
         local targets = require("cook_cc.targets")
         targets.bin("app", { sources = { "src/a.cpp" } })
-        local known = cook.cache.get("known_targets")
-        assert.same({ "app" }, known)
+        assert.same({ "app" }, targets._known())
     end)
 
     it("calls cook.export with compile_info for compile_commands", function()
@@ -191,10 +189,10 @@ describe("targets frameworks", function()
         package.loaded["cook_cc.targets"] = nil
         package.loaded["cook_cc.cc"] = nil
         package.loaded["cook_cc.toolchain"] = nil
-        stub.set_sh_handler("command -v g++", function() return "/usr/bin/g++\n" end)
+        package.loaded["cook_cc.transitive"] = nil
         stub.set_sh_handler("__exists", function() return true end)
-        local toolchain = require("cook_cc.toolchain")
-        toolchain.rehydrate()
+        stub.set_probe_value("cc:compiler:auto", { cxx = "g++", cc = "gcc" })
+        require("cook_cc.toolchain").ensure_probe_registered()
         stub.set_platform_os("macos")
     end)
 
