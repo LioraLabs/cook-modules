@@ -231,3 +231,33 @@ describe("cc.headers", function()
         assert.same({ "include/" }, info.includes)
     end)
 end)
+
+describe("known_targets module-local state (T5)", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        package.loaded["cook_cc.targets"]    = nil
+        package.loaded["cook_cc.compile_db"] = nil
+    end)
+
+    it("targets._known() exposes a list accessor", function()
+        local tg = require("cook_cc.targets")
+        local list = tg._known()
+        assert.is_table(list)
+        assert.equals(0, #list)
+    end)
+
+    it("compile_db.write reads from targets._known, not cook.cache.get", function()
+        local db = require("cook_cc.compile_db")
+        -- No targets registered and no cook.cache entry — write should produce []
+        db.write()
+        local units = stub.added_units()
+        local found = false
+        for _, u in ipairs(units) do
+            if u.kind == "fs.write" and u.path == "compile_commands.json" then
+                assert.equals("[]\n", u.content)
+                found = true
+            end
+        end
+        assert.is_true(found, "expected fs.write to compile_commands.json")
+    end)
+end)

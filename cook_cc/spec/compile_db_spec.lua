@@ -3,12 +3,14 @@ local stub = require("cook_stub")
 describe("cc.compile_commands", function()
     before_each(function()
         stub.reset(); stub.install()
+        package.loaded["cook_cc.targets"]    = nil
         package.loaded["cook_cc.compile_db"] = nil
         stub.set_sh_handler("pwd", function() return "/proj\n" end)
     end)
 
     it("writes one entry per source per known target", function()
-        cook.cache.set("known_targets", { "app" })
+        local tg = require("cook_cc.targets")
+        tg._known_list[#tg._known_list + 1] = "app"
         cook.export("app", {
             compile_info = {
                 sources = { "src/a.cpp", "src/b.cpp" },
@@ -37,7 +39,8 @@ describe("cc.compile_commands", function()
     end)
 
     it("uses gcc instead of cxx for .c sources", function()
-        cook.cache.set("known_targets", { "app" })
+        local tg = require("cook_cc.targets")
+        tg._known_list[#tg._known_list + 1] = "app"
         cook.export("app", {
             compile_info = {
                 sources = { "src/main.c" },
@@ -59,7 +62,6 @@ describe("cc.compile_commands", function()
     end)
 
     it("emits an empty array when there are no known targets", function()
-        cook.cache.set("known_targets", nil)
         local cjson = require("cjson")
         local db = require("cook_cc.compile_db")
         db.write()
