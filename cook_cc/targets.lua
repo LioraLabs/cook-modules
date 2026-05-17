@@ -3,12 +3,15 @@ local toolchain  = require("cook_cc.toolchain")
 local transitive = require("cook_cc.transitive")
 
 local M = {}
+M._known_list = M._known_list or {}     -- per-VM accumulator
+
+function M._known()
+    return M._known_list
+end
 
 local function register_known(name)
-    local known = cook.cache.get("known_targets") or {}
-    for _, n in ipairs(known) do if n == name then return end end
-    known[#known + 1] = name
-    cook.cache.set("known_targets", known)
+    for _, n in ipairs(M._known_list) do if n == name then return end end
+    M._known_list[#M._known_list + 1] = name
 end
 
 local function gather_sources(opts)
