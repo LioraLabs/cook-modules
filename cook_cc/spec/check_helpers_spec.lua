@@ -1,0 +1,115 @@
+local stub = require("cook_stub")
+
+local function reload()
+    package.loaded["cook_cc._check_helpers"] = nil
+    return require("cook_cc._check_helpers")
+end
+
+describe("cook_cc._check_helpers.fingerprint", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("is stable for equal opts", function()
+        local h = reload()
+        assert.equals(h.fingerprint({ standard = "c11" }), h.fingerprint({ standard = "c11" }))
+    end)
+
+    it("is order-independent across opts keys", function()
+        local h = reload()
+        local a = h.fingerprint({ standard = "c11", extra_cflags = "-O2" })
+        local b = h.fingerprint({ extra_cflags = "-O2", standard = "c11" })
+        assert.equals(a, b)
+    end)
+
+    it("differs when defines differ", function()
+        local h = reload()
+        local a = h.fingerprint({ defines = { "FOO" } })
+        local b = h.fingerprint({ defines = { "FOO", "BAR" } })
+        assert.is_not.equals(a, b)
+    end)
+
+    it("returns 8 hex chars", function()
+        local h = reload()
+        assert.matches("^[0-9a-f]+$", h.fingerprint({}))
+        assert.equals(8, #h.fingerprint({}))
+    end)
+end)
+
+describe("cook_cc._check_helpers.probe_c", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("has-header emits an #include and main", function()
+        local h = reload()
+        local src = h.probe_c("has-header", "stdint.h", {})
+        assert.matches("#include <stdint%.h>", src)
+        assert.matches("int main", src)
+    end)
+
+    it("has-function emits an #include and a reference", function()
+        local h = reload()
+        local src = h.probe_c("has-function", "strdup", { includes = { "string.h" } })
+        assert.matches("#include <string%.h>", src)
+        assert.matches("strdup", src)
+    end)
+
+    it("has-define emits an #ifndef … #error guard", function()
+        local h = reload()
+        local src = h.probe_c("has-define", "__GNUC__", {})
+        assert.matches("#ifndef __GNUC__", src)
+        assert.matches("#error", src)
+    end)
+
+    it("sizeof emits a printf-of-sizeof", function()
+        local h = reload()
+        local src = h.probe_c("sizeof", "long", {})
+        assert.matches('printf%("%%d', src)
+        assert.matches("sizeof%(long%)", src)
+    end)
+
+    it("endian emits a probe that prints little/big from a byte-order constant", function()
+        local h = reload()
+        local src = h.probe_c("endian", "", {})
+        assert.matches("little", src)
+        assert.matches("big", src)
+    end)
+
+    it("has-compile-flag emits a trivial main", function()
+        local h = reload()
+        local src = h.probe_c("has-compile-flag", "-Wno-unused", {})
+        assert.matches("int main", src)
+    end)
+
+    it("has-link-flag emits a trivial main", function()
+        local h = reload()
+        local src = h.probe_c("has-link-flag", "-Wl,-no-undefined", {})
+        assert.matches("int main", src)
+    end)
+end)
+
+describe("cook_cc._check_helpers.evaluate", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("has-header returns true when compile ok", function()
+        local h = reload()
+        assert.equals(true, h.evaluate("has-header", true, ""))
+    end)
+
+    it("has-header returns false when compile fails", function()
+        local h = reload()
+        assert.equals(false, h.evaluate("has-header", false, ""))
+    end)
+
+    it("sizeof returns parsed integer from stdout", function()
+        local h = reload()
+        assert.equals(8, h.evaluate("sizeof", true, "8\n"))
+    end)
+
+    it("endian returns the captured string trimmed", function()
+        local h = reload()
+        assert.equals("little", h.evaluate("endian", true, "little\n"))
+    end)
+
+    it("integer-kind on compile-failure surfaces as nil", function()
+        local h = reload()
+        assert.is_nil(h.evaluate("sizeof", false, ""))
+    end)
+end)
