@@ -1,0 +1,25 @@
+local stub = require("cook_stub")
+
+describe("cook_stub probe API", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("captures cook.probe registrations", function()
+        cook.probe("cc:test", { inputs = {}, produce = "return 42" })
+        assert.same({ "cc:test" }, stub.probe_keys())
+        local opts = stub.probe_opts("cc:test")
+        assert.equals("return 42", opts.produce)
+    end)
+
+    it("rejects duplicate cook.probe key", function()
+        cook.probe("cc:dup", { inputs = {}, produce = "return 1" })
+        assert.has_error(function()
+            cook.probe("cc:dup", { inputs = {}, produce = "return 2" })
+        end, "[cook_stub] duplicate cook.probe key 'cc:dup'")
+    end)
+
+    it("set_probe_value lets tests inject probe outcomes", function()
+        stub.set_probe_value("cc:test", { x = 1 })
+        cook.probe("cc:test", { inputs = {}, produce = "return {x=1}" })
+        assert.same({ x = 1 }, cook.cache.get("cc:test"))
+    end)
+end)
