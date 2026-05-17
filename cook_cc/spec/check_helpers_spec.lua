@@ -32,6 +32,13 @@ describe("cook_cc._check_helpers.fingerprint", function()
         assert.matches("^[0-9a-f]+$", h.fingerprint({}))
         assert.equals(8, #h.fingerprint({}))
     end)
+
+    it("differs when system_libs differ", function()
+        local h = reload()
+        local a = h.fingerprint({ system_libs = { "m" } })
+        local b = h.fingerprint({ system_libs = { "m", "pthread" } })
+        assert.is_not.equals(a, b)
+    end)
 end)
 
 describe("cook_cc._check_helpers.probe_c", function()
