@@ -111,3 +111,30 @@ describe("cook_cc.checks.has_define", function()
         assert.is_true(found)
     end)
 end)
+
+describe("cook_cc.checks.sizeof", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("returns a sigil string with kind=sizeof and the type name", function()
+        local checks = reload()
+        local s = checks.sizeof("long")
+        assert.matches("^%$<cc:check:sizeof:long:[0-9a-f]+>$", s)
+    end)
+
+    it("registers a cc:check:sizeof:<name>:<fp> probe", function()
+        local checks = reload()
+        checks.sizeof("long")
+        local found = false
+        for _, k in ipairs(stub.probe_keys()) do
+            if k:match("^cc:check:sizeof:long:[0-9a-f]+$") then found = true end
+        end
+        assert.is_true(found)
+    end)
+
+    it("idempotent across repeat calls", function()
+        local checks = reload()
+        local a = checks.sizeof("int")
+        local b = checks.sizeof("int")
+        assert.equals(a, b)
+    end)
+end)
