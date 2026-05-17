@@ -13,7 +13,7 @@ describe("cook_cc.checks.has_header", function()
     it("returns a sigil string with kind=has-header and the header name", function()
         local checks = reload()
         local s = checks.has_header("stdint.h")
-        assert.matches("^%$<cc:check:has%-header:stdint%.h:[0-9a-f]+>$", s)
+        assert.matches("^%$<cc:check:has%-header:stdint_h:[0-9a-f]+>$", s)
     end)
 
     it("registers a cc:check:has-header:<name>:<fp> probe", function()
@@ -21,7 +21,7 @@ describe("cook_cc.checks.has_header", function()
         checks.has_header("stdint.h")
         local found = false
         for _, k in ipairs(stub.probe_keys()) do
-            if k:match("^cc:check:has%-header:stdint%.h:[0-9a-f]+$") then found = true end
+            if k:match("^cc:check:has%-header:stdint_h:[0-9a-f]+$") then found = true end
         end
         assert.is_true(found)
     end)
@@ -46,7 +46,7 @@ describe("cook_cc.checks.has_header", function()
         assert.equals(s1, s2)
         local count = 0
         for _, k in ipairs(stub.probe_keys()) do
-            if k:match("^cc:check:has%-header:stdint%.h:") then count = count + 1 end
+            if k:match("^cc:check:has%-header:stdint_h:") then count = count + 1 end
         end
         assert.equals(1, count)
     end)

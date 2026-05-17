@@ -88,23 +88,31 @@ local function register_check(kind, name, opts, extra_flag)
     return key
 end
 
+-- Strict probe-key <name> sanitiser. The sigil resolver in
+-- cli/crates/cook-luagen/src/resolver.rs splits "$<key.field>" at the
+-- first '.' after the colon section, so '.' MUST NOT appear in the
+-- <name> segment of a probe key. Allowed charset: [A-Za-z0-9_+-].
+local function sanitise_name(s)
+    return (s:gsub("[^%w%+%-_]", "_"))
+end
+
 function M.has_header(name, opts)
-    local key = register_check("has-header", name, opts or {})
+    local key = register_check("has-header", sanitise_name(name), opts or {})
     return "$<" .. key .. ">"
 end
 
 function M.has_function(name, opts)
-    local key = register_check("has-function", name, opts or {})
+    local key = register_check("has-function", sanitise_name(name), opts or {})
     return "$<" .. key .. ">"
 end
 
 function M.has_define(name, opts)
-    local key = register_check("has-define", name, opts or {})
+    local key = register_check("has-define", sanitise_name(name), opts or {})
     return "$<" .. key .. ">"
 end
 
 function M.sizeof(type_name, opts)
-    local key = register_check("sizeof", type_name, opts or {})
+    local key = register_check("sizeof", sanitise_name(type_name), opts or {})
     return "$<" .. key .. ">"
 end
 
@@ -113,18 +121,14 @@ function M.endian()
     return "$<" .. key .. ">"
 end
 
-local function sanitise(flag)
-    return (flag:gsub("[^%w%.%+%-_]", "_"))
-end
-
 function M.has_compile_flag(flag)
-    local name = sanitise(flag)
+    local name = sanitise_name(flag)
     local key  = register_check("has-compile-flag", name, {}, flag)
     return "$<" .. key .. ">"
 end
 
 function M.has_link_flag(flag)
-    local name = sanitise(flag)
+    local name = sanitise_name(flag)
     local key  = register_check("has-link-flag", name, {}, flag)
     return "$<" .. key .. ">"
 end
