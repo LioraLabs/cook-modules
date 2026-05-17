@@ -1,10 +1,8 @@
 local stub = require("cook_stub")
 
 local function with_toolchain()
-    stub.set_sh_handler("command -v g++", function() return "/usr/bin/g++\n" end)
-    stub.set_sh_handler("command -v clang++", function() error("nope") end)
-    local toolchain = require("cook_cc.toolchain")
-    toolchain.rehydrate()
+    stub.set_probe_value("cc:compiler:auto", { cxx = "g++", cc = "gcc" })
+    require("cook_cc.toolchain").ensure_probe_registered()
 end
 
 describe("cc.compile", function()
@@ -16,22 +14,22 @@ describe("cc.compile", function()
         with_toolchain()
     end)
 
-    it("emits a g++ command for a .cpp source", function()
+    it("emits a $<cc:compiler:auto.cxx> sigil command for a .cpp source", function()
         local cc = require("cook_cc.cc")
         local obj = cc.compile("src/main.cpp", { target_name = "app" })
         local units = stub.added_units()
         assert.equals(1, #units)
         assert.equals("build/obj/app/main.o", units[1].output)
-        assert.matches("^g%+%+ ", units[1].command)
+        assert.matches("^%$<cc:compiler:auto%.cxx> ", units[1].command)
         assert.matches(" %-c ", units[1].command)
         assert.matches(" src/main%.cpp ", units[1].command)
         assert.equals(obj, "build/obj/app/main.o")
     end)
 
-    it("emits a gcc command for a .c source", function()
+    it("emits a $<cc:compiler:auto.cc> sigil command for a .c source", function()
         local cc = require("cook_cc.cc")
         cc.compile("src/main.c", { target_name = "app" })
-        assert.matches("^gcc ", stub.added_units()[1].command)
+        assert.matches("^%$<cc:compiler:auto%.cc> ", stub.added_units()[1].command)
     end)
 
     it("includes -std flag for C++ sources when standard is set", function()
@@ -98,7 +96,7 @@ describe("cc.link", function()
         with_toolchain()
     end)
 
-    it("emits a g++ link with -l<name> per system_lib", function()
+    it("emits a $<cc:compiler:auto.cxx> link with -l<name> per system_lib", function()
         local cc = require("cook_cc.cc")
         cc.link(
             { "build/obj/app/main.o" },
@@ -106,7 +104,7 @@ describe("cc.link", function()
             { system_libs = { "m", "pthread" } }
         )
         local cmd = stub.added_units()[1].command
-        assert.matches("^g%+%+ ", cmd)
+        assert.matches("^%$<cc:compiler:auto%.cxx> ", cmd)
         assert.matches(" %-o build/bin/app ", cmd)
         assert.matches(" %-lm ", cmd)
         assert.matches(" %-lpthread ", cmd)

@@ -17,9 +17,8 @@ local function reset_modules()
 end
 
 local function with_toolchain()
-    stub.set_sh_handler("command -v g++", function() return "/usr/bin/g++\n" end)
-    stub.set_sh_handler("command -v clang++", function() error("nope") end)
-    require("cook_cc.toolchain").rehydrate()
+    stub.set_probe_value("cc:compiler:auto", { cxx = "g++", cc = "gcc" })
+    require("cook_cc.toolchain").ensure_probe_registered()
 end
 
 -- Install a deferred-recipe variant: cook.recipe captures the registration
