@@ -64,3 +64,50 @@ describe("cook_cc.checks.has_header", function()
         assert.equals(s, checks.has_header("stdint.h", { standard = "c11" }))
     end)
 end)
+
+describe("cook_cc.checks.has_function", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("returns a sigil string with kind=has-function and the function name", function()
+        local checks = reload()
+        local s = checks.has_function("strdup", { includes = { "string.h" } })
+        assert.matches("^%$<cc:check:has%-function:strdup:[0-9a-f]+>$", s)
+    end)
+
+    it("registers a cc:check:has-function:<name>:<fp> probe", function()
+        local checks = reload()
+        checks.has_function("strdup", { includes = { "string.h" } })
+        local found = false
+        for _, k in ipairs(stub.probe_keys()) do
+            if k:match("^cc:check:has%-function:strdup:[0-9a-f]+$") then found = true end
+        end
+        assert.is_true(found)
+    end)
+
+    it("is idempotent", function()
+        local checks = reload()
+        local a = checks.has_function("strdup")
+        local b = checks.has_function("strdup")
+        assert.equals(a, b)
+    end)
+end)
+
+describe("cook_cc.checks.has_define", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("returns a sigil string with kind=has-define and the macro name", function()
+        local checks = reload()
+        local s = checks.has_define("__GNUC__")
+        assert.matches("^%$<cc:check:has%-define:__GNUC__:[0-9a-f]+>$", s)
+    end)
+
+    it("registers a cc:check:has-define:<name>:<fp> probe", function()
+        local checks = reload()
+        checks.has_define("__GNUC__")
+        local found = false
+        for _, k in ipairs(stub.probe_keys()) do
+            if k:match("^cc:check:has%-define:__GNUC__:[0-9a-f]+$") then found = true end
+        end
+        assert.is_true(found)
+    end)
+end)
