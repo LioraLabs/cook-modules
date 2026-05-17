@@ -3,6 +3,8 @@
 
 local M = {}
 
+local probe_registrations = {}      -- key -> opts
+local probe_values        = {}      -- key -> any (injected by tests)
 local cache_store = {}
 local export_store = {}
 local added_units = {}
@@ -21,6 +23,23 @@ function M.reset()
     tool_responses = {}
     file_exists_set = {}
     platform_os = "linux"
+    probe_registrations = {}
+    probe_values        = {}
+end
+
+function M.probe_keys()
+    local keys = {}
+    for k in pairs(probe_registrations) do keys[#keys + 1] = k end
+    table.sort(keys)
+    return keys
+end
+
+function M.probe_opts(key)
+    return probe_registrations[key]
+end
+
+function M.set_probe_value(key, value)
+    probe_values[key] = value
 end
 
 function M.set_platform_os(os)
@@ -71,9 +90,18 @@ function M.install()
             if k == "os" then return platform_os end
         end }),
         cache = {
-            get = function(k) return cache_store[k] end,
+            get = function(k)
+                if cache_store[k] ~= nil then return cache_store[k] end
+                return probe_values[k]
+            end,
             set = function(k, v) cache_store[k] = v end,
         },
+        probe = function(key, opts)
+            if probe_registrations[key] ~= nil then
+                error("[cook_stub] duplicate cook.probe key '" .. key .. "'")
+            end
+            probe_registrations[key] = opts
+        end,
         export = function(name, info) export_store[name] = info end,
         import = function(name) return export_store[name] end,
         add_unit = function(u) added_units[#added_units + 1] = u end,
