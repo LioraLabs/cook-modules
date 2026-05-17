@@ -138,3 +138,23 @@ describe("cook_cc.checks.sizeof", function()
         assert.equals(a, b)
     end)
 end)
+
+describe("cook_cc.checks.endian", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("returns a sigil string with kind=endian", function()
+        local checks = reload()
+        local s = checks.endian()
+        assert.matches("^%$<cc:check:endian:_:[0-9a-f]+>$", s)
+    end)
+
+    it("registers a cc:check:endian:_:<fp> probe", function()
+        local checks = reload()
+        checks.endian()
+        local found = false
+        for _, k in ipairs(stub.probe_keys()) do
+            if k:match("^cc:check:endian:_:[0-9a-f]+$") then found = true end
+        end
+        assert.is_true(found)
+    end)
+end)

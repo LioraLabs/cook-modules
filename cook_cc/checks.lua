@@ -108,4 +108,9 @@ function M.sizeof(type_name, opts)
     return "$<" .. key .. ">"
 end
 
+function M.endian()
+    local key = register_check("endian", "_", {})
+    return "$<" .. key .. ">"
+end
+
 return M
