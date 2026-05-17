@@ -7,8 +7,7 @@ local db        = require("cook_cc.compile_db")
 local M = {}
 
 function M.init()
-    -- Loader-contract hook (Standard §6.3.4). Called once per VM.
-    toolchain.rehydrate()
+    -- Toolchain probe is registered lazily on first get_compiler() / target-maker call.
 end
 
 -- Public surface (Standard §9.2 contract).
