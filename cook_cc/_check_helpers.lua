@@ -29,6 +29,7 @@ function M.fingerprint(opts)
         "lf=" .. (opts.extra_ldflags or ""),
         "df=" .. list_to_str(opts.defines),
         "in=" .. list_to_str(opts.includes),
+        "sl=" .. list_to_str(opts.system_libs),
     }
     return fnv1a(table.concat(parts, "|"))
 end
