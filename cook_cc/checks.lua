@@ -93,4 +93,14 @@ function M.has_header(name, opts)
     return "$<" .. key .. ">"
 end
 
+function M.has_function(name, opts)
+    local key = register_check("has-function", name, opts or {})
+    return "$<" .. key .. ">"
+end
+
+function M.has_define(name, opts)
+    local key = register_check("has-define", name, opts or {})
+    return "$<" .. key .. ">"
+end
+
 return M
