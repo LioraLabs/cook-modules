@@ -113,4 +113,20 @@ function M.endian()
     return "$<" .. key .. ">"
 end
 
+local function sanitise(flag)
+    return (flag:gsub("[^%w%.%+%-_]", "_"))
+end
+
+function M.has_compile_flag(flag)
+    local name = sanitise(flag)
+    local key  = register_check("has-compile-flag", name, {}, flag)
+    return "$<" .. key .. ">"
+end
+
+function M.has_link_flag(flag)
+    local name = sanitise(flag)
+    local key  = register_check("has-link-flag", name, {}, flag)
+    return "$<" .. key .. ">"
+end
+
 return M
