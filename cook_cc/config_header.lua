@@ -45,6 +45,25 @@ local function build_vars_literal(vars)
     return "{ " .. table.concat(entries, ", ") .. " }", probes
 end
 
+local function recipe_name_for(output)
+    -- Synthesize a stable recipe name from the output path so consumers can
+    -- declare a `requires` against it. Sanitize separators / dots into _.
+    local sanitized = output:gsub("[/.]", "_")
+    return "__cc_config_header__" .. sanitized
+end
+
+-- Register a synthetic recipe whose body emits the config-header generation
+-- unit. CS-0077 (SHI-222) — the new register_cookfile model keeps the
+-- body_slot=None during top-level register-block execution, so cook.add_unit
+-- at top level errors "called outside a recipe body". Wrapping in cook.recipe
+-- mirrors the other target-makers (cc.bin/lib/shared/archive/headers) and
+-- gives the caller a recipe name they can declare a `requires` against:
+--
+--     local cfg = cc.config_header(template, output, vars)
+--     cc.bin("game", { sources = {...}, requires = { cfg } })
+--
+-- Pre-0.7.0 this function returned the output path; consumers that relied on
+-- the return value as a file path must migrate to declaring `requires`.
 function M.config_header(template, output, vars)
     vars = vars or {}
     local vars_literal, probes = build_vars_literal(vars)
@@ -52,13 +71,16 @@ function M.config_header(template, output, vars)
         .. " " .. template
         .. " " .. output
         .. " " .. shell_quote(vars_literal)
-    cook.add_unit({
-        inputs  = { template },
-        output  = output,
-        command = cmd,
-        probes  = probes,
-    })
-    return output
+    local recipe = recipe_name_for(output)
+    cook.recipe(recipe, { requires = {} }, function()
+        cook.add_unit({
+            inputs  = { template },
+            output  = output,
+            command = cmd,
+            probes  = probes,
+        })
+    end)
+    return recipe
 end
 
 setmetatable(M, { __call = function(_, ...) return M.config_header(...) end })
