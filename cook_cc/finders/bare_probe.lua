@@ -17,7 +17,17 @@ local function produce_body()
     ]]
 end
 
-local function ensure_probe()
+-- Registers the `cc:linker-search-dirs` probe on the active register VM.
+-- Must be called during the register phase, before any worker-VM consumer
+-- (curated finders, `bare_strategy`, `cmake_strategy`) loads this module
+-- from inside a probe produce body. Idempotent.
+--
+-- Pre-0.7.1 this ran unconditionally at module top-level on require, which
+-- crashed the worker VM: `cook.probe` is a register-only guard there
+-- (Standard §22.5.2), so re-requiring this module during execute phase
+-- raised. The fix is to keep the top-level side-effect-free and call this
+-- explicitly from `cook_cc.finder.register_find_probe` during register.
+function M.ensure_probe_registered()
     if probe_registered then return end
     cook.probe(PROBE_KEY, {
         inputs = { tools = { "cc" }, env = { "LIBRARY_PATH" } },
@@ -25,8 +35,6 @@ local function ensure_probe()
     })
     probe_registered = true
 end
-
-ensure_probe()
 
 local function search_dirs()
     return cook.cache.get(PROBE_KEY) or { "/usr/lib", "/usr/local/lib" }

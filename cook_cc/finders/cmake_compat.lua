@@ -24,7 +24,16 @@ local function produce_driver_body()
     ]]
 end
 
-local function ensure_driver_probe()
+-- Registers the `cc:cmake-driver` probe on the active register VM. Must
+-- be called during the register phase, before `cmake_strategy` re-requires
+-- this module from inside a probe produce body on the worker VM where
+-- `cook.probe` is a register-only guard (Standard §22.5.2). Idempotent.
+--
+-- Pre-0.7.1 this registration ran at module top-level on require, which
+-- raised on the worker VM during execute phase. The fix routes the call
+-- through `cook_cc.finder.register_find_probe` during register and keeps
+-- the module's top-level free of register-only side effects.
+function M.ensure_probe_registered()
     if driver_probe_registered then return end
     cook.probe(PROBE_KEY_DRIVER, {
         inputs = { tools = { "cmake" }, env = { "CMAKE_PREFIX_PATH" } },
@@ -32,8 +41,6 @@ local function ensure_driver_probe()
     })
     driver_probe_registered = true
 end
-
-ensure_driver_probe()
 
 local function driver()
     return cook.cache.get(PROBE_KEY_DRIVER)

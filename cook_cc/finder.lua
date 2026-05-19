@@ -97,9 +97,16 @@ end
 
 local function register_find_probe(name, opts, raise_on_miss)
     -- Ensure dependency-probes are registered so requires-edges resolve.
+    -- Each `ensure_probe_registered` call is idempotent and side-effect-only
+    -- on the register VM; the worker VM never reaches this code path
+    -- (`register_find_probe` is called from `cc.find` / `cc.find_or_error`,
+    -- both register-only). We register the upstream probes explicitly here
+    -- rather than relying on the module's top-level so that re-requiring
+    -- `bare_probe` / `cmake_compat` from a worker-VM probe body (curated
+    -- finders, `bare_strategy`, `cmake_strategy`) is side-effect-free.
     toolchain.ensure_probe_registered()
-    require("cook_cc.finders.bare_probe")
-    require("cook_cc.finders.cmake_compat")
+    require("cook_cc.finders.bare_probe").ensure_probe_registered()
+    require("cook_cc.finders.cmake_compat").ensure_probe_registered()
 
     cook.probe("cc:find:" .. name, {
         inputs = {
