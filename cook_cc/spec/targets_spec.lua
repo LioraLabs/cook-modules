@@ -203,9 +203,11 @@ describe("targets frameworks", function()
         assert.matches("%-framework OpenGL", link_unit.command)
     end)
 
-    it("cc.lib exports frameworks via cook.export", function()
+    it("cc.lib exports frameworks via cook.export (CS-0080: export_frameworks)", function()
         local t = require("cook_cc.targets")
-        t.lib("gfx", { sources = { "src/lib.c" }, frameworks = { "OpenGL" } })
+        -- Updated for CS-0080: PRIVATE-by-default flips bare `frameworks` to
+        -- target-local; explicit propagation is via `export_frameworks`.
+        t.lib("gfx", { sources = { "src/lib.c" }, export_frameworks = { "OpenGL" } })
         local info = cook.import("gfx")
         assert.same({ "OpenGL" }, info.frameworks)
     end)
@@ -257,5 +259,187 @@ describe("known_targets module-local state (T5)", function()
             end
         end
         assert.is_true(found, "expected fs.write to compile_commands.json")
+    end)
+end)
+
+describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
+        for _, m in ipairs({
+            "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
+        }) do reset_module(m) end
+        with_toolchain()
+    end)
+
+    -- ----- defines ---------------------------------------------------
+
+    it("bare `defines` on cc.lib does NOT propagate to consumer compile (PRIVATE)", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources = { "src/foo.c" },
+            defines = { "FOO_INTERNAL" },
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        for _, u in ipairs(stub.added_units()) do
+            if u.output and u.output:match("^build/obj/app/") then
+                assert.is_nil(u.command:match("%-DFOO_INTERNAL"),
+                    "app compile MUST NOT carry FOO_INTERNAL (bare define is PRIVATE)")
+            end
+        end
+    end)
+
+    it("`export_defines` on cc.lib DOES propagate to consumer compile (PUBLIC)", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources        = { "src/foo.c" },
+            defines        = { "FOO_INTERNAL" },
+            export_defines = { "USE_FOO" },
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        local app_compiles = {}
+        for _, u in ipairs(stub.added_units()) do
+            if u.output and u.output:match("^build/obj/app/") then
+                app_compiles[#app_compiles + 1] = u
+            end
+        end
+        assert.is_true(#app_compiles > 0, "expected at least one app compile")
+        for _, u in ipairs(app_compiles) do
+            assert.matches(" %-DUSE_FOO ", u.command,
+                "app compile MUST carry USE_FOO (export_defines propagates)")
+            assert.is_nil(u.command:match("%-DFOO_INTERNAL"),
+                "bare define on lib still leaks (would mean PRIVATE rule broken)")
+        end
+    end)
+
+    -- ----- system_libs ----------------------------------------------
+
+    it("bare `system_libs` on cc.lib does NOT propagate to consumer link (PRIVATE)", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources     = { "src/foo.c" },
+            system_libs = { "m" },
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        local link = stub.added_units()[#stub.added_units()]
+        assert.is_nil(link.command:match(" %-lm "),
+            "app link MUST NOT carry -lm (bare system_libs on lib is PRIVATE)")
+    end)
+
+    it("`export_system_libs` on cc.lib DOES propagate to consumer link (PUBLIC)", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources            = { "src/foo.c" },
+            system_libs        = { "m" },        -- bare: stays PRIVATE
+            export_system_libs = { "dl" },       -- PUBLIC
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        local link = stub.added_units()[#stub.added_units()]
+        assert.matches(" %-ldl ", link.command,
+            "app link MUST carry -ldl (export_system_libs propagates)")
+        assert.is_nil(link.command:match(" %-lm "),
+            "bare system_libs MUST NOT leak alongside the export")
+    end)
+
+    -- ----- frameworks ----------------------------------------------
+
+    it("bare `frameworks` on cc.lib does NOT propagate to consumer link (PRIVATE)", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources    = { "src/foo.c" },
+            frameworks = { "Carbon" },
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        local link = stub.added_units()[#stub.added_units()]
+        assert.is_nil(link.command:match("%-framework Carbon"),
+            "app link MUST NOT carry -framework Carbon (PRIVATE)")
+    end)
+
+    it("`export_frameworks` on cc.lib DOES propagate to consumer link (PUBLIC)", function()
+        stub.set_platform_os("macos")  -- cc.link emits -framework only on macOS
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources           = { "src/foo.c" },
+            export_frameworks = { "OpenGL" },
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        local link = stub.added_units()[#stub.added_units()]
+        assert.matches("%-framework OpenGL", link.command,
+            "app link MUST carry -framework OpenGL (export_frameworks propagates)")
+    end)
+
+    -- ----- extra_ldflags --------------------------------------------
+
+    it("bare `extra_ldflags` on cc.lib does NOT propagate to consumer link (PRIVATE)", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources       = { "src/foo.c" },
+            extra_ldflags = "-Wl,--internal-flag",
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        local link = stub.added_units()[#stub.added_units()]
+        assert.is_nil(link.command:match("%-%-internal%-flag"),
+            "app link MUST NOT carry the lib's bare extra_ldflags (PRIVATE)")
+    end)
+
+    it("`export_extra_ldflags` on cc.lib DOES propagate to consumer link (PUBLIC)", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources              = { "src/foo.c" },
+            export_extra_ldflags = "-Wl,--public-flag",
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        local link = stub.added_units()[#stub.added_units()]
+        assert.matches("%-%-public%-flag", link.command,
+            "app link MUST carry the lib's export_extra_ldflags")
+    end)
+
+    -- ----- backcompat: export_includes fall-back stays green --------
+
+    it("`export_includes` absent → falls back to `includes` (CS-0080 backcompat carve-out)", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", {
+            sources  = { "src/foo.c" },
+            includes = { "foolib/include/" },
+        })
+        targets.bin("app", {
+            sources = { "src/main.c" },
+            links   = { "foolib" },
+        })
+        local app_compiles = {}
+        for _, u in ipairs(stub.added_units()) do
+            if u.output and u.output:match("^build/obj/app/") then
+                app_compiles[#app_compiles + 1] = u
+            end
+        end
+        assert.is_true(#app_compiles > 0, "expected at least one app compile")
+        for _, u in ipairs(app_compiles) do
+            assert.matches(" %-Ifoolib/include/ ", u.command,
+                "export_includes fall-back to includes MUST stay (backcompat)")
+        end
     end)
 end)

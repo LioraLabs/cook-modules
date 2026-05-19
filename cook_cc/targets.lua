@@ -57,7 +57,11 @@ local function build_opts(opts, kind)
         warnings      = opts.warnings,
         extra_cflags  = opts.extra_cflags,
         extra_ldflags = opts.extra_ldflags,
-        export_includes = opts.export_includes,
+        export_includes      = opts.export_includes,
+        export_defines       = opts.export_defines,
+        export_system_libs   = opts.export_system_libs,
+        export_frameworks    = opts.export_frameworks,
+        export_extra_ldflags = opts.export_extra_ldflags,
         links         = opts.links or {},
         fpic          = (kind == "shared"),
     }
@@ -65,11 +69,11 @@ end
 
 local function record_export(name, sources, b, lib_path)
     cook.export(name, {
-        includes      = b.export_includes or b.includes,
-        defines       = b.defines,
-        system_libs   = b.system_libs,
-        frameworks    = b.frameworks,
-        extra_ldflags = b.extra_ldflags or "",
+        includes      = b.export_includes or b.includes,        -- backcompat fall-back (CS-0080 §28.4)
+        defines       = b.export_defines       or {},           -- PRIVATE-by-default; explicit-public only
+        system_libs   = b.export_system_libs   or {},           -- PRIVATE-by-default
+        frameworks    = b.export_frameworks    or {},           -- PRIVATE-by-default
+        extra_ldflags = b.export_extra_ldflags or "",           -- PRIVATE-by-default
         links         = b.links,
         lib_path      = lib_path or "",
         compile_info  = {
@@ -151,6 +155,21 @@ local function merge_includes(local_incs, transitive_incs)
     return result
 end
 
+-- Merge transitive defines into b.defines (dedup, local first).
+-- Mirrors merge_includes — CS-0080 requires consumer compiles to see
+-- exported defines from linked libs (PUBLIC propagation).
+local function merge_defines(local_defs, transitive_defs)
+    local seen = {}
+    local result = {}
+    for _, v in ipairs(local_defs or {}) do
+        if not seen[v] then seen[v] = true; result[#result + 1] = v end
+    end
+    for _, v in ipairs(transitive_defs or {}) do
+        if not seen[v] then seen[v] = true; result[#result + 1] = v end
+    end
+    return result
+end
+
 -- Merge link-deps and explicit-deps into the recipe's `requires` set.
 -- `opts.links` carries the cc-level link graph (libraries this target links
 -- against, each being a recipe in its own right). `opts.requires` (added in
@@ -177,6 +196,7 @@ function M.bin(name, opts)
         register_known(name)
         local merged = transitive.resolve_links(b.links)
         b.includes = merge_includes(b.includes, merged.includes)
+        b.defines  = merge_defines(b.defines, merged.defines)
         record_export(name, sources, b, "")
         local objs = compile_all(name, sources, b)
         cc.link(objs, "build/bin/" .. name, {
@@ -202,6 +222,7 @@ function M.lib(name, opts)
         register_known(name)
         local merged = transitive.resolve_links(b.links)
         b.includes = merge_includes(b.includes, merged.includes)
+        b.defines  = merge_defines(b.defines, merged.defines)
         record_export(name, sources, b, archive_path)
         local objs = compile_all(name, sources, b)
         cc.archive(objs, archive_path)
@@ -222,6 +243,7 @@ function M.shared(name, opts)
         register_known(name)
         local merged = transitive.resolve_links(b.links)
         b.includes = merge_includes(b.includes, merged.includes)
+        b.defines  = merge_defines(b.defines, merged.defines)
         record_export(name, sources, b, so_path)
         local objs = compile_all(name, sources, b)
         cc.link(objs, so_path, {
