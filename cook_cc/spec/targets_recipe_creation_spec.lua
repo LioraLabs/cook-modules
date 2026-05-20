@@ -10,6 +10,7 @@ local stub = require("cook_stub")
 local function reset_modules()
     for _, m in ipairs({
         "cook_cc.toolchain", "cook_cc.cc", "cook_cc.targets", "cook_cc.transitive",
+        "cook_cc.finder",
     }) do
         package.loaded[m] = nil
     end

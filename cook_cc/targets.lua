@@ -185,8 +185,14 @@ local function merge_requires(opts)
 end
 
 function M.bin(name, opts)
+    -- Top-level register-time side effects (probes). See CS-0083 / the
+    -- 2026-05-20 probes-top-level-only design doc: cook.probe MUST be
+    -- called at top-level register-phase, not inside a cook.recipe body
+    -- (Phase 2 of the rollout makes this a hard error in cook itself).
+    toolchain.ensure_probe_registered()
+    register_needs(opts and opts.needs)
+
     cook.recipe(name, { requires = merge_requires(opts) }, function()
-        register_needs(opts and opts.needs)
         local b = build_opts(opts, "bin")
         b.needs = (opts and opts.needs) or {}
         local sources = gather_sources(opts or {})
@@ -210,8 +216,10 @@ function M.bin(name, opts)
 end
 
 function M.lib(name, opts)
+    toolchain.ensure_probe_registered()
+    register_needs(opts and opts.needs)
+
     cook.recipe(name, { requires = merge_requires(opts) }, function()
-        register_needs(opts and opts.needs)
         local b = build_opts(opts, "lib")
         b.needs = (opts and opts.needs) or {}
         local sources = gather_sources(opts or {})
@@ -231,8 +239,10 @@ function M.lib(name, opts)
 end
 
 function M.shared(name, opts)
+    toolchain.ensure_probe_registered()
+    register_needs(opts and opts.needs)
+
     cook.recipe(name, { requires = merge_requires(opts) }, function()
-        register_needs(opts and opts.needs)
         local b = build_opts(opts, "shared")
         b.needs = (opts and opts.needs) or {}
         local sources = gather_sources(opts or {})
@@ -258,8 +268,10 @@ function M.shared(name, opts)
 end
 
 function M.headers(name, opts)
+    toolchain.ensure_probe_registered()
+    register_needs(opts and opts.needs)
+
     cook.recipe(name, { requires = (opts and opts.requires) or {} }, function()
-        register_needs(opts and opts.needs)
         local b = build_opts(opts, "headers")
         register_known(name)
         record_export(name, {}, b, "")
