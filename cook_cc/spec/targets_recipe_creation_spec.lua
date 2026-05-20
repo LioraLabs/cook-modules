@@ -201,3 +201,84 @@ describe("cook_cc target-makers: recipe body effects (SHI-216)", function()
         )
     end)
 end)
+
+describe("cook_cc target-makers: probes register at top level, not in body (CS-0083 Phase 1)", function()
+    local recipes
+
+    before_each(function()
+        stub.reset()
+        recipes = install_deferred()
+        stub.set_sh_handler("__exists", function() return true end)
+        reset_modules()
+        -- NOTE: do NOT call with_toolchain() here — these specs assert that
+        -- the target maker itself registers cc:compiler:auto at top-level.
+        stub.set_probe_value("cc:compiler:auto", { cxx = "g++", cc = "gcc" })
+    end)
+
+    it("cc.bin registers cc:compiler:auto BEFORE body_fn runs", function()
+        local targets = require("cook_cc.targets")
+        targets.bin("app", { sources = { "src/a.cpp" } })
+        local keys_before = stub.probe_keys()
+        assert.is_true(#keys_before > 0,
+            "expected at least one probe registered before body; got: " .. tostring(#keys_before))
+        local has_compiler = false
+        for _, k in ipairs(keys_before) do
+            if k == "cc:compiler:auto" then has_compiler = true; break end
+        end
+        assert.is_true(has_compiler,
+            "cc:compiler:auto must be registered at top-level before body_fn; got keys: "
+            .. table.concat(keys_before, ","))
+    end)
+
+    it("cc.bin registers cc:find:<n> for each need BEFORE body_fn runs", function()
+        local targets = require("cook_cc.targets")
+        targets.bin("app", { sources = { "src/a.cpp" }, needs = { "zlib" } })
+        local keys_before = stub.probe_keys()
+        local has_zlib = false
+        for _, k in ipairs(keys_before) do
+            if k == "cc:find:zlib" then has_zlib = true; break end
+        end
+        assert.is_true(has_zlib,
+            "cc:find:zlib must be registered at top-level before body_fn; got keys: "
+            .. table.concat(keys_before, ","))
+    end)
+
+    it("cc.lib registers cc:find:<n> for each need BEFORE body_fn runs", function()
+        local targets = require("cook_cc.targets")
+        targets.lib("foolib", { sources = { "src/foo.c" }, needs = { "zlib" } })
+        local keys_before = stub.probe_keys()
+        local has_zlib = false
+        for _, k in ipairs(keys_before) do
+            if k == "cc:find:zlib" then has_zlib = true; break end
+        end
+        assert.is_true(has_zlib,
+            "cc:find:zlib must be registered at top-level before body_fn; got keys: "
+            .. table.concat(keys_before, ","))
+    end)
+
+    it("cc.shared registers cc:find:<n> for each need BEFORE body_fn runs", function()
+        local targets = require("cook_cc.targets")
+        targets.shared("plug", { sources = { "src/plug.c" }, needs = { "zlib" } })
+        local keys_before = stub.probe_keys()
+        local has_zlib = false
+        for _, k in ipairs(keys_before) do
+            if k == "cc:find:zlib" then has_zlib = true; break end
+        end
+        assert.is_true(has_zlib,
+            "cc:find:zlib must be registered at top-level before body_fn; got keys: "
+            .. table.concat(keys_before, ","))
+    end)
+
+    it("cc.headers registers cc:find:<n> for each need BEFORE body_fn runs", function()
+        local targets = require("cook_cc.targets")
+        targets.headers("idlib", { export_includes = { "include/" }, needs = { "zlib" } })
+        local keys_before = stub.probe_keys()
+        local has_zlib = false
+        for _, k in ipairs(keys_before) do
+            if k == "cc:find:zlib" then has_zlib = true; break end
+        end
+        assert.is_true(has_zlib,
+            "cc:find:zlib must be registered at top-level before body_fn; got keys: "
+            .. table.concat(keys_before, ","))
+    end)
+end)
