@@ -30,9 +30,22 @@ end
 function M.find(opts)
     opts = opts or {}
     local tool = require("cook_cc.finders.tool_config")
-    local out = tool.try("curl-config", "--cflags --libs")
+    -- Same fix as curated:sdl2 (0.10.1): query cflags and libs separately.
+    -- Pre-0.10.2 the curated:libcurl finder also called `curl-config
+    -- --cflags --libs` in one shot and stuffed the combined output into
+    -- payload.libs. On systems where curl-config --cflags is empty
+    -- (Arch, Debian default), the combined output is `\n-lcurl\n`, which
+    -- after trailing-whitespace strip leaves a LEADING `\n` inside the
+    -- libs string. The sigil $<cc:find:libcurl.libs> then injects that
+    -- newline into the link command, splitting it across two /bin/sh -c
+    -- lines and breaking the build.
+    local cflags = tool.try("curl-config", "--cflags")
+    local libs   = tool.try("curl-config", "--libs")
+    local out = (cflags and libs) and (cflags .. " " .. libs) or nil
     if out then
         local payload = parse_tool_output(out)
+        payload.cflags = cflags
+        payload.libs   = libs
         local ver_out = tool.try("curl-config", "--version")
         if ver_out then
             payload.version = ver_out:match("libcurl%s+([%d%.]+)") or ver_out
