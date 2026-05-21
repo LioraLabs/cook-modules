@@ -33,9 +33,18 @@ end
 function M.find(opts)
     opts = opts or {}
     local tool = require("cook_cc.finders.tool_config")
-    local out = tool.try("sdl2-config", "--cflags --libs")
+    -- Separate calls split cflags from libs cleanly. Calling
+    -- `--cflags --libs` in one shot loses the split — pre-0.10.1 the
+    -- combined output landed entirely in `libs` and `cflags` was "",
+    -- which broke needs-driven include propagation for downstream
+    -- compiles (Cookfiles that declared SDL2 via `needs = {"sdl2"}`).
+    local cflags = tool.try("sdl2-config", "--cflags")
+    local libs   = tool.try("sdl2-config", "--libs")
+    local out = (cflags and libs) and (cflags .. " " .. libs) or nil
     if out then
         local payload = parse_tool_output(out)
+        payload.cflags = cflags
+        payload.libs   = libs
         payload.version = tool.try("sdl2-config", "--version")
         if opts.version then
             local ver = require("cook_cc.version")
