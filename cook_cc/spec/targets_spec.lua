@@ -158,6 +158,20 @@ describe("cc.shared", function()
         assert.equals("build/lib/libplug.so", link.output)
     end)
 
+    it("CS-0084: opts.output overrides the default link path verbatim", function()
+        local targets = require("cook_cc.targets")
+        targets.shared("base", {
+            sources = { "src/base.cpp" },
+            output  = "build/bin/base.so",
+        })
+        local units = stub.added_units()
+        local link = units[#units]
+        assert.equals("build/bin/base.so", link.output)
+        assert.matches(" %-shared", link.command)
+        local info = cook.import("base")
+        assert.equals("build/bin/base.so", info.lib_path)
+    end)
+
     it("CS-cook_cc-0.1.2: shared's compile commands include export_includes from cc.lib links", function()
         local targets = require("cook_cc.targets")
         targets.lib("iface", {

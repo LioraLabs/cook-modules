@@ -249,7 +249,8 @@ function M.shared(name, opts)
         if #sources == 0 then
             error("[cc.shared] no sources found for target '" .. name .. "'", 2)
         end
-        local so_path = "build/lib/lib" .. name .. ".so"
+        -- CS-0084: opts.output overrides the default link path verbatim.
+        local so_path = (opts and opts.output) or ("build/lib/lib" .. name .. ".so")
         register_known(name)
         local merged = transitive.resolve_links(b.links)
         b.includes = merge_includes(b.includes, merged.includes)
