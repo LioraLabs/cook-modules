@@ -177,8 +177,13 @@ end
 -- a synthetic recipe like the one returned by `cc.config_header(...)` whose
 -- output (a generated header) participates in the build via include paths
 -- rather than the linker.
+--
+-- 0.11.0 prepends recipe names registered via toolchain.merge_defaults({
+-- config_header = ... }) so every cc target picks up the build's generated
+-- headers as transitive prereqs without the caller restating it.
 local function merge_requires(opts)
     local out = {}
+    for _, r in ipairs(toolchain.get_config_header_recipes()) do out[#out + 1] = r end
     for _, r in ipairs((opts and opts.links) or {}) do out[#out + 1] = r end
     for _, r in ipairs((opts and opts.requires) or {}) do out[#out + 1] = r end
     return out
@@ -272,7 +277,7 @@ function M.headers(name, opts)
     toolchain.ensure_probe_registered()
     register_needs(opts and opts.needs)
 
-    cook.recipe(name, { requires = (opts and opts.requires) or {} }, function()
+    cook.recipe(name, { requires = merge_requires(opts) }, function()
         local b = build_opts(opts, "headers")
         register_known(name)
         record_export(name, {}, b, "")
