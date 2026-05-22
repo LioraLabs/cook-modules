@@ -1,0 +1,25 @@
+local version = require("cook_pnpm.version")
+
+describe("cook_pnpm.version", function()
+    it("parses simple semver", function()
+        local v = version.parse("20.11.1")
+        assert.equals(20, v.major)
+        assert.equals(11, v.minor)
+        assert.equals(1,  v.patch)
+    end)
+
+    it("satisfies caret ranges", function()
+        assert.is_true(version.satisfies("20.11.1", "^20.11.0"))
+        assert.is_true(version.satisfies("20.12.5", "^20.11.0"))
+        assert.is_false(version.satisfies("21.0.0",  "^20.11.0"))
+    end)
+
+    it("satisfies tilde ranges", function()
+        assert.is_true(version.satisfies("20.11.5", "~20.11.0"))
+        assert.is_false(version.satisfies("20.12.0", "~20.11.0"))
+    end)
+
+    it("satisfies an empty constraint", function()
+        assert.is_true(version.satisfies("20.11.1", ""))
+    end)
+end)

@@ -1,0 +1,11 @@
+return {
+    _all = {
+        ROOT = { "spec" },
+        pattern = "_spec",
+        helper = "spec/cook_stub.lua",
+        lpath = "./spec/?.lua;../?/?.lua;../?.lua;../?/init.lua;./?.lua;./?/init.lua",
+    },
+    default = {
+        verbose = true,
+    },
+}
