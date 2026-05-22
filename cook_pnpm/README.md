@@ -5,9 +5,10 @@ pipelines on top of Cook's content-addressed DAG — so the same workspace
 gets remote caching, watcher-driven incremental rebuilds, and a unified
 build graph for the rest of your stack.
 
-**Status: v0.1 first rough draft.** Surface may shift before the Standard
-chapter §29 lands. Tracked in cliban under project `COOK`, milestone
-`cook_pnpm`.
+**Status: v0.2 — caching parity.** Outputs resolve post-execute per
+CS-0085 and restore from cache on a hit. Surface may shift before the
+Standard chapter §29 lands. Tracked in cliban under project `COOK`,
+milestone `cook_pnpm`.
 
 ## Specification
 
@@ -21,7 +22,7 @@ In your project's `cook.toml`:
 
 ```toml
 [modules]
-cook_pnpm = "^0.1"
+cook_pnpm = "^0.2"
 ```
 
 Then `cook modules install`.
@@ -40,8 +41,8 @@ register
 
     cook_pnpm.task("build", {
         depends_on = { "^build" },                       -- ^X = X in workspace deps
-        inputs     = { "src/**", "tsconfig.json" },
-        outputs    = { "dist/**" },
+        inputs     = { "src/**", "tsconfig.json" },      -- bare ** auto-normalised to **/*
+        outputs    = { "dist/**" },                      -- workspace-anchored, post-execute
     })
 
     cook_pnpm.task("test", {
@@ -50,7 +51,7 @@ register
     })
 
     cook_pnpm.task("lint", {
-        inputs     = { "src/**", ".eslintrc*" },
+        inputs     = { "src/**", ".eslintrc*" },         -- outputs omitted → cache by inputs+success
     })
 ```
 
@@ -75,6 +76,25 @@ cook game test               # build then test every package
 | `cook_pnpm.toolchain(opts)` | Pin node / pnpm versions |
 | `cook_pnpm.find(tool)` / `cook_pnpm.find_or_error(tool)` | Locate a JS dev tool |
 | `cook_pnpm.register_finder(name, fn)` | Project-scoped custom finder |
+
+## Caching (v0.2)
+
+`outputs` semantics changed from v0.1: each entry is a glob pattern
+(no bare-path shortcut), anchored at the package directory, and
+resolved by the engine **after** the recipe runs (per CS-0085). On a
+cache hit, the literal file set recorded post-execute is restored.
+
+| `outputs =` | Behaviour |
+|---|---|
+| `{ ".next/**" }` | Post-execute resolve in `apps/web/.next/**`; restore on hit |
+| `{}` or absent | Cache by inputs + success; no files restored |
+| `{ "dist/**", "*.tsbuildinfo" }` | Each glob anchored independently |
+
+Inputs continue to expand at register time via `fs.glob`. Trailing
+bare `**` is normalised to `**/*` (workaround for COOK-28).
+
+A recipe with globbed `outputs` MUST NOT have those outputs declared
+as `inputs[]` of another recipe — use `requires=` for ordering only.
 
 ## Probes
 
