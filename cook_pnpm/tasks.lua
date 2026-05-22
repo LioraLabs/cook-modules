@@ -17,13 +17,36 @@ local M = {}
 
 local function recipe_name(pkg, task) return pkg.name .. ":" .. task end
 
+-- Rewrite a trailing bare "**" to "**/*" so fs.glob matches files,
+-- not just directories. Workaround for COOK-28 — engine-side fs.glob
+-- will eventually normalise this directly; the no-op when COOK-28
+-- lands is harmless.
+local function normalize_input_glob(g)
+    if g:sub(-3) == "/**" then return g .. "/*" end
+    if g == "**"          then return "**/*"    end
+    return g
+end
+
 local function expand_globs_in_dir(globs, dir)
     if not globs or #globs == 0 then return {} end
     local out = {}
     for _, g in ipairs(globs) do
-        for _, m in ipairs(fs.glob(dir .. "/" .. g)) do
+        local pattern = dir .. "/" .. normalize_input_glob(g)
+        for _, m in ipairs(fs.glob(pattern)) do
             out[#out + 1] = m
         end
+    end
+    return out
+end
+
+-- Rewrite each output glob from package-relative to workspace-relative.
+-- Never fs.glob-expand; the engine resolves these post-execute per
+-- CS-0085 against the unit's working directory.
+local function anchor_outputs(globs, dir)
+    if not globs or #globs == 0 then return {} end
+    local out = {}
+    for _, g in ipairs(globs) do
+        out[#out + 1] = dir .. "/" .. g
     end
     return out
 end
@@ -78,7 +101,7 @@ function M.task(task_name, opts)
             local requires = resolve_depends_on(pkg, opts.depends_on, by_name)
             local r_name   = recipe_name(pkg, task_name)
             local inputs   = expand_globs_in_dir(opts.inputs,  pkg.dir)
-            local outputs  = expand_globs_in_dir(opts.outputs, pkg.dir)
+            local outputs  = anchor_outputs(opts.outputs, pkg.dir)
 
             -- package.json itself participates in the input set so a
             -- `scripts` edit invalidates the cached value.
