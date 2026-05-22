@@ -22,7 +22,7 @@ In your project's `cook.toml`:
 
 ```toml
 [modules]
-cook_pnpm = "^0.2"
+cook_pnpm = "0.2.0-1"
 ```
 
 Then `cook modules install`.
