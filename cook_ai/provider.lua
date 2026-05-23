@@ -1,5 +1,4 @@
 local state = require("cook_ai.state")
-local model_probe = require("cook_ai.probes.model")
 
 local SUPPORTED_PROVIDERS = { anthropic = true }
 
@@ -32,7 +31,6 @@ function M.configure(opts)
         timeout_s   = opts.timeout_s   or 120,
     }
     state.set_provider(cfg)
-    model_probe.register(cfg.provider, cfg.model)
 end
 
 return M

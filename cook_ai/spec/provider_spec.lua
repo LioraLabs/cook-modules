@@ -22,15 +22,6 @@ describe("cook_ai.provider", function()
         assert.equals("claude-sonnet-4-6", cfg.model)
     end)
 
-    it("registers ai:provider:anthropic:<model> probe", function()
-        cook_ai.provider({
-            provider = "anthropic",
-            model    = "claude-sonnet-4-6",
-            api_key  = "test-key",
-        })
-        assert.is_not_nil(stub.probes["ai:provider:anthropic:claude-sonnet-4-6"])
-    end)
-
     it("rejects unknown provider", function()
         assert.has_error(function()
             cook_ai.provider({ provider = "bogus", model = "x", api_key = "k" })
