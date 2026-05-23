@@ -4,7 +4,8 @@
 
 local M = {}
 
-local probe_registrations = {}      -- key -> opts
+M.probes                  = {}      -- key -> opts (publicly inspectable)
+local probe_registrations = M.probes
 local cache_store         = {}      -- key -> any
 local export_store        = {}      -- name -> info
 local added_units         = {}
@@ -18,7 +19,7 @@ local glob_table          = {}      -- pattern -> list of matches
 local platform_os         = "linux"
 
 function M.reset()
-    probe_registrations = {}
+    for k in pairs(probe_registrations) do probe_registrations[k] = nil end
     cache_store         = {}
     export_store        = {}
     added_units         = {}
@@ -118,5 +119,9 @@ end
 function M.set_tool_path(tool, abs_path)
     tool_responses[tool] = abs_path .. "\n"
 end
+
+-- Auto-install on require so specs that just `require("spec.cook_stub")` get
+-- a populated cook/fs/path global surface without an explicit install() call.
+M.install()
 
 return M
