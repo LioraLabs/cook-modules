@@ -37,6 +37,12 @@ function M.reset()
     file_contents       = {}
     glob_table          = {}
     platform_os         = "linux"
+    -- Clear cook.env so per-test writes don't leak. Without this, specs that
+    -- assert on the absence of a key (e.g. provider() without model must NOT
+    -- write COOK_AI_MODEL) see stale values from previous tests.
+    if _G.cook and _G.cook.env then
+        for k in pairs(_G.cook.env) do _G.cook.env[k] = nil end
+    end
     -- Clean up temp files emit() writes during register-phase.
     os.execute("rm -rf .cook/tmp/cook_ai 2>/dev/null")
 end

@@ -14,7 +14,6 @@ describe("cook_ai.provider", function()
         cook_ai.provider({
             provider = "anthropic",
             model    = "claude-sonnet-4-6",
-            api_key  = "test-key",
         })
         local state = require("cook_ai.state")
         local cfg = state.get_provider()
@@ -28,12 +27,6 @@ describe("cook_ai.provider", function()
         end, "[cook_ai] unsupported provider: bogus (v0.1 supports: anthropic)")
     end)
 
-    it("rejects missing api_key", function()
-        assert.has_error(function()
-            cook_ai.provider({ provider = "anthropic", model = "claude-sonnet-4-6" })
-        end)
-    end)
-
     it("applies default max_retries=3 and timeout_s=120", function()
         cook_ai.provider({ provider = "anthropic", model = "m", api_key = "k" })
         local cfg = require("cook_ai.state").get_provider()
@@ -45,5 +38,19 @@ describe("cook_ai.provider", function()
         cook_ai.provider({ provider = "anthropic", model = "claude-sonnet-4-6", api_key = "k" })
         assert.equals("claude-sonnet-4-6", cook.env.COOK_AI_MODEL)
         assert.equals("anthropic", cook.env.COOK_AI_PROVIDER)
+    end)
+
+    it("accepts opts table without model or api_key", function()
+        -- 0.2.0-2: model + api_key are no longer required at register time;
+        -- they may arrive via cook.env at execute time. provider() must
+        -- succeed with just {provider="anthropic"}.
+        cook_ai.provider({ provider = "anthropic" })
+        local cfg = require("cook_ai.state").get_provider()
+        assert.equals("anthropic", cfg.provider)
+        assert.is_nil(cfg.model)
+        assert.is_nil(cfg.api_key)
+        -- COOK_AI_PROVIDER still writes; COOK_AI_MODEL does NOT (model was nil).
+        assert.equals("anthropic", cook.env.COOK_AI_PROVIDER)
+        assert.is_nil(cook.env.COOK_AI_MODEL)
     end)
 end)

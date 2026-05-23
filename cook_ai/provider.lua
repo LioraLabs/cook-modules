@@ -20,8 +20,10 @@ function M.configure(opts)
             "[cook_ai] unsupported provider: %s (v0.1 supports: anthropic)",
             opts.provider), 2)
     end
-    require_field(opts, "model")
-    require_field(opts, "api_key")
+    -- 0.2.0-2: model and api_key are NOT required at register time. They may
+    -- arrive via cook.env (from a config block) which only materialises at
+    -- execute time. cook_ai.prompt() validates them there, after merging
+    -- cook.env with the captured provider opts.
 
     local cfg = {
         provider    = opts.provider,
@@ -36,10 +38,15 @@ function M.configure(opts)
     -- Side-effect: surface provider id + model id as env vars so they participate
     -- in cook's env-var auto-cache (Standard §17.1). Reads from these inside
     -- cook_ai.prompt(...) at execute time invalidate the unit when the
-    -- Cookfile author bumps env.COOK_AI_MODEL in a config block.
+    -- Cookfile author bumps env.COOK_AI_MODEL in a config block. Only write
+    -- the keys the caller actually supplied; nil values stay unset so the
+    -- prompt-time resolver can fall back to cook.env (which may have been
+    -- populated by a config block that runs after provider()).
     if cook and cook.env then
         cook.env.COOK_AI_PROVIDER = cfg.provider
-        cook.env.COOK_AI_MODEL    = cfg.model
+        if cfg.model and cfg.model ~= "" then
+            cook.env.COOK_AI_MODEL = cfg.model
+        end
         if cfg.base_url and cfg.base_url ~= "" then
             cook.env.COOK_AI_BASE_URL = cfg.base_url
         end
