@@ -59,4 +59,15 @@ describe("client.anthropic", function()
         local resp = { content = {}, stop_reason = "max_tokens" }
         assert.has_error(function() client._extract_text(resp) end)
     end)
+
+    it("curl_cmd honours opts.endpoint override", function()
+        local cmd = client._curl_cmd({
+            api_key   = "sk-test",
+            timeout_s = 30,
+            payload_path = "/tmp/x.json",
+            endpoint  = "https://proxy.example.com/v1/messages",
+        })
+        assert.matches("https://proxy%.example%.com/v1/messages", cmd)
+        assert.no_matches("api%.anthropic%.com", cmd)
+    end)
 end)

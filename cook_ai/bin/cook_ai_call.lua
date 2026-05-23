@@ -32,6 +32,11 @@ local function main(argv)
     end
     local system = read_file(args.system_file)
     local user   = read_file(args.user_file)
+    local base_url = os.getenv("ANTHROPIC_BASE_URL")
+    local endpoint
+    if base_url and base_url ~= "" then
+        endpoint = base_url .. "/v1/messages"
+    end
     local text = anth.call({
         api_key         = api_key,
         timeout_s       = tonumber(os.getenv("COOK_AI_TIMEOUT_S")) or 120,
@@ -44,6 +49,7 @@ local function main(argv)
         response_format = args.response_format,
         tools           = args.tools,
         payload_path    = args.payload_tmp,
+        endpoint        = endpoint,
     })
     write_file(args.output, text)
 end

@@ -2,7 +2,7 @@ local cjson = require("cjson.safe")
 
 local M = {}
 
-local ENDPOINT = "https://api.anthropic.com/v1/messages"
+local DEFAULT_ENDPOINT = "https://api.anthropic.com/v1/messages"
 local API_VERSION = "2023-06-01"
 
 function M._build_payload(opts)
@@ -25,6 +25,7 @@ local function sh_quote(s)
 end
 
 function M._curl_cmd(opts)
+    local endpoint = opts.endpoint or DEFAULT_ENDPOINT
     return table.concat({
         "curl",
         "--silent",
@@ -35,7 +36,7 @@ function M._curl_cmd(opts)
         "-H", sh_quote("anthropic-version: " .. API_VERSION),
         "-H", sh_quote("x-api-key: " .. opts.api_key),
         "--data-binary", "@" .. opts.payload_path,
-        sh_quote(ENDPOINT),
+        sh_quote(endpoint),
     }, " ")
 end
 
@@ -65,7 +66,8 @@ end
 
 function M.call(opts)
     -- opts: api_key, timeout_s, max_retries, model, system, user, max_tokens,
-    --       temperature, response_format, tools, payload_path (tmp file path to use)
+    --       temperature, response_format, tools, payload_path (tmp file path to use),
+    --       endpoint (optional override; defaults to https://api.anthropic.com/v1/messages)
     local body = M._build_payload(opts)
     local encoded, jerr = cjson.encode(body)
     if not encoded then error("[cook_ai] json encode: " .. jerr, 2) end
