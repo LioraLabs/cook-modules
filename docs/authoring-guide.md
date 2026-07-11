@@ -132,6 +132,114 @@ and per-Cookfile `use` scoping rules live at §12.5 (`#mods.local`) and
 
 ## 3. Registering work units with `cook.add_unit`
 
+A module doesn't register work when it loads — it exposes a **target
+maker**: a function a recipe body calls, which registers a recipe and,
+inside that recipe's body, one or more units via `cook.add_unit`
+(§12.7.1). Reduced from `cook_pnpm/tasks.lua`'s `M.task`:
+
+```lua
+function M.task(task_name, opts)
+    local requires = resolve_depends_on(pkg, opts.depends_on, by_name)   -- recipe-level order deps
+    local inputs   = expand_globs_in_dir(opts.inputs,  pkg.dir)
+    local outputs  = anchor_outputs(opts.outputs, pkg.dir)
+    inputs[#inputs + 1] = pkg.dir .. "/package.json"
+
+    cook.recipe(pkg.name .. ":" .. task_name, { requires = requires }, function()
+        cook.add_unit({
+            inputs   = inputs,
+            outputs  = outputs,
+            command  = command_for(pkg, task_name) .. " ",
+            probes   = { toolchain.get_probe_key(), snap.install_key },  -- carry determinants
+        })
+    end)
+end
+```
+
+Two `requires` show up here, and they are not the same thing. The
+`requires` in `cook.recipe`'s options table is a **recipe-level ordering
+dependency** — it just says "run this recipe after that one," and it's
+fine to use freely. `cook.add_unit` has no `requires` field at all: the
+legacy `add_unit.requires` spelling — a pre-`probes` way of naming a
+probe a unit consumes — is REJECTED, and a conforming implementation
+raises a register-phase diagnostic pointing you at `probes` instead
+(§22.1 field-provenance note, `#lua.add-unit`). If a unit needs a
+probe's value, name the probe in `probes`; never in `requires`.
+
+Every unit you register through a target maker has to hold up its end of
+§12.7.2 (`#mods.authoring.units`):
+
+- MUST declare a unit's real file inputs in `inputs` and its real outputs
+  in `output`/`outputs`, so the cache keys on content instead of an
+  under-declared surface (§12.7.2).
+- MUST carry any determinant a probe produces into the unit's key via
+  `seal` or `probes` — never by interpolating a probe's value into the
+  command at register time in a form the cache can't observe (§12.7.2).
+  See [Section 6 below](#6-seals-and-sharing-dispositions) for where
+  `cook_cc` and `cook_pnpm` stand on `seal` today.
+- SHOULD leave the `sharing`/`record` disposition to the recipe author's
+  surface rather than hard-coding it in the module, unless the unit you
+  own is intrinsically local or non-reproducible (§12.7.2).
+
+### `cook.add_unit` field cheat-sheet
+
+§22.1 (`#lua.add-unit`) is the authoritative field reference for
+`cook.add_unit`; this table is the working subset a module author
+actually sets.
+
+| Field | What you set |
+|---|---|
+| `command` | Shell command, run via `/bin/sh -c` at execute phase. |
+| `inputs` | Array of file paths whose content folds into the cache key. |
+| `output` / `outputs` | A single output path, or an array of output paths / glob patterns (globs resolve post-execute against the unit's working dir, §22.1.2). |
+| `probes` | Array of probe keys this unit consumes as data; each resolved probe's fingerprint folds into the unit's fingerprint and adds a DAG edge. |
+| `seal` | Array of bare probe keys forming the unit's effective seal set; each named probe's canonical value folds into the cache key (see [Section 6 below](#6-seals-and-sharing-dispositions)). |
+| `discovered_inputs` | Table `{ from = <path>, format = "make" }` declaring a depfile the command writes during execute, so paths not known at register time still fold into the key (§22.1.1). |
+| `sharing` | `"local"` / `"pinned"` / `"shared"` (default `"shared"`) — the unit's cache-sharing disposition. |
+| `record` | Boolean (default `false`) — marks the output intrinsically non-reproducible; the key is unchanged, byte-equivalence is waived. |
+| `cache` | Boolean (default `true`) — `false` disables caching for this unit entirely; it re-runs every invocation. |
+
+`consulted_env_keys`, `file_refs`, `member`, `step_kind`, and the
+`sharing`/`seal`/`record` disposition trio are normally emitted by
+codegen from surface syntax, not hand-written — `cook.add_unit` accepts
+each directly under the same field-typing discipline, but you'll rarely
+set them yourself from module code. And, again: the legacy `requires`
+probe-spelling on `add_unit` is rejected — reach for `probes`.
+
+### `discovered_inputs`: folding in a depfile
+
+A compiler often can't tell you which headers it will read until it
+actually runs — but it can write that list out as a side effect.
+`discovered_inputs` lets a unit fold those paths into its key
+retroactively instead of your module trying to predict them. Reduced
+from `cook_cc/cc.lua`'s `M.compile`:
+
+```lua
+function M.compile(source, opts)
+    toolchain.ensure_probe_registered()
+    local cc_probe_key = toolchain.get_probe_key()      -- e.g. "cc:toolchain:g++"
+    local probes = { cc_probe_key }
+    for _, n in ipairs(opts.needs or {}) do
+        probes[#probes + 1] = "cc:find:" .. n           -- consume each pkg-config find probe
+    end
+    cook.add_unit({
+        inputs            = { source },
+        output            = obj_out,                     -- e.g. build/obj/app/main.o
+        command           = compile_command,
+        probes            = probes,                      -- toolchain + finds fold into key
+        discovered_inputs = { from = dep_file, format = "make" },  -- headers the compiler read
+    })
+    return obj_out
+end
+```
+
+`compile_command` passes the compiler a flag that makes it emit a
+Make-format depfile listing every header it opened; `discovered_inputs =
+{ from = dep_file, format = "make" }` tells the engine to read that file
+after the command runs and fold the listed paths in as inputs, so
+editing a header invalidates the cache on the next run even though your
+module never saw that header at register time (§22.1.1,
+`#lua.add-unit-discovered-inputs`).
+
 ## 4. Registering probes
 
 ## 5. Reading probe values and dependency outputs
