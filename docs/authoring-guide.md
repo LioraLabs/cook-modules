@@ -428,7 +428,146 @@ memoised value instead (§12.7.4).
 
 ## 6. Seals and sharing dispositions
 
+`probes` and `seal` both name probe keys on a unit, and it is easy to
+blur them together, but they belong to two different people:
+
+- **The module carries a determinant into the key via `probes`.** That's
+  what every example in Sections 3-4 already does — `cook_cc/cc.lua`'s
+  `M.compile` lists `cc_probe_key` (and each `cc:find:<n>` finder probe)
+  in `probes` so the toolchain and the finds fold into the compile unit's
+  fingerprint ([Section 3](#3-registering-work-units-with-cookadd_unit)).
+  This is the module author's surface, and it's always available.
+- **The recipe author opts a unit into the *shared* cache key via a
+  trailing `seal <probe>`** on the cook_mod line (§{steps.cook-disposition}).
+  Sealing is a stronger commitment than consuming: a sealed probe's
+  canonical value folds into the key that OTHER MACHINES look up when
+  deciding whether they can reuse your cached output, not just your own.
+
+> **Not yet in module source.** `cook_cc` and `cook_pnpm` have not adopted
+> the trailing `seal` surface yet — that surface is in flight. Today
+> both modules carry their determinants via `probes`, exactly as shown in
+> Sections 3-4, and a unit's cache-sharing story rides on whatever
+> `sharing` disposition the recipe chooses (below). What follows describes
+> the TARGET pattern once `seal` is exposed: a recipe author names one of
+> the probes a module already registers — `seal cc:compiler:auto`, say —
+> at the recipe surface, on top of the module's own `probes` carry. A
+> module doesn't call `seal` itself today; it registers probes with keys
+> stable enough that a consumer *can* seal them once the surface lands.
+
+### The seal policy: deterministic determinants only
+
+§12.7.5 (`#mods.authoring.seal`) is the load-bearing rule here, and this
+guide doesn't restate it beyond the shape you need to recognize it by:
+seal ONLY a **deterministic determinant** — a lockfile's content hash, a
+resolved toolchain's identity/content hash, something that is a pure
+function of declared inputs. Sealing a **nondeterministic** value — a
+build timestamp, an embedded absolute temp path, a randomised build ID —
+folds that value into the shared cache key, and because the value can't
+reproduce across machines, it breaks cross-machine reuse of that key
+(§{exec.cache.single-key}). Get this wrong and the failure mode isn't a
+crash — it's a cache that silently stops sharing.
+
+Two more shapes of the same rule worth carrying into your own module:
+
+- **Every sealed determinant MUST be a named probe.** The seal surface
+  admits no raw env-var or tool reference — you can't `seal $HOME` or
+  `seal cc`. An env var you haven't already wrapped gets folded by
+  declaring an `envs` probe over it and sealing that probe by name; a
+  toolchain gets folded by sealing a `tools` probe by name (§12.7.5).
+- **Don't fold what the author didn't declare.** A module MUST NOT try to
+  smuggle a machine-inferred determinant — target triple, libc version,
+  locale — into a seal; the engine infers none of these on its own, so if
+  it matters to your output, it has to arrive as a probe input the author
+  can see (§12.7.5, §12.7.3).
+
+In practice, this is why `cook_cc`'s toolchain probe and `cook_pnpm`'s
+lockfile-keyed install probe both look the way they do
+([Section 4](#4-registering-probes)): a resolved-binary content hash and
+a lockfile content hash are exactly the deterministic-determinant shape
+`seal` is meant for, so once the surface lands, sealing either one is
+correct; sealing something like a compiler's self-reported build
+timestamp would not be.
+
+### Sharing and record: the recipe author's surface
+
+`sharing` (`local` / `pinned` / `shared`) and `record` (surfaced as the
+trailing `nondet` cook_mod) are the recipe author's dispositions to set,
+not the module's (§22.1, §{steps.cook-disposition}). A module SHOULD
+leave both to the author and take the `shared`/reproducible default,
+unless the unit it owns is intrinsically local or non-reproducible
+(§12.7.2) — in which case hard-coding the disposition is the right call,
+not a shortcut around it.
+
+What each disposition means for a unit, briefly — the cache-key and
+lookup effect of each is defined at §{exec.cache.sharing} and
+§{exec.cache.record}, not here:
+
+- **`local`** — local cache only; the unit's result never participates
+  in shared/remote lookup.
+- **`pinned`** — fetch-only / designated-producer: this machine (or CI)
+  is the one that's allowed to produce it: others fetch, they don't
+  re-run.
+- **`nondet`** (the `record` field) — marks the output intrinsically
+  non-reproducible; the cache key is unchanged, but byte-equivalence
+  across runs is waived, so a rebuild that doesn't hash-match its own
+  prior output isn't treated as a cache failure.
+
 ## 7. Probe-key naming
+
+### The `PROBE_SEG` rule
+
+A `$<key.field>` placeholder splits its text on `.` to separate the
+probe key from a field selector — so a `.` inside a key you build
+yourself is dangerous: the sigil resolver can misread it as the start of
+a field selector that was never meant to be there. §12.7.6
+(`#mods.authoring.probe-keys`) is the governing rule: a bare probe key is
+at most two colon-separated segments (`PROBE_SEG:PROBE_SEG`), and a key
+you derive from arbitrary text — a package name, a target label — MUST
+be sanitised down to the `PROBE_SEG` character set before you use it as a
+key.
+
+"Arbitrary text" is doing real work in that sentence: a package name or
+version pin comes from outside your module's control, and it can contain
+characters `PROBE_SEG` doesn't allow. `cook_pnpm/toolchain.lua`'s
+`sanitize()` exists for exactly this reason — a pin like `"pnpm@9"`
+contains `@`, which isn't in the allowed alphabet, so it collapses
+anything outside `[A-Za-z0-9_+-]` to `-` before the pin becomes part of a
+key:
+
+```lua
+local function sanitize(s)
+    -- Sigil resolver only accepts [A-Za-z0-9_+-] in probe-key segments. pnpm pins like "pnpm@9"
+    -- contain '@' (and the cook_cc-0.6.1 lesson: a '.' in has_header("stdint.h") was mis-parsed as
+    -- $<key.field>). Collapse anything outside the allowed alphabet to '-'.
+    return (s:gsub("[^A-Za-z0-9_%+%-]", "-"))
+end
+local function probe_key() return "pnpm:toolchain:" .. sanitize(state.pin_pm or "auto") end
+```
+
+The comment isn't hypothetical: `cook_cc` shipped exactly the bug this
+guards against. In `cook_cc-0.6.1`, a probe key derived from
+`has_header("stdint.h")` carried the header name's `.` straight through
+into the key, and the `.` was misread as a `$<key.field>` selector rather
+than as part of the key it belonged to. Sanitising the derived segment
+before it becomes a key is the fix; treat any key you build from a
+name, a version string, or a path the same way, even if it "looks" safe
+today.
+
+### Naming convention
+
+Prefer `"<module-prefix>:<name>"` for a key you register yourself —
+`cc:zlib`, `pnpm:install:<hash>`, `cc:compiler:auto` are all this shape,
+and Sections 3-4 use them throughout. It's a SHOULD, not a hard
+requirement, but it buys you two things for free: keys from different
+modules can't collide, and a reader can tell which module owns a key at
+a glance.
+
+If a spelling you need falls outside `PROBE_SEG` and sanitising it would
+lose information you care about, the quoted-string key form is the
+escape hatch — you're not limited to the bare `PROBE_SEG:PROBE_SEG` shape
+if you spell the key as a quoted string instead (§{cat.probes.decl}). Reach
+for sanitisation first; reach for a quoted key when sanitisation would
+make two distinct inputs collide on the same segment.
 
 ## 8. Cross-module patterns
 
