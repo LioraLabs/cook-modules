@@ -89,16 +89,7 @@ function M.install()
         platform = setmetatable({}, { __index = function(_, k)
             if k == "os" then return platform_os end
         end }),
-        -- cook.cache was renamed to cook.probes in v1.0 (CS-0136); alias both
-        -- names onto the same backing store so specs written against either
-        -- keep working while production code migrates to cook.probes.
-        cache = {
-            get = function(k)
-                if cache_store[k] ~= nil then return cache_store[k] end
-                return probe_values[k]
-            end,
-            set = function(k, v) cache_store[k] = v end,
-        },
+        -- cook.cache was renamed to cook.probes in v1.0 (CS-0136).
         probes = {
             get = function(k)
                 if cache_store[k] ~= nil then return cache_store[k] end
