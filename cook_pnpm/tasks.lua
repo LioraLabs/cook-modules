@@ -112,10 +112,16 @@ function M.task(task_name, opts)
                     inputs   = inputs,
                     outputs  = outputs,
                     command  = command_for(pkg, task_name) .. " ",
-                    probes   = {
-                        toolchain.get_probe_key(),
-                        snap.install_key,
-                    },
+                    -- Toolchain probe is consumed as DATA: command_for
+                    -- interpolates $<pnpm:toolchain:...pnpm> for the binary
+                    -- path, so its full value already folds into the key
+                    -- (§12.7.4). The install probe is NOT consumed as data —
+                    -- it is a deterministic, invalidate-only determinant
+                    -- (pnpm-lock.yaml content hash), so it is a `seal`, not a
+                    -- data probe (§12.7.5). cook.add_unit auto-adds sealed
+                    -- keys to the DAG-ordering probe set.
+                    probes   = { toolchain.get_probe_key() },
+                    seal     = { snap.install_key },
                 })
             end)
         end

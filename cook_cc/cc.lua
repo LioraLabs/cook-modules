@@ -54,11 +54,19 @@ function M.compile(source, opts)
     end
     cmd = cmd .. " "
 
+    -- §12.7.5 seal policy: fold the resolved, deterministic toolchain identity
+    -- (cc:compiler:<override>) and finder results (cc:find:<name>) into the cache
+    -- key as explicit, auditable named-probe determinants. Values are pure
+    -- functions of declared tool/env inputs, and are value-folded (not
+    -- candidate-tool fingerprints) so the key stays stable across machines with
+    -- equivalent toolchains. Default 'shared' disposition is correct — compile
+    -- output is reproducible.
     cook.add_unit({
         inputs            = { source },
         output            = obj_out,
         command           = cmd,
         probes            = probes,
+        seal              = probes,
         discovered_inputs = { from = dep_file, format = "make" },
     })
 
@@ -69,6 +77,8 @@ function M.archive(objects, output)
     fs.mkdir_p(path.dir(output))
     -- Trailing space ensures assertions like "x.o " match the last token.
     local cmd = "ar rcs " .. output .. " " .. table.concat(objects, " ") .. " "
+    -- ar tool identity is an unmodeled determinant (no probe today) — a known
+    -- pre-existing gap, out of scope for this seal adoption.
     cook.add_unit({
         inputs = objects,
         output = output,
@@ -114,11 +124,14 @@ function M.link(objects, output, opts)
     -- Trailing space ensures assertions like " -lpthread " match the last token.
     local cmd = table.concat(parts, " ") .. " "
 
+    -- §12.7.5: seal the resolved toolchain + finder determinants (see
+    -- M.compile's comment above for the full rationale).
     cook.add_unit({
         inputs  = objects,
         output  = output,
         command = cmd,
         probes  = probes,
+        seal    = probes,
     })
     return output
 end

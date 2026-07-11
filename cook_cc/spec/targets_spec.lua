@@ -260,9 +260,9 @@ describe("known_targets module-local state (T5)", function()
         assert.equals(0, #list)
     end)
 
-    it("compile_db.write reads from targets._known, not cook.cache.get", function()
+    it("compile_db.write reads from targets._known, not cook.probes.get", function()
         local db = require("cook_cc.compile_db")
-        -- No targets registered and no cook.cache entry — write should produce []
+        -- No targets registered and no cook.probes entry — write should produce []
         db.write()
         local units = stub.added_units()
         local found = false

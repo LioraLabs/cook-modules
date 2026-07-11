@@ -37,7 +37,7 @@ function M.ensure_probe_registered()
 end
 
 local function search_dirs()
-    return cook.cache.get(PROBE_KEY) or { "/usr/lib", "/usr/local/lib" }
+    return cook.probes.get(PROBE_KEY) or { "/usr/lib", "/usr/local/lib" }
 end
 
 local function extensions()

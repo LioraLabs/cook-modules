@@ -65,6 +65,14 @@ describe("cc.compile", function()
         assert.equals("make", u.discovered_inputs.format)
         assert.matches("%.cook/deps/app/main%.d$", u.discovered_inputs.from)
     end)
+
+    it("seals the resolved toolchain probe as an auditable determinant (§12.7.5)", function()
+        local cc = require("cook_cc.cc")
+        cc.compile("src/main.cpp", { target_name = "app" })
+        local u = stub.added_units()[1]
+        assert.same({ "cc:compiler:auto" }, u.probes)
+        assert.same(u.probes, u.seal)
+    end)
 end)
 
 describe("cc.archive", function()
@@ -108,6 +116,20 @@ describe("cc.link", function()
         assert.matches(" %-o build/bin/app ", cmd)
         assert.matches(" %-lm ", cmd)
         assert.matches(" %-lpthread ", cmd)
+    end)
+
+    it("seals the resolved compiler + finder probes as auditable determinants (§12.7.5)", function()
+        local cc = require("cook_cc.cc")
+        cc.link(
+            { "build/obj/app/main.o" },
+            "build/bin/app",
+            { needs = { "sdl2" } }
+        )
+        local u = stub.added_units()[1]
+        local sealed = {}
+        for _, k in ipairs(u.seal or {}) do sealed[k] = true end
+        assert.is_true(sealed["cc:compiler:auto"], "expected cc:compiler:auto in seal")
+        assert.is_true(sealed["cc:find:sdl2"], "expected cc:find:sdl2 in seal")
     end)
 end)
 
