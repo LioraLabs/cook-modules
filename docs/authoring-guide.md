@@ -438,7 +438,7 @@ blur them together, but they belong to two different people:
   fingerprint ([Section 3](#3-registering-work-units-with-cookadd_unit)).
   This is the module author's surface, and it's always available.
 - **The recipe author opts a unit into the *shared* cache key via a
-  trailing `seal <probe>`** on the cook_mod line (§{steps.cook-disposition}).
+  trailing `seal <probe>`** on the cook_mod line (§8.4.3, `#steps.cook-disposition`).
   Sealing is a stronger commitment than consuming: a sealed probe's
   canonical value folds into the key that OTHER MACHINES look up when
   deciding whether they can reuse your cached output, not just your own.
@@ -464,7 +464,7 @@ function of declared inputs. Sealing a **nondeterministic** value — a
 build timestamp, an embedded absolute temp path, a randomised build ID —
 folds that value into the shared cache key, and because the value can't
 reproduce across machines, it breaks cross-machine reuse of that key
-(§{exec.cache.single-key}). Get this wrong and the failure mode isn't a
+(§17.1.1, `#exec.cache.single-key`). Get this wrong and the failure mode isn't a
 crash — it's a cache that silently stops sharing.
 
 Two more shapes of the same rule worth carrying into your own module:
@@ -492,15 +492,15 @@ timestamp would not be.
 
 `sharing` (`local` / `pinned` / `shared`) and `record` (surfaced as the
 trailing `nondet` cook_mod) are the recipe author's dispositions to set,
-not the module's (§22.1, §{steps.cook-disposition}). A module SHOULD
+not the module's (§22.1, §8.4.3). A module SHOULD
 leave both to the author and take the `shared`/reproducible default,
 unless the unit it owns is intrinsically local or non-reproducible
 (§12.7.2) — in which case hard-coding the disposition is the right call,
 not a shortcut around it.
 
 What each disposition means for a unit, briefly — the cache-key and
-lookup effect of each is defined at §{exec.cache.sharing} and
-§{exec.cache.record}, not here:
+lookup effect of each is defined at §17.1.3 (`#exec.cache.sharing`) and
+§17.1.4 (`#exec.cache.record`), not here:
 
 - **`local`** — local cache only; the unit's result never participates
   in shared/remote lookup.
@@ -565,7 +565,7 @@ a glance.
 If a spelling you need falls outside `PROBE_SEG` and sanitising it would
 lose information you care about, the quoted-string key form is the
 escape hatch — you're not limited to the bare `PROBE_SEG:PROBE_SEG` shape
-if you spell the key as a quoted string instead (§{cat.probes.decl}). Reach
+if you spell the key as a quoted string instead (§22.5.2, `#cat.probes.decl`). Reach
 for sanitisation first; reach for a quoted key when sanitisation would
 make two distinct inputs collide on the same segment.
 
@@ -658,13 +658,13 @@ hash directly — an install step, a restore step, anything whose result is
 completion with a stamp file instead of a content-addressable artifact.
 
 This guide's rule (a candidate for future normative capture, not yet a
-Standard MUST): a stamp file's BYTES MUST encode the determinants it
+Standard MUST): a stamp file's *bytes* must encode the determinants it
 proxies — a lockfile hash, resolved tool versions — not a constant. `echo ok
 > .stamp` looks harmless, but a constant stamp makes its own dependency edge
 structurally unfoldable: nothing in the stamp's content can ever differ, so
 the engine can never observe that the thing it proxies changed — and,
 symmetrically, can never observe that it DIDN'T, which is the case that
-matters for early cutoff (§{exec.cache.single-key}). Encode the real
+matters for early cutoff (§17.1.1). Encode the real
 determinants instead, and a consumer downstream of the stamp stays cached
 across a toolchain bump that didn't actually change the proxied result,
 instead of treating every bump as a forced rebuild.
@@ -686,11 +686,11 @@ either a natural path reference, where the command takes the artifact as an
 argument, or a `: $<dep> &&` no-op fold, where the toolchain resolves the
 dependency implicitly and the body ref exists only to fold it into the
 unit's fingerprint (a `node_modules` symlink or an MSBuild project reference
-are both this shape). It MUST NOT ALSO add a `recipe A: B` header-level dep
+are both this shape). It must not *also* add a `recipe A: B` header-level dep
 for that same, DATA, dependency. A header dep-list entry is a whole-recipe
 ordering FENCE, not a data edge: it makes every unit of `A` wait for every
 unit of `B` and adds zero cache weight of its own
-(§{exec.cache.single-key}) — recall the two different `requires` already
+(§17.1.1) — recall the two different `requires` already
 distinguished in [Section 3 above](#3-registering-work-units-with-cookadd_unit):
 this is the same distinction, one level down, at the unit body instead of
 the recipe header. Once the body ref already carries the dependency, a
@@ -809,7 +809,7 @@ Publishing is governed by §12.7.7 (`#mods.authoring.publishing`): a
 blessed module MUST version rockspec revisions monotonically as
 `X.Y.Z-R` — bump `R` alone for a repackage (no source change), bump
 `X.Y.Z` for any public-surface change; MUST reflect any public-surface
-change in the module's Part IV catalogue section (§{cat}) under a
+change in the module's Part IV catalogue section (§27, `#cat`) under a
 Standard change entry (App. E) before or alongside the code, per the
 spec-first rule that governs every language-surface change in this
 project; and SHOULD pin its source with a `git+https` URL and omit
