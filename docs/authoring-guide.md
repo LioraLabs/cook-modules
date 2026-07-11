@@ -479,10 +479,12 @@ cook.add_unit({
 })
 ```
 
-`cook_cc`'s compiler and finder probes still ride entirely on `probes`
-today — folding them through `seal` is in flight — but the shape a consumer
-would seal is already there: a resolved-binary content hash is exactly the
-deterministic determinant `seal` is meant for.
+`cook_cc` does the same split on its compile and link units: the resolved
+compiler and finder probes it consumes as data stay in `probes`, and it also
+`seal`s those same resolved determinants (the compiler identity and each
+finder's resolved result) so their values fold into the cache key — a
+resolved-binary/tool content hash is exactly the deterministic determinant
+`seal` is meant for.
 
 ### The seal policy: deterministic determinants only
 
