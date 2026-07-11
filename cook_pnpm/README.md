@@ -104,8 +104,20 @@ as `inputs[]` of another recipe — use `requires=` for ordering only.
 | `pnpm:install:<hash>` | `pnpm install --frozen-lockfile` once | pnpm-lock.yaml content hash |
 | `pnpm:find:<tool>` | Locate a JS dev tool (node_modules/.bin → PATH) | Tool name |
 
-Every per-package recipe carries the toolchain + install probes in its
-`cook.add_unit` `probes` field. Lockfile drift invalidates everything
+Every per-package recipe folds both the toolchain and the install probe
+into its cache key, but by different dispositions per the module-authoring
+seal policy (Cook Standard §12.7.5):
+
+- **Toolchain probe** — consumed as **data**. The command interpolates
+  `$<pnpm:toolchain:<pin>.pnpm>` for the resolved binary path, so the
+  probe's full value already folds in via `cook.add_unit.probes` (§12.7.4).
+- **Install probe** — a deterministic, **invalidate-only** determinant
+  (the `pnpm-lock.yaml` content hash). It is never read as data, so it is
+  carried as a **`seal`** (`cook.add_unit.seal`), not a data probe. Sealing
+  is the sanctioned surface for a pure-function-of-inputs determinant and
+  keeps the shared cache key reproducible across machines.
+
+Lockfile drift changes the install probe's value and invalidates everything
 downstream; source-only edits invalidate only the affected packages and
 their topo descendants.
 
