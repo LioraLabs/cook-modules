@@ -48,7 +48,7 @@ local function produce_body(kind, name, opts, extra_flag)
         local NAME  = %q
         local OPTS  = %s
         local EXTRA = %s
-        local cc    = cook.cache.get(%s)
+        local cc    = cook.probes.get(%s)
         if not cc then error("[cc.check] compiler probe not resolved: " .. %s) end
 
         local probe_dir = ".cook/probes/cc-check"

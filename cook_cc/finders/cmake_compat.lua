@@ -43,7 +43,7 @@ function M.ensure_probe_registered()
 end
 
 local function driver()
-    return cook.cache.get(PROBE_KEY_DRIVER)
+    return cook.probes.get(PROBE_KEY_DRIVER)
 end
 
 -- Exported so tests and downstream callers can target the probe accessor

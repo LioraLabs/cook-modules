@@ -61,7 +61,7 @@ end
 
 function M.get_compiler()
     M.ensure_probe_registered()
-    return cook.cache.get(probe_key())
+    return cook.probes.get(probe_key())
 end
 
 function M.set(opts)

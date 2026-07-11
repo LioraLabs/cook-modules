@@ -89,7 +89,8 @@ function M.install()
         platform = setmetatable({}, { __index = function(_, k)
             if k == "os" then return platform_os end
         end }),
-        cache = {
+        -- cook.cache was renamed to cook.probes in v1.0 (CS-0136).
+        probes = {
             get = function(k)
                 if cache_store[k] ~= nil then return cache_store[k] end
                 return probe_values[k]
