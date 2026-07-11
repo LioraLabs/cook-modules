@@ -150,7 +150,8 @@ function M.task(task_name, opts)
             inputs   = inputs,
             outputs  = outputs,
             command  = command_for(pkg, task_name) .. " ",
-            probes   = { toolchain.get_probe_key(), snap.install_key },  -- carry determinants
+            probes   = { toolchain.get_probe_key() },   -- toolchain: consumed as data
+            seal     = { snap.install_key },            -- install: invalidate-only determinant
         })
     end)
 end
@@ -175,8 +176,10 @@ Every unit you register through a target maker has to hold up its end of
 - MUST carry any determinant a probe produces into the unit's key via
   `seal` or `probes` — never by interpolating a probe's value into the
   command at register time in a form the cache can't observe (§12.7.2).
-  See [Section 6 below](#6-seals-and-sharing-dispositions) for where
-  `cook_cc` and `cook_pnpm` stand on `seal` today.
+  The unit above shows both: the toolchain probe is consumed as data via
+  `probes`, the lockfile-hash install probe is an invalidate-only
+  determinant via `seal`. [Section 6 below](#6-seals-and-sharing-dispositions)
+  draws that line in full.
 - SHOULD leave the `sharing`/`record` disposition to the recipe author's
   surface rather than hard-coding it in the module, unless the unit you
   own is intrinsically local or non-reproducible (§12.7.2).
@@ -340,10 +343,12 @@ end
 Because the key already bakes in the lockfile hash, a changed
 `pnpm-lock.yaml` mints a new key and re-runs the install; an unchanged
 lockfile hits cache and skips it. Notice a consuming unit never reads
-`installed` or `output` back out — it lists this probe's key in its own
-`probes` array purely so the install's fingerprint participates in *its*
-fingerprint (see `snap.install_key` in `cook_pnpm/tasks.lua`'s `M.task`,
-[Section 3 above](#3-registering-work-units-with-cookadd_unit)).
+`installed` or `output` back out — it doesn't need the probe's *value* at
+all, only the guarantee that a lockfile change invalidates it. That is
+precisely the invalidate-only shape `seal` exists for, not `probes`:
+`cook_pnpm`'s `M.task` carries this probe as `seal = { snap.install_key }`
+([Section 3 above](#3-registering-work-units-with-cookadd_unit),
+[Section 6 below](#6-seals-and-sharing-dispositions)).
 
 ### Naming the key
 
@@ -380,15 +385,17 @@ end
 table (the same shape `produce_body` returns in
 [Section 4](#4-registering-probes)) and resolves it to the absolute
 binary path at execute time. The key in that placeholder is the same key
-`M.task` hand-lists in `probes = { toolchain.get_probe_key(),
-snap.install_key }`: a `$<key.field>` in a command is captured at register
-time as a `cook.probes.get` read (resolved at execute phase), but it does
-**not** auto-populate `probes` — a placeholder naming a key the unit doesn't
+`M.task` hand-lists in `probes = { toolchain.get_probe_key() }`: a
+`$<key.field>` in a command is captured at register time as a
+`cook.probes.get` read (resolved at execute phase), but it does **not**
+auto-populate `probes` — a placeholder naming a key the unit doesn't
 declare in `probes` is a malformed-placeholder error (§22.5.7). So a
 module that builds its own command string, like `M.task`, MUST also list
 each consumed key in `probes` (that is the explicit declaration Section 3
 requires); the command-string side and the `add_unit`-field side name the
-same probe, they don't substitute for each other.
+same probe, they don't substitute for each other. (The install probe
+`M.task` also carries isn't consumed as data — it's sealed, not read; see
+[Section 6](#6-seals-and-sharing-dispositions).)
 
 ### Dependency outputs
 
@@ -428,31 +435,51 @@ memoised value instead (§12.7.4).
 
 ## 6. Seals and sharing dispositions
 
-`probes` and `seal` both name probe keys on a unit, and it is easy to
-blur them together, but they belong to two different people:
+`probes` and `seal` are the two `cook.add_unit` fields that fold a probe's
+determinant into a unit's cache key (§12.7.2). They are not
+interchangeable — which one you reach for depends on *how* the unit uses
+the determinant:
 
-- **The module carries a determinant into the key via `probes`.** That's
-  what every example in Sections 3-4 already does — `cook_cc/cc.lua`'s
-  `M.compile` lists `cc_probe_key` (and each `cc:find:<n>` finder probe)
-  in `probes` so the toolchain and the finds fold into the compile unit's
-  fingerprint ([Section 3](#3-registering-work-units-with-cookadd_unit)).
-  This is the module author's surface, and it's always available.
-- **The recipe author opts a unit into the *shared* cache key via a
-  trailing `seal <probe>`** on the cook_mod line (§8.4.3, `#steps.cook-disposition`).
-  Sealing is a stronger commitment than consuming: a sealed probe's
-  canonical value folds into the key that OTHER MACHINES look up when
-  deciding whether they can reuse your cached output, not just your own.
+- **`probes` — the determinant is consumed as data.** The unit reads the
+  probe's value, typically through a `$<key.field>` placeholder or a
+  `cook.probes.get` call, so the whole resolved value folds into the
+  fingerprint. `cook_cc/cc.lua`'s `M.compile` lists `cc_probe_key` (and
+  each `cc:find:<n>` finder probe) in `probes` because the compile command
+  is built from the resolved compiler
+  ([Section 3](#3-registering-work-units-with-cookadd_unit)).
+- **`seal` — the determinant is invalidate-only.** The unit does NOT read
+  the value; it only needs the key's canonical value to participate in the
+  *shared* cache key that OTHER MACHINES look up when deciding whether they
+  can reuse your output. That is a stronger commitment than consuming — and
+  §12.7.5 governs exactly what you're allowed to put there.
 
-> **Not yet in module source.** `cook_cc` and `cook_pnpm` have not adopted
-> the trailing `seal` surface yet — that surface is in flight. Today
-> both modules carry their determinants via `probes`, exactly as shown in
-> Sections 3-4, and a unit's cache-sharing story rides on whatever
-> `sharing` disposition the recipe chooses (below). What follows describes
-> the TARGET pattern once `seal` is exposed: a recipe author names one of
-> the probes a module already registers — `seal cc:compiler:auto`, say —
-> at the recipe surface, on top of the module's own `probes` carry. A
-> module doesn't call `seal` itself today; it registers probes with keys
-> stable enough that a consumer *can* seal them once the surface lands.
+Both are fields a module's target maker sets directly on `cook.add_unit`.
+The trailing `seal <probe>` on a step's cook_mod line (§8.4.3, `#steps.cook-disposition`)
+is the *recipe author's* surface for the same thing: codegen lowers it into
+this same `add_unit.seal` field, so a recipe author can seal a probe the
+module registered without the module hard-coding it.
+
+`cook_pnpm` is the worked example. Its per-package task unit consumes the
+toolchain probe as data — the command interpolates the resolved `pnpm`
+binary path — but treats the lockfile-hash install probe as an
+invalidate-only determinant, so the two go in different fields:
+
+```lua
+cook.add_unit({
+    inputs   = inputs,
+    outputs  = outputs,
+    command  = command_for(pkg, task_name) .. " ",
+    -- toolchain: consumed as data via $<pnpm:toolchain:...pnpm> (§12.7.4)
+    probes   = { toolchain.get_probe_key() },
+    -- install: deterministic lockfile-hash determinant, not read → seal (§12.7.5)
+    seal     = { snap.install_key },
+})
+```
+
+`cook_cc`'s compiler and finder probes still ride entirely on `probes`
+today — folding them through `seal` is in flight — but the shape a consumer
+would seal is already there: a resolved-binary content hash is exactly the
+deterministic determinant `seal` is meant for.
 
 ### The seal policy: deterministic determinants only
 
@@ -480,13 +507,13 @@ Two more shapes of the same rule worth carrying into your own module:
   it matters to your output, it has to arrive as a probe input the author
   can see (§12.7.5, §12.7.3).
 
-In practice, this is why `cook_cc`'s toolchain probe and `cook_pnpm`'s
-lockfile-keyed install probe both look the way they do
-([Section 4](#4-registering-probes)): a resolved-binary content hash and
-a lockfile content hash are exactly the deterministic-determinant shape
-`seal` is meant for, so once the surface lands, sealing either one is
-correct; sealing something like a compiler's self-reported build
-timestamp would not be.
+In practice, this is why `cook_pnpm`'s lockfile-keyed install probe and
+`cook_cc`'s toolchain probe both look the way they do
+([Section 4](#4-registering-probes)): a lockfile content hash and a
+resolved-binary content hash are both pure functions of declared inputs, so
+both are sound to seal — `cook_pnpm` already seals its install probe, and
+`cook_cc`'s toolchain probe is the same shape. Sealing something like a
+compiler's self-reported build timestamp would not be.
 
 ### Sharing and record: the recipe author's surface
 
@@ -602,12 +629,12 @@ end
 
 A call site shrinks to `codegen.from_spec("api.proto", "protoc",
 "gen/api.pb.go")` — one line, no repeated `mkdir_p`, no repeated
-`inputs`/`output` shape to get wrong at each call. This pattern predates
-`seal` landing in module source (the caveat in
-[Section 6 above](#6-seals-and-sharing-dispositions) still applies): today
-it carries the generator's toolchain identity via `probes`, as shown; once
-`seal` reaches module source, the generator's identity probe is the natural
-thing to promote to a trailing `seal <probe>` at the recipe surface.
+`inputs`/`output` shape to get wrong at each call. The example carries the
+generator's toolchain identity via `probes` because the command is built
+from the resolved generator (consumed as data); if instead the generator's
+identity were a determinant the unit never reads back, it would belong in
+`seal` — the same data-vs-invalidate-only split
+[Section 6](#6-seals-and-sharing-dispositions) draws.
 
 ### Fixture injection
 
@@ -847,12 +874,15 @@ An ordered path through this guide for a new module — `cook_dotnet`,
    you derive from arbitrary text before it becomes part of a key
    ([Section 4](#4-registering-probes), [Section 7](#7-probe-key-naming)).
 4. Write target makers that call `cook.add_unit` with real `inputs` and
-   `outputs`, carrying every determinant a probe produces through the
-   unit's `probes` field ([Section 3](#3-registering-work-units-with-cookadd_unit)).
-5. Leave `seal`, `sharing`, and `record` to the recipe author's surface
-   unless the unit you own is intrinsically local or non-reproducible
+   `outputs`, carrying every determinant a probe produces into the key —
+   via `probes` when the unit reads the value as data, via `seal` when it's
+   a deterministic, invalidate-only determinant the unit never reads
    ([Section 3](#3-registering-work-units-with-cookadd_unit),
    [Section 6](#6-seals-and-sharing-dispositions)).
+5. Seal only deterministic determinants (§12.7.5); leave the `sharing` and
+   `record` dispositions to the recipe author's surface unless the unit you
+   own is intrinsically local or non-reproducible
+   ([Section 6](#6-seals-and-sharing-dispositions)).
 6. Add a `spec/cook_stub.lua` double, pared to your module's own surface,
    and busted specs that assert on the registration graph it records
    ([Section 9 above](#9-testing-with-the-cook_stub-double)).
