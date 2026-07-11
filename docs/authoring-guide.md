@@ -242,7 +242,183 @@ module never saw that header at register time (§22.1.1,
 
 ## 4. Registering probes
 
+A **probe** is the sanctioned surface for a memoised, cache-folded
+computation a module needs but doesn't own as a unit in its own right —
+compiler detection, a package-config query, a resolved toolchain
+identity. You register one with `cook.probe(key, opts)`, where
+`opts.inputs` declares the probe's determinants (`tools`, `env`, `files`,
+`requires`) and `opts.produce` is the code that computes the value
+(§12.7.3, `#mods.authoring.probes`).
+
+### The lazy, idempotent registration idiom
+
+A target maker may be called many times in one Cookfile, but a probe
+should only be registered once per key. `cook_cc` and `cook_pnpm` both
+solve this the same way: a per-VM `registered` table, and an
+`ensure_probe_registered()` that returns immediately if the key is
+already in it. Reduced from `cook_pnpm/toolchain.lua`:
+
+```lua
+local function probe_key() return "pnpm:toolchain:" .. sanitize(state.pin_pm or "auto") end
+
+function M.ensure_probe_registered()
+    local key = probe_key()
+    if state.probe_registered[key] then return end       -- idempotent, per-VM
+    cook.probe(key, {
+        inputs  = { tools = { "node", "pnpm" } },         -- resolved-binary content hash = value+trigger
+        produce = produce_body(state.pin_pm, state.pin_node),   -- a Lua SOURCE STRING
+    })
+    state.probe_registered[key] = true
+end
+```
+
+Every target maker and helper that needs this probe calls
+`ensure_probe_registered()` first and then reads back the key — there's
+no separate "have I set this up yet?" check scattered across the module.
+
+### `produce` is a Lua source string, not a closure
+
+`produce_body(...)` doesn't return a function value — it returns a
+*string* of Lua source:
+
+```lua
+-- produce_body returns a Lua source string that, on a cache miss, runs on a worker VM:
+--   local node = which("node"); local pnpm_bin = which("pnpm")
+--   return { node = node, node_version = ..., pnpm = pnpm_bin, pnpm_version = ... }
+```
+
+It has to be a string because it doesn't run in the VM that called
+`cook.probe`. On a cache miss, the engine wraps that source as the body
+of a producing function and runs it on a separate worker VM, and the
+value it returns must be serialisable so it can cross that VM/phase
+boundary and be stored (§12.7.3). You cannot close over local variables
+from the register-phase VM the way an ordinary Lua closure would — the
+producer only sees what its own source text and `opts.inputs` give it.
+
+### Declare every determinant as a probe input
+
+§12.7.3 is specific about this: any determinant your module detects has
+to be modelled as a probe input, not read ad hoc inside `produce`, so its
+fingerprint folds into the probe's value and from there into any
+consuming unit's cache key:
+
+- an environment variable → `inputs.env` (or an `envs` native producer);
+- a tool → `inputs.tools` — the resolved binary's content hash is *both*
+  the probe's value and what re-triggers it on a toolchain change, as in
+  `{ tools = { "node", "pnpm" } }` above;
+- a file → `inputs.files`;
+- an upstream probe → `inputs.requires`.
+
+### A side-effecting probe: `cook_pnpm/probes/pnpm_install.lua`
+
+Not every probe just detects something — one can run a real command as
+its side effect. The install probe is keyed on the lockfile's content
+hash, depends on the toolchain probe, and its `produce` runs `pnpm
+install --frozen-lockfile`:
+
+```lua
+function M.ensure_probe_registered(lockfile_path)
+    toolchain.ensure_probe_registered()
+    local h   = hash_file(lockfile_path)                  -- sha256sum, first 16 hex
+    local key = "pnpm:install:" .. h
+    if state.registered[key] then return key end
+    cook.probe(key, {
+        inputs = {
+            requires = { toolchain.get_probe_key() },      -- upstream probe
+            files    = { lockfile_path },                  -- lockfile content = determinant
+            tools    = { "pnpm" },
+        },
+        produce = [[ local out = cook.sh("pnpm install --frozen-lockfile 2>&1")
+                     return { installed = true, output = out } ]],
+    })
+    state.registered[key] = true
+    return key
+end
+```
+
+Because the key already bakes in the lockfile hash, a changed
+`pnpm-lock.yaml` mints a new key and re-runs the install; an unchanged
+lockfile hits cache and skips it. Notice a consuming unit never reads
+`installed` or `output` back out — it lists this probe's key in its own
+`probes` array purely so the install's fingerprint participates in *its*
+fingerprint (see `snap.install_key` in `cook_pnpm/tasks.lua`'s `M.task`,
+[Section 3 above](#3-registering-work-units-with-cookadd_unit)).
+
+### Naming the key
+
+Both examples above name their keys `"<module-prefix>:<name>"` —
+`"pnpm:toolchain:..."`, `"pnpm:install:..."`. That's a SHOULD, not
+incidental style; [Section 7](#7-probe-key-naming) covers the naming
+rule and why it matters once a key gets built from arbitrary text.
+
 ## 5. Reading probe values and dependency outputs
+
+### `cook.probes.get` and the `$<key>` desugaring
+
+The sanctioned way to read a probe's value is `cook.probes.get(key)`,
+which on the execute-phase VM reads that run's probe-value store. A
+`$<key>` or `$<key.field>` placeholder in a command string desugars to
+exactly this read (§12.7.4, `#mods.authoring.reads`) — so your module can
+consume a probe either textually, inside a `command` string, or
+programmatically, inside a `>{ … }` body. Pick whichever shape the unit
+already needs; the underlying read is the same.
+
+`cook_pnpm/tasks.lua`'s `command_for` is the textual form. It builds a
+command against a `.pnpm` field selector rather than a hardcoded path:
+
+```lua
+local function command_for(pkg, task_name)
+    toolchain.ensure_probe_registered()
+    local key = toolchain.get_probe_key()          -- e.g. "pnpm:toolchain:pnpm-9"
+    -- $<pnpm:toolchain:...pnpm> is replaced at execute time with the absolute pnpm binary path.
+    return "$<" .. key .. ".pnpm> --filter " .. pkg.name .. " run " .. task_name
+end
+```
+
+`.pnpm` selects the `pnpm` field out of the toolchain probe's produced
+table (the same shape `produce_body` returns in
+[Section 4](#4-registering-probes)) and resolves it to the absolute
+binary path at execute time. This placeholder is exactly what
+`M.task`'s `probes = { toolchain.get_probe_key(), snap.install_key }`
+carries — the codegen path desugars `$<key.field>` into a `probes` entry
+plus a `cook.probes.get` read, so the two are the same mechanism seen
+from the command-string side and the `add_unit`-field side.
+
+### Dependency outputs
+
+To read what an upstream recipe produced, use `cook.dep_output` /
+`cook.dep_output_list`, or the equivalent `$<NAME>` command-placeholder
+surface — both-phase, like the probe reads above (§12.7.4).
+
+### Transitive link info: `cook.export` / `cook.import`
+
+A module publishes a target's transitive-link info with `cook.export`
+and a downstream target reads it with `cook.import` — both both-phase
+calls (§12.7.4). Reduced from `cook_cc/targets.lua`'s `record_export`:
+
+```lua
+local function record_export(name, sources, b, lib_path)
+    cook.export(name, {
+        includes      = b.export_includes or b.includes,
+        system_libs   = b.export_system_libs or {},   -- PRIVATE-by-default
+        links         = b.links,
+        lib_path      = lib_path or "",
+        compile_info  = { sources = sources, includes = b.includes, compiler = ... },
+    })
+end
+-- A downstream target reads this with cook.import(name) to inherit include dirs / link flags.
+```
+
+A `cook_cc.lib` target calls `record_export` so anything that links
+against it inherits its include dirs and link flags through
+`cook.import(name)` without the downstream target having to know or
+restate them.
+
+### `cook.probes.set` / `cook.probes.scope` are deprecated
+
+You may still see these register-phase key/value methods in older code,
+but they're deprecated; a new module SHOULD use `cook.probe` for a
+memoised value instead (§12.7.4).
 
 ## 6. Seals and sharing dispositions
 
