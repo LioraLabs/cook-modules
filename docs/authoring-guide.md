@@ -381,9 +381,9 @@ table (the same shape `produce_body` returns in
 [Section 4](#4-registering-probes)) and resolves it to the absolute
 binary path at execute time. The key in that placeholder is the same key
 `M.task` hand-lists in `probes = { toolchain.get_probe_key(),
-snap.install_key }`: a `$<key.field>` in a command is rewritten to a
-`cook.probes.get` read at register-time capture, but it does **not**
-auto-populate `probes` — a placeholder naming a key the unit doesn't
+snap.install_key }`: a `$<key.field>` in a command is captured at register
+time as a `cook.probes.get` read (resolved at execute phase), but it does
+**not** auto-populate `probes` — a placeholder naming a key the unit doesn't
 declare in `probes` is a malformed-placeholder error (§22.5.7). So a
 module that builds its own command string, like `M.task`, MUST also list
 each consumed key in `probes` (that is the explicit declaration Section 3
