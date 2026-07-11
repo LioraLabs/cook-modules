@@ -203,11 +203,14 @@ actually sets.
 | `cache` | Boolean (default `true`) — `false` disables caching for this unit entirely; it re-runs every invocation. |
 
 `consulted_env_keys`, `file_refs`, `member`, `step_kind`, `env`, and the
-`sharing`/`seal`/`record` disposition trio are normally emitted by
-codegen from surface syntax, not hand-written — `cook.add_unit` accepts
-each directly under the same field-typing discipline, but you'll rarely
-set them yourself from module code. And, again: the legacy `requires`
-probe-spelling on `add_unit` is rejected — reach for `probes`.
+`sharing`/`record` dispositions are normally emitted by codegen from
+surface syntax, not hand-written — `cook.add_unit` accepts each directly
+under the same field-typing discipline, but you'll rarely set them yourself
+from module code. `seal` is the exception a module *does* set directly (for
+a deterministic determinant the unit doesn't read;
+[Section 6 below](#6-seals-and-sharing-dispositions)). And, again: the
+legacy `requires` probe-spelling on `add_unit` is rejected — reach for
+`probes`.
 
 ### `discovered_inputs`: folding in a depfile
 
