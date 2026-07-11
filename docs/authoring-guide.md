@@ -571,6 +571,155 @@ make two distinct inputs collide on the same segment.
 
 ## 8. Cross-module patterns
 
+None of the six patterns below is specific to `cook_cc` or `cook_pnpm` — they
+surfaced building a polyglot dogfood, a small repo that mixes several
+toolchains side by side, and each one is a candidate shape for a future
+language module (`cook_dotnet`, `cook_rust`, `cook_python`). Two are marked
+RULE. Read a RULE here as this guide's rule, not a Standard MUST: each is a
+candidate for future normative capture in §12.7, not settled law yet.
+
+### Contract → codegen
+
+**When it recurs:** a static contract file feeds an offline code generator
+that emits source — an OpenAPI, protobuf, GraphQL, or JSON-Schema spec
+compiling down to client or server stubs.
+
+Don't make every call site re-derive the `inputs`/`output`/`mkdir`
+boilerplate around the generator invocation; give the module one target
+maker that owns it:
+
+```lua
+function M.codegen.from_spec(spec, generator, out)
+    fs.mkdir_p(path.dir(out))
+    cook.add_unit({
+        inputs  = { spec },
+        output  = out,
+        probes  = { generator_toolchain_probe_key() },  -- carry the generator's identity, Section 4
+        command = generator .. " generate --in " .. spec .. " --out " .. out,
+    })
+end
+```
+
+A call site shrinks to `codegen.from_spec("api.proto", "protoc",
+"gen/api.pb.go")` — one line, no repeated `mkdir_p`, no repeated
+`inputs`/`output` shape to get wrong at each call. This pattern predates
+`seal` landing in module source (the caveat in
+[Section 6 above](#6-seals-and-sharing-dispositions) still applies): today
+it carries the generator's toolchain identity via `probes`, as shown; once
+`seal` reaches module source, the generator's identity probe is the natural
+thing to promote to a trailing `seal <probe>` at the recipe surface.
+
+### Fixture injection
+
+**When it recurs:** a test command needs an absolute path to a fixture or
+golden file another recipe's unit produced, and the test runner forks a
+subprocess with a DIFFERENT working directory than the one the test command
+itself ran in.
+
+```lua
+function M.with_env_from_dep(name, var)
+    return var .. '="$(realpath $<' .. name .. '>)" '
+end
+```
+
+used as a shell prefix, e.g. `M.with_env_from_dep("fixtures:golden",
+"GOLDEN_DIR") .. "dotnet test"`. The `realpath` wrapping is the non-obvious
+part, and it's required, not defensive: a `$<dep>` placeholder resolves to a
+path that is consumer-cwd-relative, and that relative path stops resolving
+correctly the moment a tool forks a subprocess with a different cwd —
+`dotnet test`'s xunit host is exactly this case. Resolve to an absolute path
+with `realpath` before the env var ever reaches the child process.
+
+### Copy into consumer tree
+
+**When it recurs:** codegen output has to cross a package boundary before a
+local toolchain will treat it as first-party source — `tsc`'s `rootDir` and
+`resolveJsonModule` are the concrete case, but the shape is generic to any
+toolchain that resolves modules by directory containment rather than by
+explicit reference.
+
+```lua
+function M.fs.copy_into(dep_output, dest)
+    fs.mkdir_p(path.dir(dest))
+    cook.add_unit({ inputs = { dep_output }, output = dest, command = "cp " .. dep_output .. " " .. dest })
+end
+```
+
+Don't be surprised to reach for this twice even in one small repo — a
+generated `.d.ts` copied next to hand-written TypeScript, and a generated
+JSON schema copied into a `resolveJsonModule` tree, are two different call
+sites of the same pattern, not one call site you can consolidate away.
+
+### Meaningful stamp content — RULE
+
+**When it recurs:** a unit's real result isn't a single file the engine can
+hash directly — an install step, a restore step, anything whose result is
+"the tool ran successfully over this input set" — so the module marks
+completion with a stamp file instead of a content-addressable artifact.
+
+This guide's rule (a candidate for future normative capture, not yet a
+Standard MUST): a stamp file's BYTES MUST encode the determinants it
+proxies — a lockfile hash, resolved tool versions — not a constant. `echo ok
+> .stamp` looks harmless, but a constant stamp makes its own dependency edge
+structurally unfoldable: nothing in the stamp's content can ever differ, so
+the engine can never observe that the thing it proxies changed — and,
+symmetrically, can never observe that it DIDN'T, which is the case that
+matters for early cutoff (§{exec.cache.single-key}). Encode the real
+determinants instead, and a consumer downstream of the stamp stays cached
+across a toolchain bump that didn't actually change the proxied result,
+instead of treating every bump as a forced rebuild.
+
+The failure mode this guards against was observed directly: a
+stale-but-green `esbuild` `dist` — the stamp said "ran successfully," its
+content said nothing beyond that, and a consumer trusted a build that a
+version bump should have invalidated.
+
+### Body refs are the dependency mechanism; header deps are whole-recipe fences — RULE
+
+**When it recurs:** every target maker that consumes another recipe's
+output — which is to say nearly every target maker in a multi-language
+repo.
+
+This guide's rule (a candidate for future normative capture, not yet a
+Standard MUST): a target maker emits the dependency as a BODY reference —
+either a natural path reference, where the command takes the artifact as an
+argument, or a `: $<dep> &&` no-op fold, where the toolchain resolves the
+dependency implicitly and the body ref exists only to fold it into the
+unit's fingerprint (a `node_modules` symlink or an MSBuild project reference
+are both this shape). It MUST NOT ALSO add a `recipe A: B` header-level dep
+for that same, DATA, dependency. A header dep-list entry is a whole-recipe
+ordering FENCE, not a data edge: it makes every unit of `A` wait for every
+unit of `B` and adds zero cache weight of its own
+(§{exec.cache.single-key}) — recall the two different `requires` already
+distinguished in [Section 3 above](#3-registering-work-units-with-cookadd_unit):
+this is the same distinction, one level down, at the unit body instead of
+the recipe header. Once the body ref already carries the dependency, a
+header dep on top of it only serialises the DAG for no benefit. Reach for a
+header dep ONLY for genuine order-without-consumption — a step that has to
+run after another for a reason no file reference in either unit expresses.
+
+### Multi-output declaration vs. stamps
+
+**When it recurs:** a single unit produces more than one output file, and
+you have to decide whether to declare them individually or fall back to a
+stamp.
+
+The decision rule: declare a multi-output set (`outputs = {...}`, plain
+paths or globs) when the emit set is KNOWABLE at register time — `tsc`'s
+matched `.js`/`.d.ts` pair for a given input is this case. Fall back to a
+stamp (previous pattern, above) only when the emit set genuinely ISN'T
+knowable — MSBuild's `bin`/`obj` trees are this case, because the exact
+file set a build produces depends on project internals the module has no
+register-time visibility into. Prefer the declared set whenever you can
+enumerate it: it is more precise for the cache, and it is the honest answer
+to "what did this unit actually produce."
+
+---
+
+Per-module specifics — a `rust.bin` target maker's own `cargo`-target-dir
+copy plus `nondet` disposition, or a `cook_python` interpreter-and-locked-deps
+identity probe — are tracked separately and are out of scope for this guide.
+
 ## 9. Testing with the `cook_stub` double
 
 ## 10. Publishing a blessed module
