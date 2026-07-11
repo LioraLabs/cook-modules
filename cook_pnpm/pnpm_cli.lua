@@ -22,7 +22,10 @@ function M.install(opts)
             inputs  = { (snap.root_dir or ".") .. "/pnpm-lock.yaml" },
             outputs = {},
             command = "$<" .. toolchain.get_probe_key() .. ".pnpm> install --frozen-lockfile ",
-            probes  = { toolchain.get_probe_key(), snap.install_key },
+            -- toolchain: data-consumed (§12.7.4); install: invalidate-only
+            -- lockfile-hash determinant → seal (§12.7.5).
+            probes  = { toolchain.get_probe_key() },
+            seal    = { snap.install_key },
         })
     end)
     return opts.name or "pnpm:install"
@@ -48,7 +51,10 @@ function M.run(pkg_name, script, opts)
             outputs = opts.outputs or {},
             command = "$<" .. toolchain.get_probe_key() .. ".pnpm> --filter "
                       .. pkg.name .. " run " .. script .. " ",
-            probes  = { toolchain.get_probe_key(), snap.install_key },
+            -- toolchain: data-consumed (§12.7.4); install: invalidate-only
+            -- lockfile-hash determinant → seal (§12.7.5).
+            probes  = { toolchain.get_probe_key() },
+            seal    = { snap.install_key },
         })
     end)
     return r_name

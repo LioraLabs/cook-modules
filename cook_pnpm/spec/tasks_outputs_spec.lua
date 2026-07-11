@@ -73,6 +73,25 @@ describe("cook_pnpm.tasks v0.2 outputs", function()
         end
     end)
 
+    it("seals the install probe (invalidate-only lockfile-hash determinant) and keeps toolchain in probes (§12.7.5)", function()
+        bootstrap_two_pkg_workspace()
+        local result = workspace.bootstrap({})
+        tasks.task("build", {})
+
+        local web = unit_for("@scope/web")
+        assert.is_not_nil(web)
+        -- install probe is a deterministic invalidate-only determinant → seal
+        assert.same({ result.install_key }, web.seal,
+            "install probe must be sealed, not consumed as a data probe")
+        -- toolchain is data-consumed via $<...pnpm> → stays in probes; install
+        -- probe must NOT appear in the data-probe list.
+        for _, k in ipairs(web.probes or {}) do
+            assert.is_nil(k:match("^pnpm:install:"),
+                "install probe must not sit in the data `probes` set")
+        end
+        assert.is_not_nil(result.install_key:match("^pnpm:install:"))
+    end)
+
     it("anchors each entry of a multi-glob outputs array at the package dir", function()
         bootstrap_two_pkg_workspace()
         workspace.bootstrap({})
