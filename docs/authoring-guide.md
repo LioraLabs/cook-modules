@@ -722,6 +722,148 @@ identity probe — are tracked separately and are out of scope for this guide.
 
 ## 9. Testing with the `cook_stub` double
 
+A module's target makers and probe registrations run at register phase,
+and nothing about that requires a live engine to exercise in a test — all
+a spec needs is something that looks enough like `cook`/`fs`/`path` to
+catch what the module calls. That's what `spec/cook_stub.lua` is: a
+busted double, one per module, that installs `_G.cook`, `_G.fs`, and
+`_G.path` tables whose functions don't do anything an engine would — they
+just *record* the call into a table your spec can then inspect. A spec
+built this way asserts on the **registration graph** — which probes got
+registered with what `opts`, what `add_unit` calls a target maker
+produced, what `cook.export` recorded for a downstream target to import —
+never on a real build actually running.
+
+Reduced from `cook_pnpm/spec/cook_stub.lua` (itself a pared-down copy of
+`cook_cc/spec/cook_stub.lua` — see below):
+
+```lua
+-- stub records calls; the spec inspects the recording, not a live engine:
+local probe_registrations = {}   -- key -> opts
+local added_units         = {}
+local recipes             = {}   -- name -> { opts, body_executed }
+local export_store        = {}   -- name -> info
+
+_G.cook = {
+    probe    = function(key, opts) probe_registrations[key] = opts end,
+    add_unit = function(u) added_units[#added_units + 1] = u end,
+    recipe   = function(name, opts, body_fn)
+        recipes[name] = { opts = opts, body_executed = false }
+        body_fn()                          -- runs the target maker's body NOW, register-phase
+        recipes[name].body_executed = true
+    end,
+    export = function(name, info) export_store[name] = info end,
+    import = function(name) return export_store[name] end,
+    sh     = function(cmd) --[[ pattern-matched fake responses, e.g. `pkg-config --cflags`,
+                                 `command -v <tool>`, `sha256sum <path>` ]] end,
+}
+_G.fs = {
+    glob    = function(pattern) return glob_table[pattern] or {} end,
+    exists  = function(p) return file_exists_set[p] end,
+    mkdir_p = function() end,
+}
+```
+
+`recipe`'s stub runs `body_fn()` inline rather than deferring it, so the
+`cook.add_unit` calls inside a target maker's recipe body land in
+`added_units` synchronously — a spec doesn't need to simulate register
+phase separately from execute phase to see what a target maker produced.
+
+The stub also exposes a handful of inspectors a spec calls directly,
+rather than reaching into the recording tables itself:
+
+- `M.probe_opts(key)` — the `opts` table a given probe key was registered
+  with (so a spec can assert on `inputs.tools`, `inputs.files`, or the
+  `produce` source string without re-deriving the key's registration).
+- `M.added_units()` — the full list of units registered so far, in order.
+- `M.recipes()` — the recipe table, name → `{ opts, body_executed }`.
+- `M.reset()` — clears every recording table; call it from a `before_each`
+  so specs don't leak state into each other.
+
+The stub is **per-module and pared to the surface that module actually
+uses** — it is not a shared, general-purpose fake. `cook_pnpm`'s
+`cook_stub.lua` is a trimmed copy of `cook_cc`'s: it drops the
+`pkg-config` response dispatcher `cook_cc`'s `sh` needs (`cook_pnpm` never
+shells out to `pkg-config`) and adds a `glob_table` for `fs.glob`
+(`cook_cc`'s stub stubs `glob` to always return `{}`, because `cook_cc`
+doesn't register-time-glob the way `cook_pnpm`'s workspace scan does).
+When you write a new module's stub, start from whichever of the two is
+closer to your module's shape and cut down to what your module actually
+calls — don't carry over surface you don't need.
+
+Run the suite either from inside the module directory:
+
+```sh
+cd cook_<name> && busted .
+```
+
+or from the repo root, naming the module via `MODULE`:
+
+```sh
+MODULE=cook_<name> cook spec
+```
+
 ## 10. Publishing a blessed module
 
+Publishing is governed by §12.7.7 (`#mods.authoring.publishing`): a
+blessed module MUST version rockspec revisions monotonically as
+`X.Y.Z-R` — bump `R` alone for a repackage (no source change), bump
+`X.Y.Z` for any public-surface change; MUST reflect any public-surface
+change in the module's Part IV catalogue section (§{cat}) under a
+Standard change entry (App. E) before or alongside the code, per the
+spec-first rule that governs every language-surface change in this
+project; and SHOULD pin its source with a `git+https` URL and omit
+`source.dir`. This guide doesn't restate those rules further — see
+§12.7.7 for the exact wording.
+
+The mechanics of getting a revision onto `rocks.usecook.com` are owned by
+the repo root [`README.md`](../README.md) ("Publishing a module") and by
+the `publishing-cook-modules` skill (`.claude/skills/publishing-cook-modules/`),
+which automates the bump-and-push and the downstream `cook.toml` pin
+bumps in consumers. In outline: author the surface change and bump the
+rockspec version → commit and tag `<module>-<ver>` → `cook pack <module>`
+(runs `luarocks pack` against the tag) → `cook publish-to-index <module>`
+(stages the rockspec + `.src.rock` into the rocks-index checkout and
+regenerates its manifest) → `cook publish` from that checkout (pushes to
+Gitea + the GitHub mirror; Cloudflare Pages redeploys
+`rocks.usecook.com` within a minute or two). Follow the README's numbered
+steps or invoke the skill — don't hand-roll the pipeline from this
+summary; the README owns the exact commands and the skill owns the
+automation.
+
 ## 11. New-module checklist
+
+An ordered path through this guide for a new module — `cook_dotnet`,
+`cook_rust`, `cook_python`, whatever comes next:
+
+1. Create the module's directory and an `init.lua` that `require`s its
+   submodules and returns a single table `M`; add a `version.lua`
+   ([Section 2](#2-anatomy-of-a-module-on-disk)).
+2. Split submodules by responsibility — toolchain detection, target
+   makers, probes, finders each in their own file — not by file size
+   ([Section 2](#2-anatomy-of-a-module-on-disk)).
+3. Register a probe for every toolchain or environment determinant your
+   module detects; name keys `<prefix>:<name>` and sanitise any segment
+   you derive from arbitrary text before it becomes part of a key
+   ([Section 4](#4-registering-probes), [Section 7](#7-probe-key-naming)).
+4. Write target makers that call `cook.add_unit` with real `inputs` and
+   `outputs`, carrying every determinant a probe produces through the
+   unit's `probes` field ([Section 3](#3-registering-work-units-with-cookadd_unit)).
+5. Leave `seal`, `sharing`, and `record` to the recipe author's surface
+   unless the unit you own is intrinsically local or non-reproducible
+   ([Section 3](#3-registering-work-units-with-cookadd_unit),
+   [Section 6](#6-seals-and-sharing-dispositions)).
+6. Add a `spec/cook_stub.lua` double, pared to your module's own surface,
+   and busted specs that assert on the registration graph it records
+   ([Section 9 above](#9-testing-with-the-cook_stub-double)).
+7. Write the rockspec — `git+https` source, no `source.dir` — and reflect
+   the public surface you're adding in the module's Part IV catalogue
+   section under a Standard change entry ([Section 10 above](#10-publishing-a-blessed-module),
+   §12.7.7).
+8. Publish through the pipeline ([Section 10 above](#10-publishing-a-blessed-module)).
+
+If you can get through all eight steps for a new language module using
+only this guide and the Standard — without opening `cook_cc` or
+`cook_pnpm` source to figure out what to do next — this guide has done
+its job. Reading the real modules is still the fastest way to see a
+pattern in full; it should never be the only way to find one.
