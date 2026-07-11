@@ -139,6 +139,7 @@ inside that recipe's body, one or more units via `cook.add_unit`
 
 ```lua
 function M.task(task_name, opts)
+    local snap     = workspace.snapshot()                                -- parsed workspace + install_key
     local requires = resolve_depends_on(pkg, opts.depends_on, by_name)   -- recipe-level order deps
     local inputs   = expand_globs_in_dir(opts.inputs,  pkg.dir)
     local outputs  = anchor_outputs(opts.outputs, pkg.dir)
@@ -198,7 +199,7 @@ actually sets.
 | `record` | Boolean (default `false`) — marks the output intrinsically non-reproducible; the key is unchanged, byte-equivalence is waived. |
 | `cache` | Boolean (default `true`) — `false` disables caching for this unit entirely; it re-runs every invocation. |
 
-`consulted_env_keys`, `file_refs`, `member`, `step_kind`, and the
+`consulted_env_keys`, `file_refs`, `member`, `step_kind`, `env`, and the
 `sharing`/`seal`/`record` disposition trio are normally emitted by
 codegen from surface syntax, not hand-written — `cook.add_unit` accepts
 each directly under the same field-typing discipline, but you'll rarely
@@ -216,7 +217,7 @@ from `cook_cc/cc.lua`'s `M.compile`:
 ```lua
 function M.compile(source, opts)
     toolchain.ensure_probe_registered()
-    local cc_probe_key = toolchain.get_probe_key()      -- e.g. "cc:toolchain:g++"
+    local cc_probe_key = toolchain.get_probe_key()      -- e.g. "cc:compiler:auto"
     local probes = { cc_probe_key }
     for _, n in ipairs(opts.needs or {}) do
         probes[#probes + 1] = "cc:find:" .. n           -- consume each pkg-config find probe
@@ -378,11 +379,16 @@ end
 `.pnpm` selects the `pnpm` field out of the toolchain probe's produced
 table (the same shape `produce_body` returns in
 [Section 4](#4-registering-probes)) and resolves it to the absolute
-binary path at execute time. This placeholder is exactly what
-`M.task`'s `probes = { toolchain.get_probe_key(), snap.install_key }`
-carries — the codegen path desugars `$<key.field>` into a `probes` entry
-plus a `cook.probes.get` read, so the two are the same mechanism seen
-from the command-string side and the `add_unit`-field side.
+binary path at execute time. The key in that placeholder is the same key
+`M.task` hand-lists in `probes = { toolchain.get_probe_key(),
+snap.install_key }`: a `$<key.field>` in a command is rewritten to a
+`cook.probes.get` read at register-time capture, but it does **not**
+auto-populate `probes` — a placeholder naming a key the unit doesn't
+declare in `probes` is a malformed-placeholder error (§22.5.7). So a
+module that builds its own command string, like `M.task`, MUST also list
+each consumed key in `probes` (that is the explicit declaration Section 3
+requires); the command-string side and the `add_unit`-field side name the
+same probe, they don't substitute for each other.
 
 ### Dependency outputs
 
