@@ -84,7 +84,7 @@ cook_cc/
   version.lua
   cook_cc-0.11.0-1.rockspec   -- LuaRocks package manifest, one per released revision
   spec/
-    cook_stub.lua             -- the cook/fs/path test double (§9)
+    cook_stub.lua             -- the cook/fs/path test double (Section 9)
     *_spec.lua                -- busted specs
   README.md
 ```
@@ -117,12 +117,13 @@ Split submodules by responsibility, not by file size: toolchain detection
 (`toolchain.lua`) is separate from target makers (`targets.lua` /
 `tasks.lua`), which are separate from probes (`probes/`) and from finders
 (`finder.lua`). This keeps each file testable against the `cook_stub`
-double in isolation (§9).
+double in isolation ([Section 9 below](#9-testing-with-the-cook_stub-double)).
 
 Every published module also carries a `cook_<name>-X.Y.Z-R.rockspec` —
-the LuaRocks package manifest a release bumps (§10) — and a `spec/`
+the LuaRocks package manifest a release bumps
+([Section 10 below](#10-publishing-a-blessed-module)) — and a `spec/`
 directory with a `cook_stub.lua` double plus the busted specs that exercise
-your module against it (§9).
+your module against it ([Section 9 below](#9-testing-with-the-cook_stub-double)).
 
 On disk, `use "<name>"` resolves `cook_modules/<name>.lua` then
 `cook_modules/<name>/init.lua`, first hit wins. The normative search order
