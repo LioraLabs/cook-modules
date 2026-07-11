@@ -61,6 +61,8 @@ CI for steps 4–6 on tag push is later work; v1 is manual.
 
 ## See also
 
+- [docs/authoring-guide.md](docs/authoring-guide.md) — how to write a Cook
+  module (companion to Standard §12.7).
 - [`liora-labs/cook-rocks-index`](https://github.com/lioralabs/cook-rocks-index)
   — the rendered static index served as `rocks.usecook.com`.
 - [`liora-labs/cook`](https://github.com/lioralabs/cook) — the cook engine
