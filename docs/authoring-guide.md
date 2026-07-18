@@ -244,9 +244,9 @@ data edge — a fold, not an ordering declaration on your part to make).
 This is the subtle part, and it's worth reading slowly. When a maker
 sees `links = {"idLib"}` in `opts`, it does three separate things:
 
-1. Verifies `idLib` names a target already declared earlier in the same
-   Cookfile, erroring with a closest-match hint otherwise — `links
-   references unknown recipe 'idLib'; did you mean '...'?`.
+1. Verifies `idLib` names a real recipe, erroring with a closest-match
+   hint on a typo — `links references unknown recipe 'idLib'; did you
+   mean '...'?`.
 2. Resolves `idLib`'s export via `cook.import` and folds its archive
    path, `build/lib/libidLib.a`, into the link unit's `inputs`. This
    earns **cache-key weight only** — it makes the link unit's fingerprint
@@ -260,11 +260,14 @@ edge *is* the `cook.require_recipe` name reference. It is **not** inferred
 from the fact that `build/lib/libidLib.a` appears as both `idLib`'s
 output and `framework`'s link-unit input — §10.6 forbids an
 implementation from inferring an edge from path-string equality; the path
-match in step 2 above is fold-only, cache weight, not an edge. There is
-also **no declaration-order rule for you, the module author's caller, to
-learn** here: `cook_cc.lib` declares the ordering edge on your behalf the
-moment it sees `links = {"idLib"}`, regardless of which recipe you
-happened to write first in the Cookfile. Cross-reference §10.6 and §22.8;
+match in step 2 above is fold-only, cache weight, not an edge. And there
+is **no silent declaration-order-plus-path-matching mechanism left to
+reason about**: `cook_cc.lib` declares the ordering edge on your behalf
+the moment it sees `links = {"idLib"}`, and `cook.require_recipe` forces
+`idLib`'s body to evaluate right then (§22.8), so `idLib`'s export
+resolves and the edge exists because the module *named* the referent —
+not because you sequenced two recipes just so, and not because two path
+strings happened to match. Cross-reference §10.6 and §22.8;
 [Section 8](#8-cross-module-patterns) revisits this same distinction for
 the general case of any module, not just `cook_cc`.
 
@@ -894,10 +897,10 @@ artifact path is never enough on its own, however naturally it reads as
 `requires` already distinguished in
 [Section 3 above](#3-registering-work-units-with-cookadd_unit): this is
 the same distinction, one level down, at the unit body instead of the
-recipe header. And critically, there is no declaration-order rule for a
-Cookfile author to learn here either: the module declares the edge via
-`cook.require_recipe` (or a `$<name>` reference) at the point it resolves
-the dependency, regardless of which `recipe` block was written first.
+recipe header. And critically, the edge is **authored, not inferred**: the
+module declares it via `cook.require_recipe` (or a `$<name>` reference) at
+the point it resolves the dependency — there is no silent order-plus-path
+mechanism left for a Cookfile author to reason about.
 
 Header deps (`recipe A : B`) are unchanged by any of this: they remain a
 whole-recipe ordering FENCE, not a data edge — every unit of `A` waits for
