@@ -148,6 +148,20 @@ function M.find(name, opts)
     return sigil_record(name)
 end
 
+-- Top-level dependency declaration: `cook_cc.uses("sdl2", "gl", ...)`.
+-- Idempotently registers a cc:find:<name> probe for each name via M.find.
+-- Return value is not meaningful; callers use `uses` for its side effect.
+function M.uses(...)
+    for _, name in ipairs({ ... }) do
+        M.find(name)
+    end
+end
+
+-- True iff `name` was previously declared via find/find_or_error/uses.
+function M.is_registered(name)
+    return M._registered["cc:find:" .. name] ~= nil
+end
+
 function M.find_or_error(name, opts)
     opts = opts or {}
     local key = "cc:find:" .. name

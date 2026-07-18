@@ -78,3 +78,42 @@ describe("cc.find probe registration", function()
         assert.has_error(function() r.cflags = "spoofed" end)
     end)
 end)
+
+describe("cc.uses / is_registered", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("uses(...) registers probes for every name passed", function()
+        local finder = reload()
+        finder.uses("raylib", "sdl2")
+        assert.is_not_nil(stub.probe_opts("cc:find:raylib"))
+        assert.is_not_nil(stub.probe_opts("cc:find:sdl2"))
+    end)
+
+    it("uses(...) is idempotent — calling twice does not duplicate probe registration", function()
+        local finder = reload()
+        finder.uses("raylib")
+        finder.uses("raylib")
+        local count = 0
+        for _, k in ipairs(stub.probe_keys()) do
+            if k == "cc:find:raylib" then count = count + 1 end
+        end
+        assert.equals(1, count)
+    end)
+
+    it("is_registered(name) is false before any find/uses", function()
+        local finder = reload()
+        assert.is_false(finder.is_registered("raylib"))
+    end)
+
+    it("is_registered(name) is true after uses(name)", function()
+        local finder = reload()
+        finder.uses("raylib")
+        assert.is_true(finder.is_registered("raylib"))
+    end)
+
+    it("is_registered(name) is false for a name not declared via uses/find", function()
+        local finder = reload()
+        finder.uses("raylib")
+        assert.is_false(finder.is_registered("sdl2"))
+    end)
+end)

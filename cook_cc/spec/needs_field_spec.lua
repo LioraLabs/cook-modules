@@ -1,5 +1,10 @@
 local stub = require("cook_stub")
 
+-- 0.13.0: `needs` is REFERENCE-ONLY. The probe is declared at top level by
+-- cook_cc.uses(name); the maker (now a step contributor, run inside a recipe
+-- body) only references it and wires the sigils. Each test declares the probe
+-- with cc.uses(...) FIRST, then calls the maker inside a recipe body.
+
 local function reload_all()
     for _, m in ipairs({
         "cook_cc.toolchain", "cook_cc.finder", "cook_cc.targets",
@@ -15,7 +20,10 @@ describe("targets.bin with needs={...}", function()
     it("registers cc:find:<name> probe for each entry in needs", function()
         local cc = reload_all()
         stub.set_file_exists("src/main.c", true)
-        cc.bin("game", { sources = {"src/main.c"}, needs = { "raylib" } })
+        cc.uses("raylib")                   -- top-level probe declaration
+        cook.recipe("game", {}, function()
+            cc.bin({ sources = {"src/main.c"}, needs = { "raylib" } })
+        end)
         assert.is_not_nil(stub.probe_opts("cc:find:raylib"))
     end)
 
@@ -23,8 +31,13 @@ describe("targets.bin with needs={...}", function()
         local cc = reload_all()
         stub.set_file_exists("src/main.c", true)
         stub.set_file_exists("src/editor.c", true)
-        cc.bin("game", { sources = {"src/main.c"}, needs = { "raylib" } })
-        cc.bin("editor", { sources = {"src/editor.c"}, needs = { "raylib" } })
+        cc.uses("raylib")                   -- idempotent, declared once
+        cook.recipe("game", {}, function()
+            cc.bin({ sources = {"src/main.c"}, needs = { "raylib" } })
+        end)
+        cook.recipe("editor", {}, function()
+            cc.bin({ sources = {"src/editor.c"}, needs = { "raylib" } })
+        end)
         local count = 0
         for _, k in ipairs(stub.probe_keys()) do
             if k == "cc:find:raylib" then count = count + 1 end
@@ -35,7 +48,10 @@ describe("targets.bin with needs={...}", function()
     it("compile units carry probes = {cc:compiler:auto, cc:find:raylib}", function()
         local cc = reload_all()
         stub.set_file_exists("src/main.c", true)
-        cc.bin("game", { sources = {"src/main.c"}, needs = { "raylib" } })
+        cc.uses("raylib")
+        cook.recipe("game", {}, function()
+            cc.bin({ sources = {"src/main.c"}, needs = { "raylib" } })
+        end)
         local units = stub.added_units()
         local compile_unit
         for _, u in ipairs(units) do
@@ -51,7 +67,10 @@ describe("targets.bin with needs={...}", function()
     it("link unit command embeds $<cc:find:raylib.libs> sigil", function()
         local cc = reload_all()
         stub.set_file_exists("src/main.c", true)
-        cc.bin("game", { sources = {"src/main.c"}, needs = { "raylib" } })
+        cc.uses("raylib")
+        cook.recipe("game", {}, function()
+            cc.bin({ sources = {"src/main.c"}, needs = { "raylib" } })
+        end)
         local units = stub.added_units()
         local link_unit
         for _, u in ipairs(units) do
@@ -64,7 +83,10 @@ describe("targets.bin with needs={...}", function()
     it("compile unit command embeds $<cc:find:raylib.cflags> sigil", function()
         local cc = reload_all()
         stub.set_file_exists("src/main.c", true)
-        cc.bin("game", { sources = {"src/main.c"}, needs = { "raylib" } })
+        cc.uses("raylib")
+        cook.recipe("game", {}, function()
+            cc.bin({ sources = {"src/main.c"}, needs = { "raylib" } })
+        end)
         local units = stub.added_units()
         local compile_unit
         for _, u in ipairs(units) do
@@ -73,10 +95,22 @@ describe("targets.bin with needs={...}", function()
         assert.matches("%$<cc:find:raylib%.cflags>", compile_unit.command)
     end)
 
+    it("errors when needs references an undeclared probe", function()
+        local cc = reload_all()
+        stub.set_file_exists("src/main.c", true)
+        assert.has_error(function()
+            cook.recipe("game", {}, function()
+                cc.bin({ sources = {"src/main.c"}, needs = { "raylib" } })
+            end)
+        end, "[cc.bin] needs \"raylib\" is not declared; add cook_cc.uses(\"raylib\") at top level")
+    end)
+
     it("compile command uses $<cc:compiler:auto.cc> sigil for C sources, not literal compiler", function()
         local cc = reload_all()
         stub.set_file_exists("src/main.c", true)
-        cc.bin("game", { sources = {"src/main.c"} })   -- .c source -> .cc field
+        cook.recipe("game", {}, function()
+            cc.bin({ sources = {"src/main.c"} })   -- .c source -> .cc field
+        end)
         local units = stub.added_units()
         local compile_unit
         for _, u in ipairs(units) do
@@ -88,7 +122,9 @@ describe("targets.bin with needs={...}", function()
     it("compile command uses $<cc:compiler:auto.cxx> sigil for C++ sources", function()
         local cc = reload_all()
         stub.set_file_exists("src/main.cpp", true)
-        cc.bin("game", { sources = {"src/main.cpp"} })
+        cook.recipe("game", {}, function()
+            cc.bin({ sources = {"src/main.cpp"} })
+        end)
         local units = stub.added_units()
         local compile_unit
         for _, u in ipairs(units) do
@@ -100,7 +136,9 @@ describe("targets.bin with needs={...}", function()
     it("link command uses $<cc:compiler:auto.cxx> sigil", function()
         local cc = reload_all()
         stub.set_file_exists("src/main.c", true)
-        cc.bin("game", { sources = {"src/main.c"} })
+        cook.recipe("game", {}, function()
+            cc.bin({ sources = {"src/main.c"} })
+        end)
         local units = stub.added_units()
         local link_unit
         for _, u in ipairs(units) do

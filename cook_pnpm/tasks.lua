@@ -107,7 +107,11 @@ function M.task(task_name, opts)
             -- `scripts` edit invalidates the cached value.
             inputs[#inputs + 1] = pkg.dir .. "/package.json"
 
-            cook.recipe(r_name, { requires = requires }, function()
+            -- Data-driven fan-out carve-out (explicit-recipes contract): this
+            -- one `cook_pnpm.task(...)` call mints N recipes derived from parsed
+            -- workspace manifests, so the module MUST surface origin metadata
+            -- and `cook list` annotates each minted recipe `(from cook_pnpm.task)`.
+            cook.recipe(r_name, { requires = requires, origin = "cook_pnpm.task" }, function()
                 cook.add_unit({
                     inputs   = inputs,
                     outputs  = outputs,

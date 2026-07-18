@@ -15,9 +15,49 @@ local function register_known(name)
     M._known_list[#M._known_list + 1] = name
 end
 
-local function register_needs(needs)
-    for _, name in ipairs(needs or {}) do
-        finder.find(name)   -- registers cc:find:<name> idempotently
+-- Maker-outside-recipe guard. cook.recipe_name() errors outside a recipe
+-- body; a maker is a STEP CONTRIBUTOR, so it must run inside the caller's
+-- `recipe` block. Returns the QUALIFIED recipe name (export identity).
+local function current_recipe_or_error(kind)
+    local ok, id = pcall(cook.recipe_name)
+    if not ok then
+        error("[cc." .. kind .. "] must be called inside a recipe block; wrap it in a `recipe` block", 2)
+    end
+    return id
+end
+
+-- `needs` is now REFERENCE-ONLY: probes are registered at top level by
+-- cook_cc.uses(); the maker never mints a probe. Verify each referenced name
+-- was declared, else fail loudly with the fix.
+local function check_needs_declared(kind, needs)
+    for _, n in ipairs(needs or {}) do
+        if not finder.is_registered(n) then
+            error("[cc." .. kind .. "] needs \"" .. n .. "\" is not declared; add cook_cc.uses(\"" .. n .. "\") at top level", 2)
+        end
+    end
+end
+
+-- Declare an ordering edge to each linked recipe. `links` names sibling
+-- recipes (each built by its own maker). cook.require_recipe records the
+-- ordering edge (and validates existence across all VMs), so the linked
+-- artifact's export (includes/defines/lib_path) is available when we
+-- resolve_links — regardless of declaration order.
+--
+-- NOTE (bare vs qualified): link refs are BARE declared names. Under an import
+-- prefix the engine bridges bare link refs to the corresponding qualified
+-- exports within scope; in the stub there is no prefix so bare == qualified.
+local function declare_link_deps(_kind, links)
+    for _, dep in ipairs(links or {}) do
+        -- Declaration order is NOT a rule, and a fatal
+        -- is_known() gate here is wrong. M._known_list is a per-VM accumulator;
+        -- cook evaluates some maker bodies (notably `shared`) in separate worker
+        -- VMs, so a perfectly valid cross-recipe link (e.g. base -> idLib) can be
+        -- absent from THIS VM's list and would spuriously fail the gate — which
+        -- blocked every dhewm3 build. Ordering AND unknown-recipe validation are
+        -- the engine's job: cook.require_recipe records the ordering edge and
+        -- raises on a genuinely nonexistent recipe (across all VMs), which the
+        -- module cannot see. Do not re-add a module-side hard error here.
+        cook.require_recipe(dep)
     end
 end
 
@@ -67,8 +107,13 @@ local function build_opts(opts, kind)
     }
 end
 
-local function record_export(name, sources, b, lib_path)
-    cook.export(name, {
+-- `id` is the QUALIFIED recipe name — the export IDENTITY key. Consumers
+-- (resolve_links, compile_db) look up exports with the BARE recipe names that
+-- appear in `links` / `_known`; the engine bridges those bare refs to the
+-- qualified export within the module's own import scope. In a root Cookfile
+-- (no prefix) qualified == bare, so the two coincide.
+local function record_export(id, sources, b, lib_path)
+    cook.export(id, {
         includes      = b.export_includes or b.includes,        -- backcompat fall-back (CS-0080 §28.4)
         defines       = b.export_defines       or {},           -- PRIVATE-by-default; explicit-public only
         system_libs   = b.export_system_libs   or {},           -- PRIVATE-by-default
@@ -90,17 +135,39 @@ local function compile_all(name, sources, b)
     local objs = {}
     for _, src in ipairs(sources) do
         objs[#objs + 1] = cc.compile(src, {
-            target_name  = name,
-            includes     = b.includes,
-            defines      = b.defines,
-            standard     = b.standard,
-            warnings     = b.warnings,
-            extra_cflags = b.extra_cflags,
-            fpic         = b.fpic,
-            needs        = b.needs,
+            target_name       = name,
+            includes          = b.includes,
+            defines           = b.defines,
+            standard          = b.standard,
+            warnings          = b.warnings,
+            extra_cflags      = b.extra_cflags,
+            fpic              = b.fpic,
+            needs             = b.needs,
+            generated_headers = b.generated_headers,
         })
     end
     return objs
+end
+
+-- Auto-join each generated config-header's output dir onto include paths and
+-- collect the generated header output paths so compiles declare them as
+-- inputs (the data edge to the config_header generation unit).
+local function apply_config_headers(b)
+    local ch = require("cook_cc.config_header")
+    local gen = {}
+    for _, h in ipairs(ch.get_headers()) do
+        if h.outdir then b.includes[#b.includes + 1] = h.outdir end
+        gen[#gen + 1] = h.output
+        -- Declare the recipe-ordering edge to the config_header
+        -- support recipe (the 0.11 "thread the synthesised recipe into every cc
+        -- target's requires" contract, re-expressed via the 0.13 require_recipe
+        -- API). The generated-header file-input edge below is not enough on its
+        -- own: cook only schedules recipes inside the requested target's
+        -- require_recipe closure, so without this edge `cook game` never runs
+        -- the generator and every compile fails on a missing config.h.
+        if h.recipe then cook.require_recipe(h.recipe) end
+    end
+    b.generated_headers = gen
 end
 
 -- Merge frameworks: transitive first, then local (dedup, first occurrence wins).
@@ -170,119 +237,120 @@ local function merge_defines(local_defs, transitive_defs)
     return result
 end
 
--- Merge link-deps and explicit-deps into the recipe's `requires` set.
--- `opts.links` carries the cc-level link graph (libraries this target links
--- against, each being a recipe in its own right). `opts.requires` (added in
--- 0.7.0) is the escape hatch for declaring a non-link dependency — typically
--- a synthetic recipe like the one returned by `cc.config_header(...)` whose
--- output (a generated header) participates in the build via include paths
--- rather than the linker.
+-- The four makers are STEP CONTRIBUTORS: their body runs directly inside the
+-- caller's `recipe` block. They add compile/link/archive units + the export
+-- to the ENCLOSING recipe; they do NOT call cook.recipe themselves.
 --
--- 0.11.0 prepends recipe names registered via toolchain.merge_defaults({
--- config_header = ... }) so every cc target picks up the build's generated
--- headers as transitive prereqs without the caller restating it.
-local function merge_requires(opts)
-    local out = {}
-    for _, r in ipairs(toolchain.get_config_header_recipes()) do out[#out + 1] = r end
-    for _, r in ipairs((opts and opts.links) or {}) do out[#out + 1] = r end
-    for _, r in ipairs((opts and opts.requires) or {}) do out[#out + 1] = r end
-    return out
+-- Naming (critical): `id` (cook.recipe_name()) is QUALIFIED and is the export
+-- IDENTITY (record_export/cook.export). `name` (recipe.name) is BARE and
+-- drives every human-facing artifact PATH (build/bin/<name>,
+-- build/lib/lib<name>.a/.so, build/obj/<name>/) and register_known. In the
+-- stub there is no import prefix so the two coincide, but code both roles
+-- explicitly; under a prefix the engine bridges bare link refs to qualified
+-- exports within scope.
+
+function M.bin(opts)
+    opts = opts or {}
+    local id = current_recipe_or_error("bin")   -- qualified; also the outside-recipe guard
+    local name = recipe.name                      -- bare
+    toolchain.ensure_probe_registered()           -- idempotent; toolchain() registered it top-level
+    require("cook_cc.config_header").mark_target_registered()
+    check_needs_declared("bin", opts.needs)
+    declare_link_deps("bin", opts.links)
+    local b = build_opts(opts, "bin")
+    b.needs = opts.needs or {}
+    apply_config_headers(b)
+    local sources = gather_sources(opts)
+    if #sources == 0 then
+        error("[cc.bin] no sources found for target '" .. name .. "'", 2)
+    end
+    register_known(name)
+    local merged = transitive.resolve_links(b.links)
+    b.includes = merge_includes(b.includes, merged.includes)
+    b.defines  = merge_defines(b.defines, merged.defines)
+    record_export(id, sources, b, "")
+    local objs = compile_all(name, sources, b)
+    cc.link(objs, "build/bin/" .. name, {
+        system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
+        frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
+        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
+        link_inputs   = merged.lib_paths,   -- fold dep archive paths into the link unit's inputs (cache-key fold)
+        needs         = b.needs,
+    })
 end
 
-function M.bin(name, opts)
-    -- Top-level register-time side effects (probes). See CS-0083 / the
-    -- 2026-05-20 probes-top-level-only design doc: cook.probe MUST be
-    -- called at top-level register-phase, not inside a cook.recipe body
-    -- (Phase 2 of the rollout makes this a hard error in cook itself).
+function M.lib(opts)
+    opts = opts or {}
+    local id = current_recipe_or_error("lib")   -- qualified
+    local name = recipe.name                      -- bare
     toolchain.ensure_probe_registered()
-    register_needs(opts and opts.needs)
-
-    cook.recipe(name, { requires = merge_requires(opts) }, function()
-        local b = build_opts(opts, "bin")
-        b.needs = (opts and opts.needs) or {}
-        local sources = gather_sources(opts or {})
-        if #sources == 0 then
-            error("[cc.bin] no sources found for target '" .. name .. "'", 2)
-        end
-        register_known(name)
-        local merged = transitive.resolve_links(b.links)
-        b.includes = merge_includes(b.includes, merged.includes)
-        b.defines  = merge_defines(b.defines, merged.defines)
-        record_export(name, sources, b, "")
-        local objs = compile_all(name, sources, b)
-        cc.link(objs, "build/bin/" .. name, {
-            system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
-            frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
-            extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
-            needs         = b.needs,
-        })
-    end)
-    return name
+    require("cook_cc.config_header").mark_target_registered()
+    check_needs_declared("lib", opts.needs)
+    -- An archive does not consume dependency archives, but its OWN compiles
+    -- depend on the linked libs' exported includes/defines (resolve_links
+    -- reads their exports), so we still declare the ordering edges here.
+    declare_link_deps("lib", opts.links)
+    local b = build_opts(opts, "lib")
+    b.needs = opts.needs or {}
+    apply_config_headers(b)
+    local sources = gather_sources(opts)
+    if #sources == 0 then
+        error("[cc.lib] no sources found for target '" .. name .. "'", 2)
+    end
+    local archive_path = "build/lib/lib" .. name .. ".a"
+    register_known(name)
+    local merged = transitive.resolve_links(b.links)
+    b.includes = merge_includes(b.includes, merged.includes)
+    b.defines  = merge_defines(b.defines, merged.defines)
+    record_export(id, sources, b, archive_path)
+    local objs = compile_all(name, sources, b)
+    cc.archive(objs, archive_path)   -- archives (no link) → no link_inputs
 end
 
-function M.lib(name, opts)
+function M.shared(opts)
+    opts = opts or {}
+    local id = current_recipe_or_error("shared")   -- qualified
+    local name = recipe.name                         -- bare
     toolchain.ensure_probe_registered()
-    register_needs(opts and opts.needs)
-
-    cook.recipe(name, { requires = merge_requires(opts) }, function()
-        local b = build_opts(opts, "lib")
-        b.needs = (opts and opts.needs) or {}
-        local sources = gather_sources(opts or {})
-        if #sources == 0 then
-            error("[cc.lib] no sources found for target '" .. name .. "'", 2)
-        end
-        local archive_path = "build/lib/lib" .. name .. ".a"
-        register_known(name)
-        local merged = transitive.resolve_links(b.links)
-        b.includes = merge_includes(b.includes, merged.includes)
-        b.defines  = merge_defines(b.defines, merged.defines)
-        record_export(name, sources, b, archive_path)
-        local objs = compile_all(name, sources, b)
-        cc.archive(objs, archive_path)
-    end)
-    return name
+    require("cook_cc.config_header").mark_target_registered()
+    check_needs_declared("shared", opts.needs)
+    declare_link_deps("shared", opts.links)
+    local b = build_opts(opts, "shared")
+    b.needs = opts.needs or {}
+    apply_config_headers(b)
+    local sources = gather_sources(opts)
+    if #sources == 0 then
+        error("[cc.shared] no sources found for target '" .. name .. "'", 2)
+    end
+    -- CS-0084: opts.output overrides the default link path verbatim.
+    local so_path = opts.output or ("build/lib/lib" .. name .. ".so")
+    register_known(name)
+    local merged = transitive.resolve_links(b.links)
+    b.includes = merge_includes(b.includes, merged.includes)
+    b.defines  = merge_defines(b.defines, merged.defines)
+    record_export(id, sources, b, so_path)
+    local objs = compile_all(name, sources, b)
+    cc.link(objs, so_path, {
+        system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
+        frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
+        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
+        link_inputs   = merged.lib_paths,   -- fold dep archive paths into the link unit's inputs (cache-key fold)
+        shared        = true,
+        needs         = b.needs,
+    })
 end
 
-function M.shared(name, opts)
+function M.headers(opts)
+    opts = opts or {}
+    local id = current_recipe_or_error("headers")   -- qualified
+    local name = recipe.name                          -- bare
     toolchain.ensure_probe_registered()
-    register_needs(opts and opts.needs)
-
-    cook.recipe(name, { requires = merge_requires(opts) }, function()
-        local b = build_opts(opts, "shared")
-        b.needs = (opts and opts.needs) or {}
-        local sources = gather_sources(opts or {})
-        if #sources == 0 then
-            error("[cc.shared] no sources found for target '" .. name .. "'", 2)
-        end
-        -- CS-0084: opts.output overrides the default link path verbatim.
-        local so_path = (opts and opts.output) or ("build/lib/lib" .. name .. ".so")
-        register_known(name)
-        local merged = transitive.resolve_links(b.links)
-        b.includes = merge_includes(b.includes, merged.includes)
-        b.defines  = merge_defines(b.defines, merged.defines)
-        record_export(name, sources, b, so_path)
-        local objs = compile_all(name, sources, b)
-        cc.link(objs, so_path, {
-            system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
-            frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
-            extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
-            shared        = true,
-            needs         = b.needs,
-        })
-    end)
-    return name
-end
-
-function M.headers(name, opts)
-    toolchain.ensure_probe_registered()
-    register_needs(opts and opts.needs)
-
-    cook.recipe(name, { requires = merge_requires(opts) }, function()
-        local b = build_opts(opts, "headers")
-        register_known(name)
-        record_export(name, {}, b, "")
-    end)
-    return name
+    require("cook_cc.config_header").mark_target_registered()
+    check_needs_declared("headers", opts.needs)
+    -- No links: headers export includes/defines only, no units to build.
+    local b = build_opts(opts, "headers")
+    register_known(name)
+    record_export(id, {}, b, "")
 end
 
 return M

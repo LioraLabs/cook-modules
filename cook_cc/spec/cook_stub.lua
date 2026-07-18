@@ -14,6 +14,12 @@ local tool_responses = {}   -- "tool args" -> output
 local file_exists_set = {}  -- path -> bool
 local platform_os = "linux"
 
+local current_recipe        = nil    -- name of the recipe body currently executing
+local known_recipe_names    = {}     -- name -> true, for cook.require_recipe validation
+local recipe_names_list     = {}     -- array of registered recipe names, registration order
+local recipe_meta_store     = {}     -- name -> meta table captured from cook.recipe
+local require_recipe_edges_list = {} -- array of names passed to cook.require_recipe, call order
+
 function M.reset()
     cache_store = {}
     export_store = {}
@@ -25,6 +31,11 @@ function M.reset()
     platform_os = "linux"
     probe_registrations = {}
     probe_values        = {}
+    current_recipe          = nil
+    known_recipe_names      = {}
+    recipe_names_list       = {}
+    recipe_meta_store       = {}
+    require_recipe_edges_list = {}
 end
 
 function M.probe_keys()
@@ -67,6 +78,18 @@ function M.added_units()
     return added_units
 end
 
+function M.require_recipe_edges()
+    return require_recipe_edges_list
+end
+
+function M.recipe_meta(name)
+    return recipe_meta_store[name]
+end
+
+function M.recipe_names()
+    return recipe_names_list
+end
+
 local function pkg_dispatch(cmd)
     -- "pkg-config --exists NAME" / "--cflags NAME" / "--libs NAME" / "--modversion NAME"
     local op, name = cmd:match("pkg%-config %-%-(%S+) (.+)$")
@@ -81,6 +104,13 @@ local function pkg_dispatch(cmd)
     elseif op == "modversion"  then return (r.version or "") .. "\n"
     end
     return nil
+end
+
+local function current_recipe_name_or_error()
+    if current_recipe == nil then
+        error("[cook_stub] cook.recipe_name() called outside a recipe body")
+    end
+    return current_recipe
 end
 
 function M.install()
@@ -106,7 +136,28 @@ function M.install()
         export = function(name, info) export_store[name] = info end,
         import = function(name) return export_store[name] end,
         add_unit = function(u) added_units[#added_units + 1] = u end,
-        recipe = function(_name, _opts, body_fn) body_fn() end,
+        recipe_name = current_recipe_name_or_error,
+        require_recipe = function(name)
+            if not known_recipe_names[name] then
+                error("[cook_stub] cook.require_recipe: unknown recipe '" .. name .. "'")
+            end
+            require_recipe_edges_list[#require_recipe_edges_list + 1] = name
+        end,
+        recipe = function(name, meta, body_fn)
+            if not known_recipe_names[name] then
+                known_recipe_names[name] = true
+                recipe_names_list[#recipe_names_list + 1] = name
+            end
+            recipe_meta_store[name] = meta
+
+            local previous_recipe = current_recipe
+            current_recipe = name
+            local ok, err = pcall(body_fn)
+            current_recipe = previous_recipe
+            if not ok then
+                error(err, 0)
+            end
+        end,
         sh = function(cmd)
             local pkg = pkg_dispatch(cmd)
             if pkg ~= nil then return pkg end
@@ -129,6 +180,13 @@ function M.install()
             error("[cook_stub] unhandled sh: " .. cmd)
         end,
     }
+
+    _G.recipe = setmetatable({}, {
+        __index = function(_, k)
+            if k == "name" then return current_recipe_name_or_error() end
+            return nil
+        end,
+    })
 
     _G.fs = {
         exists = function(p)
