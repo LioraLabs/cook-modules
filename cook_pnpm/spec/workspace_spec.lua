@@ -79,5 +79,9 @@ packages:
         assert.is_true(found, "b:build must `requires = { a:build, ... }`")
         -- a has no workspace deps, so a:build's requires set is empty.
         assert.equals(0, #recs["a:build"].opts.requires)
+        -- Data-driven fan-out carve-out: every minted recipe MUST carry origin
+        -- metadata so `cook list` annotates it (explicit-recipes contract).
+        assert.equals("cook_pnpm.task", recs["a:build"].opts.origin)
+        assert.equals("cook_pnpm.task", recs["b:build"].opts.origin)
     end)
 end)

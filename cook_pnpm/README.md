@@ -77,6 +77,27 @@ cook game test               # build then test every package
 | `cook_pnpm.find(tool)` / `cook_pnpm.find_or_error(tool)` | Locate a JS dev tool |
 | `cook_pnpm.register_finder(name, fn)` | Project-scoped custom finder |
 
+## This module mints recipes (data-driven fan-out carve-out)
+
+Under the explicit-recipes contract a module MUST NOT mint recipes implicitly —
+single-target makers are step contributors a user-written `recipe` body calls.
+`cook_pnpm` is the documented exception: **`cook_pnpm.task(name, opts)` is a
+data-driven fan-out** — one call parses the workspace manifests and mints *N*
+recipes named `<pkg>:<task>` (e.g. `web:build`, `api:build`). `cook_pnpm.run`,
+`cook_pnpm.install`, and `cook_pnpm.script` likewise register recipes.
+
+Every recipe minted this way carries `origin = "cook_pnpm.task"` metadata, so
+`cook list` attributes it to the call that created it:
+
+```
+recipe web:build   (from cook_pnpm.task)
+recipe api:build   (from cook_pnpm.task)
+```
+
+A name you did not write in the Cookfile is always traceable to the module that
+minted it. See the Cook Standard's module-authoring contract (CS-0143 origin
+annotation; the fan-out carve-out).
+
 ## Caching (v0.2)
 
 `outputs` semantics changed from v0.1: each entry is a glob pattern
