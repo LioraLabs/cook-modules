@@ -2,6 +2,12 @@ local cjson = require("cjson")
 
 local M = {}
 
+-- Per-VM idempotence latch (0.14.0). compile_commands() is a top-level call
+-- that queues exactly one post-register finalizer; a second call in the same
+-- VM is a no-op. Module-level state, cleared on module reload
+-- (package.loaded[...] = nil), same convention as config_header.lua's `state`.
+local queued = false
+
 local function is_c(source) return source:match("%.[cC]$") ~= nil end
 
 local function shell_chomp(s) return (s or ""):gsub("%s+$", "") end
@@ -48,6 +54,25 @@ function M.write()
         end
     end
     fs.write("compile_commands.json", cjson.encode(entries) .. "\n")
+end
+
+-- 0.14.0: compile_commands() moved OUT of the recipe body and became a
+-- top-level call (CS-0149). It queues exactly one cook.on_register_complete
+-- finalizer per VM; when the finalizer fires (after ALL recipe bodies have
+-- been evaluated) it renders the DB from the full targets._known() snapshot
+-- at that time — including targets registered after this call and targets
+-- in no link closure of any other target (the base/d3xp "disconnected
+-- plugin" case this replaces the manual-ordering-dep form for).
+function M.compile_commands()
+    local ok = pcall(cook.recipe_name)
+    if ok then
+        error("[cc.compile_commands] compile_commands() is a top-level call since 0.14.0; "
+            .. "move it out of the recipe body (and drop the ordering dep) — the "
+            .. "post-register finalizer guarantees completeness", 2)
+    end
+    if queued then return end
+    queued = true
+    cook.on_register_complete(M.write)
 end
 
 return M
