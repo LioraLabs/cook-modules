@@ -65,6 +65,10 @@ function M.set(opts)
     if opts.compiler then state.compiler_override = opts.compiler end
     if opts.standard then state.default_standard = opts.standard end
     if opts.warnings then state.warnings = opts.warnings end
+    -- Register the compiler probe at TOP LEVEL when the user calls
+    -- cook_cc.toolchain({...}) (probes must be top-level per CS-0083; makers
+    -- must not mint probes inside a body). Idempotent, so safe to call here.
+    M.ensure_probe_registered()
 end
 
 local function append_list(dst, src)

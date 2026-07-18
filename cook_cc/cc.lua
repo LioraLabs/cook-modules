@@ -61,8 +61,15 @@ function M.compile(source, opts)
     -- candidate-tool fingerprints) so the key stays stable across machines with
     -- equivalent toolchains. Default 'shared' disposition is correct — compile
     -- output is reproducible.
+    -- Generated config headers (opts.generated_headers) become declared
+    -- compile-unit inputs — the data edge to the config_header gen unit.
+    local unit_inputs = { source }
+    for _, gh in ipairs(opts.generated_headers or {}) do
+        unit_inputs[#unit_inputs + 1] = gh
+    end
+
     cook.add_unit({
-        inputs            = { source },
+        inputs            = unit_inputs,
         output            = obj_out,
         command           = cmd,
         probes            = probes,
@@ -124,10 +131,19 @@ function M.link(objects, output, opts)
     -- Trailing space ensures assertions like " -lpthread " match the last token.
     local cmd = table.concat(parts, " ") .. " "
 
+    -- Dependency archive paths (opts.link_inputs) fold into the link unit's
+    -- inputs for the cache key; they also remain on the command line via
+    -- extra_ldflags (do not remove that).
+    local unit_inputs = {}
+    for _, o in ipairs(objects) do unit_inputs[#unit_inputs + 1] = o end
+    for _, li in ipairs(opts.link_inputs or {}) do
+        unit_inputs[#unit_inputs + 1] = li
+    end
+
     -- §12.7.5: seal the resolved toolchain + finder determinants (see
     -- M.compile's comment above for the full rationale).
     cook.add_unit({
-        inputs  = objects,
+        inputs  = unit_inputs,
         output  = output,
         command = cmd,
         probes  = probes,
