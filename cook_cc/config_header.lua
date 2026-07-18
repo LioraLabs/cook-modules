@@ -9,7 +9,6 @@ local M = {}
 local state = { headers = {}, target_registered = false }
 
 function M.mark_target_registered() state.target_registered = true end
-function M.was_target_registered()  return state.target_registered  end
 function M.get_headers()            return state.headers            end
 
 local function renderer_path()

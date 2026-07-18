@@ -149,8 +149,11 @@ local function build_opts(opts, kind)
     }
 end
 
--- `id` is the QUALIFIED recipe name — export IDENTITY. resolve_links /
--- compile_db look exports up by this key.
+-- `id` is the QUALIFIED recipe name — the export IDENTITY key. Consumers
+-- (resolve_links, compile_db) look up exports with the BARE recipe names that
+-- appear in `links` / `_known`; the engine bridges those bare refs to the
+-- qualified export within the module's own import scope. In a root Cookfile
+-- (no prefix) qualified == bare, so the two coincide.
 local function record_export(id, sources, b, lib_path)
     cook.export(id, {
         includes      = b.export_includes or b.includes,        -- backcompat fall-back (CS-0080 §28.4)
