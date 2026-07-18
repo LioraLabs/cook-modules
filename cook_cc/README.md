@@ -1,10 +1,10 @@
 # cook_cc
 
-Cook C-family (C + C++) native build module. Provides declarative target
-makers (`cc.bin` / `cc.lib` / `cc.shared` / `cc.headers`), low-level
-primitives (`cc.compile` / `cc.archive` / `cc.link`), pkg-config discovery
-(`cc.find`), transitive link propagation, and compile_commands.json
-generation.
+Cook C-family (C + C++) native build module. Provides step-contributor
+target makers (`cc.bin` / `cc.lib` / `cc.shared` / `cc.headers`) called
+inside a `recipe` body, low-level primitives (`cc.compile` / `cc.archive` /
+`cc.link`), pkg-config discovery (`cc.find` / top-level `cc.uses`),
+transitive link propagation, and compile_commands.json generation.
 
 ## Specification
 
@@ -26,14 +26,21 @@ Then `cook modules install`.
 ## Use
 
 ```
-use cook_cc as cc
+use cook_cc
 
-config
-    cc.toolchain({ standard = "c++17", warnings = "strict" })
+cook_cc.toolchain({ standard = "c++17", warnings = "strict" })
+cook_cc.uses("sdl2")
+cook_cc.config_header({ from = "config.h.in", to = "build/config.h", vars = { VERSION = "1.0" } })
 
 recipe app
-    cc.bin("app", { sources = { "src/main.cpp" } })
+    cook_cc.bin({ sources = { "src/main.cpp" }, needs = { "sdl2" } })
 ```
+
+`toolchain()`, `uses()`, and `config_header()` are top-level calls made
+before any recipe. `uses(...)` registers `cc:find:*` probes that a maker's
+`needs` list can then reference by name; makers themselves are step
+contributors — they take no `name` parameter and must run inside a
+`recipe` body, which supplies the recipe identity.
 
 ## Development
 
