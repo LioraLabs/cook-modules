@@ -26,7 +26,7 @@ M.find             = finder.find
 M.find_or_error    = finder.find_or_error
 M.uses             = finder.uses
 M.register_finder  = finder.register
-M.compile_commands = db.write
+M.compile_commands = db.compile_commands
 M.checks           = checks
 M.config_header    = config_header.config_header
 
