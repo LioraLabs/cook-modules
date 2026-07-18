@@ -1,16 +1,18 @@
--- SHI-216 / CS-0072: target-makers must call cook.recipe(...) internally so
--- they can be invoked from a top-level register block in Cookfile v0.9 syntax.
+-- 0.13.0: the old premise ("target-makers call cook.recipe
+-- internally") is GONE. Makers are now STEP CONTRIBUTORS: called INSIDE a
+-- user-written `recipe` body with NO name param, they add compile/link/archive
+-- units + the export DIRECTLY to the enclosing recipe and mint NO recipe of
+-- their own. These specs pin that step-contributor contract.
 --
--- These specs use a deferred-recipe variant of cook_stub: cook.recipe captures
--- {name, opts, body_fn} without immediately running the body, letting us
--- assert on the recipe header separately from the body effects.
+-- We use the DEFAULT stub (inline recipe execution, which sets current_recipe
+-- so cook.recipe_name() / recipe.name resolve inside the body).
 
 local stub = require("cook_stub")
 
 local function reset_modules()
     for _, m in ipairs({
         "cook_cc.toolchain", "cook_cc.cc", "cook_cc.targets", "cook_cc.transitive",
-        "cook_cc.finder",
+        "cook_cc.finder", "cook_cc.config_header",
     }) do
         package.loaded[m] = nil
     end
@@ -22,264 +24,268 @@ local function with_toolchain()
     require("cook_cc.toolchain").ensure_probe_registered()
 end
 
--- Install a deferred-recipe variant: cook.recipe captures the registration
--- but does NOT run the body. Returns the captured recipes table.
-local function install_deferred()
-    local recipes = {}
-    stub.install()
-    _G.cook.recipe = function(name, opts, body_fn)
-        recipes[#recipes + 1] = { name = name, opts = opts, body_fn = body_fn }
-    end
-    return recipes
-end
+local function in_recipe(name, fn) cook.recipe(name, {}, fn) end
 
-describe("cook_cc target-makers: cook.recipe header (SHI-216)", function()
-    local recipes
-
+describe("step-contributor: maker mints NO nested recipe", function()
     before_each(function()
-        stub.reset()
-        recipes = install_deferred()
+        stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
         reset_modules()
         with_toolchain()
     end)
 
-    -- cc.bin
-    it("cc.bin registers a recipe with the correct name", function()
+    it("cc.bin contributes to the enclosing recipe and registers no extra recipe", function()
         local targets = require("cook_cc.targets")
-        targets.bin("game", { sources = { "src/main.c" } })
-        assert.equals(1, #recipes)
-        assert.equals("game", recipes[1].name)
+        in_recipe("game", function()
+            targets.bin({ sources = { "src/main.c" } })
+        end)
+        assert.same({ "game" }, stub.recipe_names())
     end)
 
-    it("cc.bin passes opts.links as recipe requires", function()
+    it("cc.lib registers no extra recipe", function()
         local targets = require("cook_cc.targets")
-        targets.bin("app", { sources = { "src/a.c" }, links = { "mylib" } })
-        assert.equals(1, #recipes)
-        assert.same({ "mylib" }, recipes[1].opts.requires)
+        in_recipe("mathlib", function()
+            targets.lib({ sources = { "src/math.c" } })
+        end)
+        assert.same({ "mathlib" }, stub.recipe_names())
     end)
 
-    it("cc.bin with no links passes empty requires", function()
+    it("cc.shared registers no extra recipe", function()
         local targets = require("cook_cc.targets")
-        targets.bin("app", { sources = { "src/a.c" } })
-        assert.same({}, recipes[1].opts.requires)
+        in_recipe("plug", function()
+            targets.shared({ sources = { "src/plug.c" } })
+        end)
+        assert.same({ "plug" }, stub.recipe_names())
     end)
 
-    it("cc.bin returns the target name", function()
+    it("cc.headers registers no extra recipe", function()
         local targets = require("cook_cc.targets")
-        local result = targets.bin("app", { sources = { "src/a.c" } })
-        assert.equals("app", result)
+        in_recipe("idlib", function()
+            targets.headers({ export_includes = { "include/" } })
+        end)
+        assert.same({ "idlib" }, stub.recipe_names())
     end)
 
-    -- cc.lib
-    it("cc.lib registers a recipe with the correct name", function()
+    it("a bin linking a lib mints exactly the two user recipes, no maker recipes", function()
         local targets = require("cook_cc.targets")
-        targets.lib("mathlib", { sources = { "src/math.c" } })
-        assert.equals(1, #recipes)
-        assert.equals("mathlib", recipes[1].name)
-    end)
-
-    it("cc.lib passes opts.links as recipe requires", function()
-        local targets = require("cook_cc.targets")
-        targets.lib("extlib", { sources = { "src/ext.c" }, links = { "base" } })
-        assert.same({ "base" }, recipes[1].opts.requires)
-    end)
-
-    it("cc.lib returns the target name", function()
-        local targets = require("cook_cc.targets")
-        local result = targets.lib("mathlib", { sources = { "src/math.c" } })
-        assert.equals("mathlib", result)
-    end)
-
-    -- cc.shared
-    it("cc.shared registers a recipe with the correct name", function()
-        local targets = require("cook_cc.targets")
-        targets.shared("plug", { sources = { "src/plug.c" } })
-        assert.equals(1, #recipes)
-        assert.equals("plug", recipes[1].name)
-    end)
-
-    it("cc.shared passes opts.links as recipe requires", function()
-        local targets = require("cook_cc.targets")
-        targets.shared("plug", { sources = { "src/plug.c" }, links = { "iface" } })
-        assert.same({ "iface" }, recipes[1].opts.requires)
-    end)
-
-    it("cc.shared returns the target name", function()
-        local targets = require("cook_cc.targets")
-        local result = targets.shared("plug", { sources = { "src/plug.c" } })
-        assert.equals("plug", result)
-    end)
-
-    -- cc.headers
-    it("cc.headers registers a recipe with the correct name", function()
-        local targets = require("cook_cc.targets")
-        targets.headers("idlib", { export_includes = { "include/" } })
-        assert.equals(1, #recipes)
-        assert.equals("idlib", recipes[1].name)
-    end)
-
-    it("cc.headers passes empty requires (header-only target has no link deps)", function()
-        local targets = require("cook_cc.targets")
-        targets.headers("idlib", { export_includes = { "include/" } })
-        assert.same({}, recipes[1].opts.requires)
-    end)
-
-    it("cc.headers returns the target name", function()
-        local targets = require("cook_cc.targets")
-        local result = targets.headers("idlib", {})
-        assert.equals("idlib", result)
+        in_recipe("mathlib", function()
+            targets.lib({ sources = { "src/math.c" } })
+        end)
+        in_recipe("game", function()
+            targets.bin({ sources = { "src/main.c" }, links = { "mathlib" } })
+        end)
+        assert.same({ "mathlib", "game" }, stub.recipe_names())
     end)
 end)
 
-describe("cook_cc target-makers: recipe body effects (SHI-216)", function()
-    local recipes
-
+describe("step-contributor: cc.bin outputs", function()
     before_each(function()
-        stub.reset()
-        recipes = install_deferred()
+        stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
         reset_modules()
         with_toolchain()
     end)
 
-    it("cc.bin body produces compile + link units when invoked", function()
+    it("produces 2 compiles + 1 link ending at build/bin/<name>", function()
         local targets = require("cook_cc.targets")
-        targets.bin("game", { sources = { "src/main.c", "src/util.c" } })
-        assert.equals(1, #recipes)
-        assert.equals(0, #stub.added_units(), "units should be empty before body runs")
-
-        recipes[1].body_fn()
+        in_recipe("game", function()
+            targets.bin({ sources = { "src/main.c", "src/util.c" } })
+        end)
         local units = stub.added_units()
-        -- 2 compiles + 1 link = 3 units minimum
-        assert.is_true(#units >= 3,
-            "expected >= 3 units (2 compile + 1 link); got " .. tostring(#units))
-        assert.equals("build/bin/game", units[#units].output)
+        assert.equals(3, #units)
+        assert.equals("build/obj/game/main.o", units[1].output)
+        assert.equals("build/obj/game/util.o", units[2].output)
+        assert.equals("build/bin/game", units[3].output)
     end)
 
-    it("cc.lib body produces compile + archive units when invoked", function()
+    it("registers the bare name in _known", function()
         local targets = require("cook_cc.targets")
-        targets.lib("mathlib", { sources = { "src/math.c" } })
-        recipes[1].body_fn()
-        local units = stub.added_units()
-        assert.is_true(#units >= 2,
-            "expected >= 2 units (compile + archive); got " .. tostring(#units))
-        assert.equals("build/lib/libmathlib.a", units[#units].output)
+        in_recipe("game", function()
+            targets.bin({ sources = { "src/main.c" } })
+        end)
+        assert.same({ "game" }, targets._known())
     end)
 
-    it("cc.shared body produces compile + shared-link units when invoked", function()
+    it("exports under the recipe identity (cook.import) with compile_info", function()
         local targets = require("cook_cc.targets")
-        targets.shared("plug", { sources = { "src/plug.c" } })
-        recipes[1].body_fn()
-        local units = stub.added_units()
-        assert.is_true(#units >= 2,
-            "expected >= 2 units (compile + link); got " .. tostring(#units))
-        assert.equals("build/lib/libplug.so", units[#units].output)
+        in_recipe("game", function()
+            targets.bin({ sources = { "src/main.c" } })
+        end)
+        local info = cook.import("game")
+        assert.is_table(info)
+        assert.same({ "src/main.c" }, info.compile_info.sources)
+    end)
+end)
+
+describe("step-contributor: cc.lib outputs", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
+        reset_modules()
+        with_toolchain()
     end)
 
-    it("cc.headers body produces no units (header-only target)", function()
+    it("produces compile(s) + an archive at build/lib/lib<name>.a", function()
         local targets = require("cook_cc.targets")
-        targets.headers("idlib", { export_includes = { "include/" } })
-        recipes[1].body_fn()
+        in_recipe("mathlib", function()
+            targets.lib({ sources = { "src/math.c" } })
+        end)
+        local units = stub.added_units()
+        assert.equals(2, #units)
+        assert.equals("build/obj/mathlib/math.o", units[1].output)
+        assert.equals("build/lib/libmathlib.a", units[2].output)
+        assert.matches("^ar rcs ", units[2].command)
+    end)
+
+    it("exports lib_path pointing at the archive", function()
+        local targets = require("cook_cc.targets")
+        in_recipe("mathlib", function()
+            targets.lib({ sources = { "src/math.c" } })
+        end)
+        assert.equals("build/lib/libmathlib.a", cook.import("mathlib").lib_path)
+    end)
+
+    it("registers the bare name in _known", function()
+        local targets = require("cook_cc.targets")
+        in_recipe("mathlib", function()
+            targets.lib({ sources = { "src/math.c" } })
+        end)
+        assert.same({ "mathlib" }, targets._known())
+    end)
+end)
+
+describe("step-contributor: cc.shared outputs", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
+        reset_modules()
+        with_toolchain()
+    end)
+
+    it("produces a -fPIC compile + a -shared link at build/lib/lib<name>.so", function()
+        local targets = require("cook_cc.targets")
+        in_recipe("plug", function()
+            targets.shared({ sources = { "src/plug.c" } })
+        end)
+        local units = stub.added_units()
+        assert.equals(2, #units)
+        assert.matches(" %-fPIC ", units[1].command)
+        assert.matches(" %-shared", units[2].command)
+        assert.equals("build/lib/libplug.so", units[2].output)
+    end)
+
+    it("exports lib_path pointing at the shared object", function()
+        local targets = require("cook_cc.targets")
+        in_recipe("plug", function()
+            targets.shared({ sources = { "src/plug.c" } })
+        end)
+        assert.equals("build/lib/libplug.so", cook.import("plug").lib_path)
+    end)
+
+    it("registers the bare name in _known", function()
+        local targets = require("cook_cc.targets")
+        in_recipe("plug", function()
+            targets.shared({ sources = { "src/plug.c" } })
+        end)
+        assert.same({ "plug" }, targets._known())
+    end)
+end)
+
+describe("step-contributor: cc.headers outputs", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
+        reset_modules()
+        with_toolchain()
+    end)
+
+    it("produces no units", function()
+        local targets = require("cook_cc.targets")
+        in_recipe("idlib", function()
+            targets.headers({ export_includes = { "include/" } })
+        end)
         assert.equals(0, #stub.added_units())
     end)
 
-    it("cc.headers body calls cook.export with the right includes", function()
+    it("exports includes under the recipe identity", function()
         local targets = require("cook_cc.targets")
-        targets.headers("idlib", { export_includes = { "include/" } })
-        recipes[1].body_fn()
+        in_recipe("idlib", function()
+            targets.headers({ export_includes = { "include/" } })
+        end)
         local info = cook.import("idlib")
-        assert.is_table(info)
         assert.same({ "include/" }, info.includes)
+        assert.equals("", info.lib_path)
     end)
 
-    it("cc.bin body errors when sources list is empty", function()
+    it("registers the bare name in _known", function()
         local targets = require("cook_cc.targets")
-        targets.bin("app", { sources = {} })
-        assert.has_error(
-            function() recipes[1].body_fn() end,
-            "[cc.bin] no sources found for target 'app'"
-        )
+        in_recipe("idlib", function()
+            targets.headers({ export_includes = { "include/" } })
+        end)
+        assert.same({ "idlib" }, targets._known())
     end)
 end)
 
-describe("cook_cc target-makers: probes register at top level, not in body (CS-0083 Phase 1)", function()
-    local recipes
-
+describe("step-contributor: empty-source errors inside a recipe", function()
     before_each(function()
-        stub.reset()
-        recipes = install_deferred()
+        stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
         reset_modules()
-        -- NOTE: do NOT call with_toolchain() here — these specs assert that
-        -- the target maker itself registers cc:compiler:auto at top-level.
+        with_toolchain()
+    end)
+
+    it("cc.bin errors when sources list is empty", function()
+        local targets = require("cook_cc.targets")
+        assert.has_error(function()
+            in_recipe("app", function() targets.bin({ sources = {} }) end)
+        end, "[cc.bin] no sources found for target 'app'")
+    end)
+
+    it("cc.lib errors when sources list is empty", function()
+        local targets = require("cook_cc.targets")
+        assert.has_error(function()
+            in_recipe("app", function() targets.lib({ sources = {} }) end)
+        end, "[cc.lib] no sources found for target 'app'")
+    end)
+
+    it("cc.shared errors when sources list is empty", function()
+        local targets = require("cook_cc.targets")
+        assert.has_error(function()
+            in_recipe("app", function() targets.shared({ sources = {} }) end)
+        end, "[cc.shared] no sources found for target 'app'")
+    end)
+end)
+
+describe("step-contributor: probes register at top level, not in body (CS-0083)", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
+        reset_modules()
+        -- Do NOT call with_toolchain(): assert the maker itself ensures
+        -- cc:compiler:auto is registered (idempotently) when it runs.
         stub.set_probe_value("cc:compiler:auto", { cxx = "g++", cc = "gcc" })
     end)
 
-    it("cc.bin registers cc:compiler:auto BEFORE body_fn runs", function()
+    it("cc.bin ensures cc:compiler:auto is registered", function()
         local targets = require("cook_cc.targets")
-        targets.bin("app", { sources = { "src/a.cpp" } })
-        local keys_before = stub.probe_keys()
-        assert.is_true(#keys_before > 0,
-            "expected at least one probe registered before body; got: " .. tostring(#keys_before))
+        in_recipe("app", function()
+            targets.bin({ sources = { "src/a.cpp" } })
+        end)
         local has_compiler = false
-        for _, k in ipairs(keys_before) do
+        for _, k in ipairs(stub.probe_keys()) do
             if k == "cc:compiler:auto" then has_compiler = true; break end
         end
-        assert.is_true(has_compiler,
-            "cc:compiler:auto must be registered at top-level before body_fn; got keys: "
-            .. table.concat(keys_before, ","))
+        assert.is_true(has_compiler, "cc:compiler:auto must be registered")
     end)
 
-    it("cc.bin registers cc:find:<n> for each need BEFORE body_fn runs", function()
-        local targets = require("cook_cc.targets")
-        targets.bin("app", { sources = { "src/a.cpp" }, needs = { "zlib" } })
-        local keys_before = stub.probe_keys()
-        local has_zlib = false
-        for _, k in ipairs(keys_before) do
-            if k == "cc:find:zlib" then has_zlib = true; break end
+    it("cook_cc.toolchain({...}) registers the compiler probe at top level", function()
+        local cc = require("cook_cc")
+        cc.toolchain({ compiler = "clang++" })
+        local has_probe = false
+        for _, k in ipairs(stub.probe_keys()) do
+            if k == "cc:compiler:clang++" then has_probe = true; break end
         end
-        assert.is_true(has_zlib,
-            "cc:find:zlib must be registered at top-level before body_fn; got keys: "
-            .. table.concat(keys_before, ","))
-    end)
-
-    it("cc.lib registers cc:find:<n> for each need BEFORE body_fn runs", function()
-        local targets = require("cook_cc.targets")
-        targets.lib("foolib", { sources = { "src/foo.c" }, needs = { "zlib" } })
-        local keys_before = stub.probe_keys()
-        local has_zlib = false
-        for _, k in ipairs(keys_before) do
-            if k == "cc:find:zlib" then has_zlib = true; break end
-        end
-        assert.is_true(has_zlib,
-            "cc:find:zlib must be registered at top-level before body_fn; got keys: "
-            .. table.concat(keys_before, ","))
-    end)
-
-    it("cc.shared registers cc:find:<n> for each need BEFORE body_fn runs", function()
-        local targets = require("cook_cc.targets")
-        targets.shared("plug", { sources = { "src/plug.c" }, needs = { "zlib" } })
-        local keys_before = stub.probe_keys()
-        local has_zlib = false
-        for _, k in ipairs(keys_before) do
-            if k == "cc:find:zlib" then has_zlib = true; break end
-        end
-        assert.is_true(has_zlib,
-            "cc:find:zlib must be registered at top-level before body_fn; got keys: "
-            .. table.concat(keys_before, ","))
-    end)
-
-    it("cc.headers registers cc:find:<n> for each need BEFORE body_fn runs", function()
-        local targets = require("cook_cc.targets")
-        targets.headers("idlib", { export_includes = { "include/" }, needs = { "zlib" } })
-        local keys_before = stub.probe_keys()
-        local has_zlib = false
-        for _, k in ipairs(keys_before) do
-            if k == "cc:find:zlib" then has_zlib = true; break end
-        end
-        assert.is_true(has_zlib,
-            "cc:find:zlib must be registered at top-level before body_fn; got keys: "
-            .. table.concat(keys_before, ","))
+        assert.is_true(has_probe,
+            "cook_cc.toolchain() must register cc:compiler:clang++ at top level")
     end)
 end)

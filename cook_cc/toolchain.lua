@@ -6,10 +6,6 @@ local state = {
     warnings              = "default",
     defaults              = {},
     probe_registered      = {},          -- set: key -> true
-    -- 0.11.0: recipe names synthesized by defaults({ config_header = ... }).
-    -- targets.merge_requires threads them into every cc target's `requires`
-    -- so callers don't restate `requires = { cfg }` on each target.
-    config_header_recipes = {},
 }
 
 local function probe_key()
@@ -69,6 +65,10 @@ function M.set(opts)
     if opts.compiler then state.compiler_override = opts.compiler end
     if opts.standard then state.default_standard = opts.standard end
     if opts.warnings then state.warnings = opts.warnings end
+    -- Register the compiler probe at TOP LEVEL when the user calls
+    -- cook_cc.toolchain({...}) (probes must be top-level per CS-0083; makers
+    -- must not mint probes inside a body). Idempotent, so safe to call here.
+    M.ensure_probe_registered()
 end
 
 local function append_list(dst, src)
@@ -94,32 +94,11 @@ function M.merge_defaults(opts)
     end
     if opts.standard then state.default_standard = opts.standard end
     if opts.warnings then state.warnings = opts.warnings end
-
-    -- 0.11.0: declarative config-header registration. When present, synthesize
-    -- the recipe via cook_cc.config_header(from, to, vars) and remember the
-    -- recipe name so target-makers can implicitly require it. Auto-join the
-    -- output's directory to defaults.includes so consumers can `#include
-    -- "config.h"` without restating the build dir. Lazy-required to avoid a
-    -- toolchain ↔ config_header import cycle.
-    if opts.config_header then
-        local config_header = require("cook_cc.config_header")
-        local ch = opts.config_header
-        if not ch.from or not ch.to then
-            error("[cc.defaults] config_header requires both `from` and `to` fields", 2)
-        end
-        local recipe_name = config_header.config_header(ch.from, ch.to, ch.vars or {})
-        state.config_header_recipes[#state.config_header_recipes + 1] = recipe_name
-        local outdir = path.dir(ch.to)
-        if outdir and outdir ~= "" and outdir ~= "." then
-            state.defaults.includes[#state.defaults.includes + 1] = outdir
-        end
-    end
 end
 
-function M.get_default_standard()      return state.default_standard      end
-function M.get_warnings()              return state.warnings              end
-function M.get_defaults()              return state.defaults              end
-function M.get_config_header_recipes() return state.config_header_recipes end
+function M.get_default_standard() return state.default_standard end
+function M.get_warnings()         return state.warnings         end
+function M.get_defaults()         return state.defaults         end
 
 function M.warning_flags(override)
     local w = override or state.warnings
