@@ -24,6 +24,7 @@ M.shared           = targets.shared
 M.headers          = targets.headers
 M.find             = finder.find
 M.find_or_error    = finder.find_or_error
+M.uses             = finder.uses
 M.register_finder  = finder.register
 M.compile_commands = db.write
 M.checks           = checks
