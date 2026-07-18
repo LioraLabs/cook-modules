@@ -120,7 +120,7 @@ M.bin              = targets.bin      -- target makers
 M.lib              = targets.lib
 M.shared           = targets.shared
 M.find             = finder.find
-M.compile_commands = db.write
+M.compile_commands = db.compile_commands
 return M
 ```
 
@@ -238,6 +238,76 @@ targets`, because every target maker registered after it auto-joins the
 generated header's output directory onto its include paths and declares
 the generated header as one of its compile units' `inputs` (that's the
 data edge — a fold, not an ordering declaration on your part to make).
+
+### `compile_commands()`: top-level finalization via the register-completion hook
+
+`cook_cc.compile_commands()` is `config_header()`'s temporal mirror, not
+its sibling: same top-level-call shape, opposite end of the register-phase
+timeline. `config_header()` MUST run *before* the first `cc.bin`/`lib`/
+`shared`/`headers` call — at top-level-call time it mints a support recipe
+whose generated header every later target maker consumes, so the targets
+depend on it having already run. `compile_commands()` runs the other
+direction: it queues a finalizer via `cook.on_register_complete` (§22.9,
+CS-0149) that fires *after* every target in the Cookfile has registered.
+It mints no support recipe, because by the time the callback runs there is
+nothing left for a dispatchable recipe to do — the database has already
+been written.
+
+The finalizer snapshots the complete known-target set once every recipe
+body of the registration pass has run. Reduced from
+`cook_cc/compile_db.lua`'s `M.write`:
+
+```lua
+function M.write()
+    local targets = require("cook_cc.targets")._known()
+    for _, name in ipairs(targets) do
+        local info = cook.import(name)
+        -- ... one compile_commands.json entry per source in info.compile_info
+    end
+end
+```
+
+Because the snapshot is the *whole* known-target set rather than anything
+reachable by walking a dependency graph, the database is complete by
+construction — including a target that sits outside every `links` closure
+a Cookfile author might otherwise reach for as an aggregation point.
+dhewm3's `base` and `d3xp` game-logic plugins are exactly this case:
+they're dlopen'd by the engine at runtime rather than linked into the
+`dhewm3` binary, so no `links = {...}` chain ever reaches them.
+
+That disconnected-target case is precisely what the pre-0.14 `recipe
+compile-commands : dhewm3`-style form got wrong. The `: dhewm3` header dep
+is an ordering FENCE ([Section 8 below](#8-cross-module-patterns)), not a
+build edge — it only guarantees `dhewm3`'s own subgraph had registered
+before the wrapper recipe's body ran; it says nothing about a target
+outside that subgraph. `base` and `d3xp` were never in `dhewm3`'s closure,
+so both were silently absent from the database in that form — 71 of
+`d3xp`'s entries gone, with no error and no missing-target diagnostic to
+notice by. Forgetting to add a newly disconnected root to the wrapper's
+dep list was a silent-data-loss bug waiting to happen every time the
+target graph grew a new dlopened plugin; the finalizer doesn't just fix
+that instance, it removes the entire class of error by not asking the
+author to enumerate roots at all.
+
+Repeat top-level `compile_commands()` calls are idempotent: a
+module-level latch (`compile_db.lua`'s `queued`) means only the first call
+in a VM queues a finalizer, and later calls are no-ops — at most one write
+of `compile_commands.json` per registration pass. Call it from inside a
+recipe body instead of at top level and it MUST raise loudly at register
+time rather than silently misbehaving — the same `cook.recipe_name()`-probe
+idiom [Section 3 above](#3-registering-work-units-with-cookadd_unit) uses
+elsewhere to detect "am I inside a recipe body," pointed the other way.
+
+One exemption worth knowing: a listing surface that enumerates the
+discovered recipe set without invoking any recipe body MAY skip draining
+queued finalizers entirely (§22.9, CS-0149) — nothing such a surface
+reports can depend on a finalizer whose only effect is a file write. The
+database is (re)written on every registration pass that actually
+dispatches or builds something; a bare listing invocation isn't such a
+pass, and doesn't owe you a fresh `compile_commands.json`.
+
+The governing Standard entry for this module change is CS-0151; the
+normative contract lives at §28.3.11.
 
 ### `links`: fold for cache weight, `cook.require_recipe` for ordering
 
