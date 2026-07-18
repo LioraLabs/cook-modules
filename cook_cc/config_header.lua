@@ -109,7 +109,12 @@ function M.config_header(opts)
     end)
     local outdir = path.dir(output)
     if outdir == "" or outdir == "." then outdir = nil end
-    state.headers[#state.headers + 1] = { output = output, outdir = outdir }
+    -- Record the support-recipe name alongside the output so
+    -- target-makers can declare a recipe-ordering edge to it (cook.require_recipe).
+    -- Without that edge a targeted build (e.g. `cook game`) never schedules the
+    -- generator and the compile fails on a missing config.h; the generated-header
+    -- file-input edge alone does not pull an otherwise-unreferenced recipe in.
+    state.headers[#state.headers + 1] = { output = output, outdir = outdir, recipe = recipe }
     return recipe
 end
 

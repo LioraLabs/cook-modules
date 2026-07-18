@@ -15,11 +15,6 @@ local function register_known(name)
     M._known_list[#M._known_list + 1] = name
 end
 
-local function is_known(name)
-    for _, n in ipairs(M._known_list) do if n == name then return true end end
-    return false
-end
-
 -- Maker-outside-recipe guard. cook.recipe_name() errors outside a recipe
 -- body; a maker is a STEP CONTRIBUTOR, so it must run inside the caller's
 -- `recipe` block. Returns the QUALIFIED recipe name (export identity).
@@ -42,63 +37,26 @@ local function check_needs_declared(kind, needs)
     end
 end
 
--- Iterative edit-distance (Levenshtein) over two strings, two-row DP.
-local function levenshtein(a, b)
-    local la, lb = #a, #b
-    if la == 0 then return lb end
-    if lb == 0 then return la end
-    local prev = {}
-    for j = 0, lb do prev[j] = j end
-    for i = 1, la do
-        local cur = { [0] = i }
-        local ca = a:byte(i)
-        for j = 1, lb do
-            local cost = (ca == b:byte(j)) and 0 or 1
-            local del = prev[j] + 1
-            local ins = cur[j - 1] + 1
-            local sub = prev[j - 1] + cost
-            local m = del
-            if ins < m then m = ins end
-            if sub < m then m = sub end
-            cur[j] = m
-        end
-        prev = cur
-    end
-    return prev[lb]
-end
-
--- Closest candidate to `target` by edit distance, but only if that distance
--- is within a tolerance scaled to the target length; else nil (no hint).
-local function closest_match(target, candidates)
-    local best, best_d = nil, nil
-    for _, c in ipairs(candidates or {}) do
-        local d = levenshtein(target, c)
-        if best_d == nil or d < best_d then best, best_d = c, d end
-    end
-    if best == nil then return nil end
-    local tol = math.max(2, math.floor(#target / 2))
-    if best_d <= tol then return best end
-    return nil
-end
-
 -- Declare an ordering edge to each linked recipe. `links` names sibling
--- recipes (each built by its own maker); each must already be known
--- (declared earlier), else fail with a did-you-mean hint. For known deps,
--- cook.require_recipe records the ordering edge so the linked artifact's
--- export (includes/defines/lib_path) is available when we resolve_links.
+-- recipes (each built by its own maker). cook.require_recipe records the
+-- ordering edge (and validates existence across all VMs), so the linked
+-- artifact's export (includes/defines/lib_path) is available when we
+-- resolve_links — regardless of declaration order.
 --
--- NOTE (bare vs qualified): link refs are matched against M._known_list,
--- which holds BARE declared names. Under an import prefix the engine bridges
--- bare link refs to the corresponding qualified exports within scope; in the
--- stub there is no prefix so bare == qualified.
-local function declare_link_deps(kind, links)
+-- NOTE (bare vs qualified): link refs are BARE declared names. Under an import
+-- prefix the engine bridges bare link refs to the corresponding qualified
+-- exports within scope; in the stub there is no prefix so bare == qualified.
+local function declare_link_deps(_kind, links)
     for _, dep in ipairs(links or {}) do
-        if not is_known(dep) then
-            local msg = "[cc." .. kind .. "] links references unknown recipe '" .. dep .. "'"
-            local hint = closest_match(dep, M._known_list)
-            if hint then msg = msg .. "; did you mean '" .. hint .. "'?" end
-            error(msg, 2)
-        end
+        -- Declaration order is NOT a rule, and a fatal
+        -- is_known() gate here is wrong. M._known_list is a per-VM accumulator;
+        -- cook evaluates some maker bodies (notably `shared`) in separate worker
+        -- VMs, so a perfectly valid cross-recipe link (e.g. base -> idLib) can be
+        -- absent from THIS VM's list and would spuriously fail the gate — which
+        -- blocked every dhewm3 build. Ordering AND unknown-recipe validation are
+        -- the engine's job: cook.require_recipe records the ordering edge and
+        -- raises on a genuinely nonexistent recipe (across all VMs), which the
+        -- module cannot see. Do not re-add a module-side hard error here.
         cook.require_recipe(dep)
     end
 end
@@ -200,6 +158,14 @@ local function apply_config_headers(b)
     for _, h in ipairs(ch.get_headers()) do
         if h.outdir then b.includes[#b.includes + 1] = h.outdir end
         gen[#gen + 1] = h.output
+        -- Declare the recipe-ordering edge to the config_header
+        -- support recipe (the 0.11 "thread the synthesised recipe into every cc
+        -- target's requires" contract, re-expressed via the 0.13 require_recipe
+        -- API). The generated-header file-input edge below is not enough on its
+        -- own: cook only schedules recipes inside the requested target's
+        -- require_recipe closure, so without this edge `cook game` never runs
+        -- the generator and every compile fails on a missing config.h.
+        if h.recipe then cook.require_recipe(h.recipe) end
     end
     b.generated_headers = gen
 end

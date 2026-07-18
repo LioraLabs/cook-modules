@@ -141,16 +141,21 @@ describe("cc.bin", function()
         end
     end)
 
-    it("errors when links references an unknown recipe (with did-you-mean)", function()
+    it("delegates an unknown-recipe link to require_recipe (no module-side gate)", function()
+        -- The module no longer raises its own "links references unknown
+        -- recipe" error; a genuine typo surfaces via cook.require_recipe instead.
         local targets = require("cook_cc.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
         end)
-        assert.has_error(function()
+        local ok, err = pcall(function()
             in_recipe("app", function()
                 targets.bin({ sources = { "src/main.c" }, links = { "foolim" } })
             end)
-        end, "[cc.bin] links references unknown recipe 'foolim'; did you mean 'foolib'?")
+        end)
+        assert.is_false(ok)
+        assert.matches("require_recipe", err, 1, true)
+        assert.matches("unknown recipe 'foolim'", err, 1, true)
     end)
 
     it("declares an ordering edge (require_recipe) for each known link", function()
