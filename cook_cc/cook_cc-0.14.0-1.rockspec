@@ -11,7 +11,7 @@ description = {
       call (like `cc.uses`/`cc.toolchain`/`cc.config_header`); the recipe-body
       form is removed. It queues a run-once post-register finalizer via the
       engine's `cook.on_register_complete` hook (Standard §22.9, CS-0149; this
-      module change is CS-0150) that snapshots the COMPLETE known-target set
+      module change is CS-0151) that snapshots the COMPLETE known-target set
       after every recipe body has registered and then writes
       `compile_commands.json` — complete by construction, including targets
       outside any single link closure (the disconnected-plugin case, e.g.
