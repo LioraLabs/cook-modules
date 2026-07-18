@@ -99,11 +99,28 @@ describe("REQUIRED #2: undeclared-needs error", function()
 end)
 
 -- ---------------------------------------------------------------------
--- REQUIRED #3: `links` naming an unknown recipe errors, with a
--- did-you-mean hint when a close match exists.
+-- REQUIRED #3: `links` delegates ordering + unknown-recipe validation to
+-- cook.require_recipe. The module MUST NOT impose its own hard is_known()
+-- gate: M._known_list is a per-VM accumulator and cannot see a
+-- recipe whose maker body ran in a different worker VM (e.g. `shared`), so
+-- a module-side fatal gate spuriously rejects valid cross-recipe links and
+-- blocked every dhewm3 build. The engine's require_recipe owns both concerns.
 -- ---------------------------------------------------------------------
-describe("REQUIRED #3: links-names-unknown-recipe error with closest-match hint", function()
-    it("names the unknown recipe and suggests the near-miss known recipe", function()
+describe("REQUIRED #3: links delegates ordering + validation to require_recipe", function()
+    it("records a require_recipe edge for each link and does NOT raise a module-side gate", function()
+        local targets = require("cook_cc.targets")
+        in_recipe("foolib", function()
+            targets.lib({ sources = { "src/foo.c" } })
+        end)
+        in_recipe("app", function()
+            targets.bin({ sources = { "m.cpp" }, links = { "foolib" } })
+        end)
+        -- The ordering edge is the require_recipe call, not a module error.
+        -- (before_each resets stub state, so this is the only edge recorded.)
+        assert.same({ "foolib" }, stub.require_recipe_edges())
+    end)
+
+    it("surfaces the engine's unknown-recipe error for a genuine typo (via require_recipe, not a module gate)", function()
         local targets = require("cook_cc.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
@@ -115,23 +132,10 @@ describe("REQUIRED #3: links-names-unknown-recipe error with closest-match hint"
         end)
         assert.is_false(ok)
         assert.is_string(err)
+        -- The error originates in cook.require_recipe (the engine's concern),
+        -- NOT a cc-module "links references unknown recipe" gate.
         assert.matches("unknown recipe 'foolim'", err, 1, true)
-        assert.matches("did you mean 'foolib'", err, 1, true)
-    end)
-
-    it("still names the entry when no close match exists (hint is optional)", function()
-        local targets = require("cook_cc.targets")
-        in_recipe("foolib", function()
-            targets.lib({ sources = { "src/foo.c" } })
-        end)
-        local ok, err = pcall(function()
-            in_recipe("app", function()
-                targets.bin({ sources = { "m.cpp" }, links = { "zzzzzz" } })
-            end)
-        end)
-        assert.is_false(ok)
-        assert.is_string(err)
-        assert.matches("unknown recipe 'zzzzzz'", err, 1, true)
+        assert.matches("require_recipe", err, 1, true)
     end)
 end)
 
@@ -233,5 +237,36 @@ describe("REQUIRED #7: cook.require_recipe edge declared for each links entry", 
             targets.bin({ sources = { "main.c" }, links = { "a", "b" } })
         end)
         assert.same({ "a", "b" }, stub.require_recipe_edges())
+    end)
+end)
+
+-- ---------------------------------------------------------------------
+-- REQUIRED #8: a target declared after cook_cc.config_header()
+-- must declare a cook.require_recipe ORDERING edge to the config_header
+-- support recipe — not merely the file-input edge. cook only schedules
+-- recipes inside the requested target's require_recipe closure, so without
+-- this edge a targeted build (`cook app`) never runs the generator and the
+-- compile fails on a missing config.h. The file-input edge (REQUIRED #6)
+-- folds the header into the cache key but does NOT pull the recipe in.
+-- ---------------------------------------------------------------------
+describe("REQUIRED #8: config_header support recipe is an ordering edge on later targets", function()
+    it("app declares a require_recipe edge to the config_header support recipe", function()
+        local cc = require("cook_cc")
+        -- Capture the support-recipe name the module mints.
+        local support = cc.config_header({ from = "config.h.in", to = "build/dhewm3/config.h", vars = {} })
+        assert.is_string(support)
+
+        local targets = require("cook_cc.targets")
+        in_recipe("app", function()
+            targets.bin({ sources = { "src/main.cpp" } })
+        end)
+
+        local found = false
+        for _, e in ipairs(stub.require_recipe_edges()) do
+            if e == support then found = true end
+        end
+        assert.is_true(found,
+            "a target after config_header() must declare cook.require_recipe('" ..
+            support .. "') so the generator is scheduled for a targeted build")
     end)
 end)
