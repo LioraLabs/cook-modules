@@ -40,11 +40,22 @@ The module's top-level chunk and its `init()` both run on the
 **register-phase** VM, and neither one is allowed to register work — see
 the phase obligations in §12.7.1 (`#mods.authoring.phases`) and the
 lifecycle overview in §12.3 (`#mods.lifecycle`). What a module exposes
-instead is a set of functions — **target makers** — that a recipe body
-calls to register work on your behalf. A target maker runs at register
-phase too, so it may call the register-phase API (`cook.add_unit`,
-`cook.step_group`, `cook.recipe`, `cook.probe`). Anything a module records
-for later — a `>{ … }` body carried on a unit — runs at **execute phase**
+instead is a set of functions — **target makers** — and by default a
+target maker is a **step contributor**: it takes a single `opts` table
+(no name — the recipe identity comes from the caller), it is called from
+*inside* a user-written `recipe` body, and it adds units to *that*
+enclosing recipe via `cook.add_unit` and records that recipe's export via
+`cook.export`. A step-contributor maker does **not** call `cook.recipe`
+itself — the recipe already exists; the maker is contributing a step to
+it. Two carve-outs MAY mint a recipe of their own instead — a maker doing
+data-driven fan-out over register-time-parsed data (one recipe per
+workspace member, say), or a maker minting a small support recipe to carry
+generated configuration — see §12.7.8 (`#mods.authoring.minting`) and the
+worked examples in [Section 3 below](#3-registering-work-units-with-cookadd_unit).
+A target maker runs at register phase either way, so it may call the
+register-phase API (`cook.add_unit`, `cook.step_group`, `cook.recipe`,
+`cook.probe`, `cook.require_recipe`). Anything a module records for
+later — a `>{ … }` body carried on a unit — runs at **execute phase**
 instead, and may only call the execute-phase and both-phase API; calling a
 register-only function from execute-phase Lua raises a runtime error
 (§12.7.1).
@@ -132,10 +143,141 @@ and per-Cookfile `use` scoping rules live at §12.5 (`#mods.local`) and
 
 ## 3. Registering work units with `cook.add_unit`
 
-A module doesn't register work when it loads — it exposes a **target
-maker**: a function a recipe body calls, which registers a recipe and,
-inside that recipe's body, one or more units via `cook.add_unit`
-(§12.7.1). Reduced from `cook_pnpm/tasks.lua`'s `M.task`:
+By default a target maker is a **step contributor**, not a recipe-minter.
+It takes a single `opts` table — no name parameter — it MUST be called
+from *inside* a user-written `recipe` body, and it registers one or more
+units into *that enclosing recipe* via `cook.add_unit`, plus that
+recipe's export via `cook.export`. It does **not** call `cook.recipe`
+itself: the recipe already exists, the maker is only contributing steps
+to it. Call a step-contributor maker at top level — outside any `recipe`
+block — and it MUST fail loudly rather than silently mint or misattach
+its units; `cook_cc`'s makers do this by calling `cook.recipe_name()` and
+raising `"must be called inside a recipe block; wrap it in a \`recipe\`
+block"` if that call errors (§12.7.1).
+
+`cook_cc` 0.13's `cook_cc.bin`/`lib`/`shared`/`headers` are the reference
+shape:
+
+```lua
+use cook_cc
+cook_cc.toolchain({ standard = "c++14", warnings = "none" })   -- top-level; see below
+cook_cc.uses("sdl2", "gl")                                     -- top-level: cc:find:sdl2 / cc:find:gl probes
+cook_cc.config_header({ from = "neo/config.h.in", to = "build/dhewm3/config.h", vars = { ... } })
+
+recipe idLib
+    cook_cc.lib({ sources = srcs("neo/idlib"), includes = {"neo","neo/idlib"}, needs = {"sdl2"} })
+
+recipe framework
+    cook_cc.lib({ sources = srcs("neo/framework"), links = {"idLib"}, needs = {"sdl2"} })
+```
+
+(`srcs(...)` above is an illustrative Cookfile-local source-globbing
+helper, not part of `cook_cc`'s own surface — `cook_cc.lib` also accepts
+a bare `dir = "neo/idlib"` and globs `*.c`/`*.cc`/`*.cpp`/`*.cxx` under it
+itself if you'd rather not write one.)
+
+### Name derivation: two names, two roles
+
+A step-contributor maker has two different names available to it inside
+the recipe body, and they drive two different things:
+
+- **`recipe.name`** — the **bare** name the enclosing `recipe NAME` block
+  was declared with. This drives every human-facing artifact *path* the
+  maker produces: `build/bin/<name>` for `cook_cc.bin`,
+  `build/lib/lib<name>.a` for `cook_cc.lib`, `build/lib/lib<name>.so` for
+  `cook_cc.shared`, `build/obj/<name>/` for the intermediate objects.
+- **`cook.recipe_name()`** — the **qualified** name, carrying any import
+  prefix the enclosing Cookfile was pulled in under. This is the identity
+  key the maker passes to `cook.export`, so a downstream `cook.import`
+  resolves it correctly regardless of where in the import tree it lives.
+
+In a root Cookfile with no import prefix the two coincide. Under an
+import prefix they diverge, and the two roles must not be conflated: a
+maker builds a filename from the *bare* name and an export identity from
+the *qualified* name — never strip a prefix off the qualified form to
+reconstruct a filename, and never use the bare form as an export key
+once a prefix is in play.
+
+### Top-level setup calls: `toolchain()` and `uses()`
+
+Two calls in the worked example above run at top level, before any
+`recipe` block, and both exist to keep probe registration out of recipe
+bodies (CS-0083):
+
+- **`cook_cc.toolchain({ standard = ..., warnings = ..., compiler = ... })`**
+  registers the compiler-detection probe and records the standard/warning
+  defaults every subsequent maker call picks up. Call it before the
+  first target maker so those defaults are in place before anything
+  compiles against them.
+- **`cook_cc.uses("sdl2", "gl", ...)`** registers one `cc:find:<name>`
+  probe per argument, at top level (§12.7.3, `#mods.authoring.probes`).
+  A maker's in-body `needs = {"sdl2"}` does not itself register
+  anything — it only *references* a probe `uses()` already declared, and
+  wires the sigils that resolve it. An undeclared `needs` entry is a
+  loud register-phase error: `needs "sdl2" is not declared; add
+  cook_cc.uses("sdl2") at top level`. This declare-at-top-level /
+  reference-in-body split is exactly what keeps a step-contributor maker
+  from minting probes from inside a recipe body.
+
+### `config_header()`: top-level configuration that mints a support recipe
+
+`cook_cc.config_header({ from = ..., to = ..., vars = { ... } })` is
+itself a top-level call, not something you invoke from inside a `recipe`
+body. It's the second §12.7.8 (`#mods.authoring.minting`) carve-out
+alongside data-driven fan-out below: rather than contribute to an
+enclosing recipe, it mints exactly one small **support recipe** of its
+own — via `cook.recipe(name, { origin = "cook_cc.config_header" },
+body)` — whose unit renders the header. The `origin` metadata is what
+lets `cook list` attribute that recipe to `cook_cc` rather than show it
+as an author-declared target (§12.7.8; §22.6 keeps it dispatchable like
+any other recipe).
+
+It MUST be declared before any `cc.bin`/`lib`/`shared`/`headers` call —
+calling it after one is a loud error, `declare config_header before cc
+targets`, because every target maker registered after it auto-joins the
+generated header's output directory onto its include paths and declares
+the generated header as one of its compile units' `inputs` (that's the
+data edge — a fold, not an ordering declaration on your part to make).
+
+### `links`: fold for cache weight, `cook.require_recipe` for ordering
+
+This is the subtle part, and it's worth reading slowly. When a maker
+sees `links = {"idLib"}` in `opts`, it does three separate things:
+
+1. Verifies `idLib` names a target already declared earlier in the same
+   Cookfile, erroring with a closest-match hint otherwise — `links
+   references unknown recipe 'idLib'; did you mean '...'?`.
+2. Resolves `idLib`'s export via `cook.import` and folds its archive
+   path, `build/lib/libidLib.a`, into the link unit's `inputs`. This
+   earns **cache-key weight only** — it makes the link unit's fingerprint
+   depend on the archive's content, nothing more.
+3. Declares the cross-recipe **ordering edge** itself, by calling
+   **`cook.require_recipe("idLib")`** (§22.8) — so `framework`'s units
+   don't run before `idLib`'s do.
+
+State this emphatically because it's easy to get backwards: the ordering
+edge *is* the `cook.require_recipe` name reference. It is **not** inferred
+from the fact that `build/lib/libidLib.a` appears as both `idLib`'s
+output and `framework`'s link-unit input — §10.6 forbids an
+implementation from inferring an edge from path-string equality; the path
+match in step 2 above is fold-only, cache weight, not an edge. There is
+also **no declaration-order rule for you, the module author's caller, to
+learn** here: `cook_cc.lib` declares the ordering edge on your behalf the
+moment it sees `links = {"idLib"}`, regardless of which recipe you
+happened to write first in the Cookfile. Cross-reference §10.6 and §22.8;
+[Section 8](#8-cross-module-patterns) revisits this same distinction for
+the general case of any module, not just `cook_cc`.
+
+### The data-driven fan-out carve-out: `cook_pnpm.task`
+
+Not every target maker is a step contributor — §12.7.8 carves out a
+second legitimate shape: a maker that mints one recipe per item of
+register-time-parsed data, carrying `origin` metadata so `cook list` can
+still attribute the minted recipes to the module. `cook_pnpm.task` is
+this case: a pnpm workspace's `package.json` files are parsed at register
+time, and the maker mints one recipe per workspace member, not one recipe
+per Cookfile-authored `recipe` block. Reduced from `cook_pnpm/tasks.lua`'s
+`M.task`:
 
 ```lua
 function M.task(task_name, opts)
@@ -166,6 +308,13 @@ probe a unit consumes — is REJECTED, and a conforming implementation
 raises a register-phase diagnostic pointing you at `probes` instead
 (§22.1 field-provenance note, `#lua.add-unit`). If a unit needs a
 probe's value, name the probe in `probes`; never in `requires`.
+
+Reach for this shape only when the recipe set genuinely isn't knowable
+until you've parsed data at register time — a workspace member list, a
+generated manifest. If your maker's recipe boundary is simply "one call
+site, one recipe" — which is the common case — the caller should be
+writing the `recipe` block and your maker should be a step contributor
+instead, per the default above.
 
 Every unit you register through a target maker has to hold up its end of
 §12.7.2 (`#mods.authoring.units`):
@@ -428,7 +577,11 @@ end
 A `cook_cc.lib` target calls `record_export` so anything that links
 against it inherits its include dirs and link flags through
 `cook.import(name)` without the downstream target having to know or
-restate them.
+restate them. The `name` passed to `cook.export` here is the **qualified**
+name from `cook.recipe_name()` — the export identity key, distinct from
+the **bare** `recipe.name` a maker uses for artifact filenames
+([Section 3](#3-registering-work-units-with-cookadd_unit)); in a root
+Cookfile with no import prefix the two coincide.
 
 ### `cook.probes.set` / `cook.probes.scope` are deprecated
 
@@ -607,8 +760,12 @@ None of the six patterns below is specific to `cook_cc` or `cook_pnpm` — they
 surfaced building a polyglot dogfood, a small repo that mixes several
 toolchains side by side, and each one is a candidate shape for a future
 language module (`cook_dotnet`, `cook_rust`, `cook_python`). Two are marked
-RULE. Read a RULE here as this guide's rule, not a Standard MUST: each is a
-candidate for future normative capture in §12.7, not settled law yet.
+RULE. Read a RULE here as this guide's own house rule unless it says
+otherwise — most of what follows is a candidate for future normative
+capture in §12.7, not settled law yet. The one exception is the edge
+mechanism below: that half is no longer a candidate, it's already
+Standard-normative at §10.6 and §22.8, and the RULE says so where it
+applies.
 
 ### Contract → codegen
 
@@ -706,29 +863,48 @@ stale-but-green `esbuild` `dist` — the stamp said "ran successfully," its
 content said nothing beyond that, and a consumer trusted a build that a
 version bump should have invalidated.
 
-### Body refs are the dependency mechanism; header deps are whole-recipe fences — RULE
+### Name references carry the ordering edge; a shared path is fold-only — RULE
 
 **When it recurs:** every target maker that consumes another recipe's
 output — which is to say nearly every target maker in a multi-language
 repo.
 
-This guide's rule (a candidate for future normative capture, not yet a
-Standard MUST): a target maker emits the dependency as a BODY reference —
-either a natural path reference, where the command takes the artifact as an
-argument, or a `: $<dep> &&` no-op fold, where the toolchain resolves the
-dependency implicitly and the body ref exists only to fold it into the
-unit's fingerprint (a `node_modules` symlink or an MSBuild project reference
-are both this shape). It must not *also* add a `recipe A: B` header-level dep
-for that same, DATA, dependency. A header dep-list entry is a whole-recipe
-ordering FENCE, not a data edge: it makes every unit of `A` wait for every
-unit of `B` and adds zero cache weight of its own
-(§17.1.1) — recall the two different `requires` already
-distinguished in [Section 3 above](#3-registering-work-units-with-cookadd_unit):
-this is the same distinction, one level down, at the unit body instead of
-the recipe header. Once the body ref already carries the dependency, a
-header dep on top of it only serialises the DAG for no benefit. Reach for a
-header dep ONLY for genuine order-without-consumption — a step that has to
-run after another for a reason no file reference in either unit expresses.
+This is no longer just this guide's rule — the load-bearing half of it is
+now NORMATIVE, per §10.6, prohibiting an assumption a prior implementation
+tested and found unsound: **a raw path shared
+between one unit's output and another unit's input is fold-only.** It
+earns cache-key weight — the consuming unit's fingerprint depends on the
+shared file's content, via the ordinary `inputs`/`output` fold (§17.1.1)
+— and nothing more. §10.6 states it as a MUST: an implementation MUST NOT
+infer a cross-recipe ordering edge from path-string equality between an
+output and an input. `cook_cc`'s link units are the concrete case: a
+link unit folds a linked library's archive path into its own `inputs`
+for cache weight (§17.1.1), and that fold, by itself, creates no ordering
+edge at all.
+
+The cross-recipe **ordering** edge instead comes from a **NAME
+reference**: either the module calling `cook.require_recipe(name)`
+(§22.8) at register time — which is how
+`cook_cc`'s `links` resolution declares the edge alongside the archive-path
+fold, [Section 3 above](#3-registering-work-units-with-cookadd_unit) — or
+a `$<name>` name-reference placeholder appearing in a unit's body, which
+is also a name reference and does create the edge (§10.6). A bare
+artifact path is never enough on its own, however naturally it reads as
+"this command takes that file as an argument" — recall the two different
+`requires` already distinguished in
+[Section 3 above](#3-registering-work-units-with-cookadd_unit): this is
+the same distinction, one level down, at the unit body instead of the
+recipe header. And critically, there is no declaration-order rule for a
+Cookfile author to learn here either: the module declares the edge via
+`cook.require_recipe` (or a `$<name>` reference) at the point it resolves
+the dependency, regardless of which `recipe` block was written first.
+
+Header deps (`recipe A : B`) are unchanged by any of this: they remain a
+whole-recipe ordering FENCE, not a data edge — every unit of `A` waits for
+every unit of `B` and it adds zero cache weight of its own (§17.1.1).
+Reach for a header dep ONLY for genuine order-without-consumption — a
+step that has to run after another for a reason no name reference in
+either unit expresses.
 
 ### Multi-output declaration vs. stamps
 
