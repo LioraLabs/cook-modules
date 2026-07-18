@@ -111,3 +111,59 @@ describe("cook_stub recipe identity + ordering edges", function()
         assert.same({ "first", "second" }, stub.recipe_names())
     end)
 end)
+
+describe("cook_stub cook.on_register_complete (CS-0149)", function()
+    before_each(function() stub.reset(); stub.install() end)
+
+    it("rejects a non-function argument, naming the API", function()
+        assert.has_error(function()
+            cook.on_register_complete("not a function")
+        end, "[cook_stub] cook.on_register_complete requires a function")
+    end)
+
+    it("drains queued callbacks in registration order", function()
+        local order = {}
+        cook.on_register_complete(function() order[#order + 1] = "a" end)
+        cook.on_register_complete(function() order[#order + 1] = "b" end)
+        stub.run_register_complete()
+        assert.same({ "a", "b" }, order)
+    end)
+
+    it("fires each callback exactly once, even across repeated drains", function()
+        local count = 0
+        cook.on_register_complete(function() count = count + 1 end)
+        stub.run_register_complete()
+        stub.run_register_complete()
+        assert.equals(1, count)
+    end)
+
+    it("re-drains when a callback queues another callback; the new one runs after the rest", function()
+        local order = {}
+        cook.on_register_complete(function()
+            order[#order + 1] = "first"
+            cook.on_register_complete(function() order[#order + 1] = "requeued" end)
+        end)
+        cook.on_register_complete(function() order[#order + 1] = "second" end)
+        stub.run_register_complete()
+        assert.same({ "first", "second", "requeued" }, order)
+    end)
+
+    it("runs callbacks outside any recipe body (current_recipe = nil)", function()
+        local saw_error = false
+        cook.on_register_complete(function()
+            local ok = pcall(cook.recipe_name)
+            saw_error = not ok
+        end)
+        stub.run_register_complete()
+        assert.is_true(saw_error)
+    end)
+
+    it("stub.reset() clears the queue", function()
+        local called = false
+        cook.on_register_complete(function() called = true end)
+        stub.reset()
+        stub.install()
+        stub.run_register_complete()
+        assert.is_false(called)
+    end)
+end)

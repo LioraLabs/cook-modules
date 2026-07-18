@@ -19,6 +19,7 @@ local known_recipe_names    = {}     -- name -> true, for cook.require_recipe va
 local recipe_names_list     = {}     -- array of registered recipe names, registration order
 local recipe_meta_store     = {}     -- name -> meta table captured from cook.recipe
 local require_recipe_edges_list = {} -- array of names passed to cook.require_recipe, call order
+local register_complete_queue = {}   -- array of fns passed to cook.on_register_complete, queue order
 
 function M.reset()
     cache_store = {}
@@ -36,6 +37,7 @@ function M.reset()
     recipe_names_list       = {}
     recipe_meta_store       = {}
     require_recipe_edges_list = {}
+    register_complete_queue   = {}
 end
 
 function M.probe_keys()
@@ -90,6 +92,25 @@ function M.recipe_names()
     return recipe_names_list
 end
 
+-- Drains cook.on_register_complete callbacks in queue order (CS-0149 stub
+-- surface). Fires each callback exactly once: the queue is fully drained
+-- (including any callbacks a callback itself queues, which run after the
+-- rest of the originally-queued batch) and left empty, so a second drain
+-- call is a no-op. Runs with current_recipe = nil so body-scoped APIs
+-- (cook.recipe_name) raise the same way they do outside a recipe body,
+-- mirroring the real engine's post-register finalizer context.
+function M.run_register_complete()
+    local previous_recipe = current_recipe
+    current_recipe = nil
+    local i = 1
+    while register_complete_queue[i] do
+        register_complete_queue[i]()
+        i = i + 1
+    end
+    register_complete_queue = {}
+    current_recipe = previous_recipe
+end
+
 local function pkg_dispatch(cmd)
     -- "pkg-config --exists NAME" / "--cflags NAME" / "--libs NAME" / "--modversion NAME"
     local op, name = cmd:match("pkg%-config %-%-(%S+) (.+)$")
@@ -137,6 +158,12 @@ function M.install()
         import = function(name) return export_store[name] end,
         add_unit = function(u) added_units[#added_units + 1] = u end,
         recipe_name = current_recipe_name_or_error,
+        on_register_complete = function(fn)
+            if type(fn) ~= "function" then
+                error("[cook_stub] cook.on_register_complete requires a function", 2)
+            end
+            register_complete_queue[#register_complete_queue + 1] = fn
+        end,
         require_recipe = function(name)
             if not known_recipe_names[name] then
                 error("[cook_stub] cook.require_recipe: unknown recipe '" .. name .. "'")
