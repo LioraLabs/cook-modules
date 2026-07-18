@@ -31,6 +31,7 @@ use cook_cc
 cook_cc.toolchain({ standard = "c++17", warnings = "strict" })
 cook_cc.uses("sdl2")
 cook_cc.config_header({ from = "config.h.in", to = "build/config.h", vars = { VERSION = "1.0" } })
+cook_cc.compile_commands()
 
 recipe app
     cook_cc.bin({ sources = { "src/main.cpp" }, needs = { "sdl2" } })
@@ -41,6 +42,17 @@ before any recipe. `uses(...)` registers `cc:find:*` probes that a maker's
 `needs` list can then reference by name; makers themselves are step
 contributors — they take no `name` parameter and must run inside a
 `recipe` body, which supplies the recipe identity.
+
+`compile_commands()` is top-level too, but it's the temporal mirror of the
+other three: `toolchain`/`uses`/`config_header` all run *before* any
+target; `compile_commands()` runs *after* all of them, via the
+register-completion finalizer (`cook.on_register_complete`). It writes
+`compile_commands.json` on every registration pass that actually
+dispatches or builds something — there's no recipe to invoke, no name to
+depend on. Because the finalizer snapshots the whole registered-target
+set rather than walking a dependency graph, the database is complete by
+construction, including a target in no `links` closure at all (a
+dlopen'd plugin, say).
 
 ## Development
 
