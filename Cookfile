@@ -28,7 +28,7 @@ chore publish-to-index
 
 chore publish
     : "${MODULE:?set MODULE=<name>}" "${VERSION:?set VERSION=<x.y.z-rockrev>}"
-    @test -f "${MODULE}/${MODULE}-${VERSION}.rockspec"
+    ls "${MODULE}/${MODULE}-${VERSION}.rockspec" >/dev/null
     git tag -a "${MODULE}-${VERSION}" -m "${MODULE}-${VERSION}"
     git push github main "${MODULE}-${VERSION}"
     git push origin main "${MODULE}-${VERSION}"
