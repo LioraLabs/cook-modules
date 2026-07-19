@@ -1,14 +1,22 @@
 -- cook_pnpm — blessed Cook module for pnpm-driven JS/TS monorepos.
 --
--- Public surface (v0.3). The one-call form:
+-- Public surface (v0.4). The one-call form:
 --
 --   cook_pnpm.workspace({
 --       packages = "auto",            -- read pnpm-workspace.yaml; or {"apps/*", ...}
 --       node     = ">=18",
 --       pm       = "pnpm@10",
 --       requires = { "wasm" },        -- non-pnpm producer recipes, every minted task
+--       inputs   = { ".env" },        -- ROOT-relative extras appended to every
+--                                     -- minted task's inputs (turbo
+--                                     -- globalDependencies); missing literals drop
+--       env      = { "CI" },          -- env keys folded into every BUILD unit's
+--                                     -- key (consulted_env_keys auto-fold)
 --       tasks    = {                  -- the task map, minted as one batch
 --           build = { outputs = { "dist/**" } },
+--           ["@scope/web#build"] =    -- per-package override: REPLACES the base
+--               { outputs = { ".next/**" },    -- cfg for that package (no merge)
+--                 env = { "API_URL" } },       -- per-task consulted env
 --       },
 --       checks   = "auto",            -- auto-mint test/lint/typecheck/check-types
 --       install  = "install",         -- opt-in: mint the install recipe under
@@ -18,8 +26,13 @@
 -- Tasks with outputs become cached cook units (restored from the store);
 -- tasks without become cached CHECK units (engine test units: pass
 -- results replayed, run by `cook test`). Omitted inputs default to the
--- package's file tree minus node_modules and declared outputs. See
--- tasks.lua for the full contract.
+-- package's file tree minus node_modules and declared outputs. A
+-- depends_on edge also folds the dependency's OUTPUT CONTENT into the
+-- consumer's key (discovered-inputs depfile on builds, ready-time glob
+-- inputs on checks; checks with no depends_on default to {"^build"}) —
+-- a dep that rebuilds to byte-identical output never re-runs its
+-- consumers. Negated output globs ("!...") are rejected — no engine
+-- support (CS-0085). See tasks.lua for the full contract.
 
 local workspace = require("cook_pnpm.workspace")
 local tasks     = require("cook_pnpm.tasks")

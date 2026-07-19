@@ -6,11 +6,15 @@ remote caching, cached test/lint results, watcher-driven incremental
 rebuilds, and a unified build graph with the rest of your stack (a wasm
 step, codegen, a Rust backend).
 
-**Status: v0.3 — inference + check caching.** One `workspace()` call
-parses the workspace, mints every configured task, auto-mints
-conventional checks, and defaults inputs safely. Surface may still shift
-before the Standard chapter §29 lands. Tracked in cliban under project
-`COOK`, milestone `cook_pnpm`.
+**Status: v0.4 — correct-by-content caching.** One `workspace()` call
+parses the workspace, mints every configured task (with Turbo-spelled
+`"<pkg>#<task>"` per-package overrides), auto-mints conventional checks,
+defaults inputs safely, folds dependency-output CONTENT into every
+consumer's key (discovered-inputs depfiles on builds, ready-time glob
+inputs on checks), and lowers declared `env` keys to consulted-env
+folds. Shaped by the Cap port (Turborepo replaced on a 25-project
+workspace). Surface may still shift before the Standard chapter §29
+lands. Tracked in cliban under project `COOK`, milestone `cook_pnpm`.
 
 ## Install
 
@@ -18,7 +22,7 @@ In your project's `cook.toml`:
 
 ```toml
 [modules]
-cook_pnpm = "0.3.0-1"
+cook_pnpm = "0.4.0-1"
 ```
 
 Then `cook modules install`.
@@ -34,10 +38,15 @@ register
         node     = ">=18",
         pm       = "pnpm@10",
         requires = { "wasm" },      -- non-pnpm producer recipes (see below)
+        inputs   = { ".env" },      -- root-relative extras, every task (see below)
         tasks    = {
             build = {
                 depends_on = { "^build" },      -- ^X = X in workspace deps
                 outputs    = { "dist/**" },     -- pkg-anchored, post-execute (CS-0085)
+            },
+            ["@scope/web#build"] = {            -- per-package override (see below)
+                depends_on = { "^build" },
+                outputs    = { ".next/**" },
             },
         },
         install  = "install",       -- mint the install stage under this name
@@ -102,6 +111,45 @@ tasks = {
 Build-task inputs expand at register time (`fs.glob`); check inputs pass
 to the engine as globs and resolve at ready time.
 
+## Per-package overrides: `<pkg>#<task>`
+
+A tasks-map key of the form `"<pkg>#<task>"` (Turborepo's spelling)
+configures that task for one package. The override cfg **replaces** the
+base cfg entirely — turbo semantics, no merge: an override that omits
+`requires` has no requires. A `<pkg>#<task>` key with no base entry
+mints the task for that package only; base entries continue to apply to
+every other package declaring the script. Override outputs claim
+default-input exclusions for their package exactly like base outputs.
+An override naming a package not in the workspace errors at register
+time.
+
+```
+tasks = {
+    build = { outputs = { "dist/**" }, depends_on = { "^build" } },
+    ["@scope/web#build"] = { outputs = { ".next/**" }, depends_on = { "^build" } },
+}
+```
+
+## Workspace-level inputs (turbo `globalDependencies`)
+
+`workspace({ inputs = { ".env", "tsconfig.json" } })` appends
+**workspace-root-relative** paths/globs to every minted task's inputs —
+builds and checks, explicit per-task inputs or not. They are never
+`pkg.dir`-prefixed. A literal entry that does not exist at register time
+is dropped: the engine treats a declared-but-absent input as
+never-a-clean-hit (silent cache-off for the whole task), and since the
+register phase re-evaluates on every invocation, the file starts
+participating the moment it exists. Glob entries pass through and
+resolve to whatever exists.
+
+## Negated output globs: not supported
+
+Turbo's `outputs: [".next/**", "!.next/cache/**"]` shape is **rejected
+at register time**. The engine's `outputs[]` surface recognises only
+`*`, `?`, `[` as glob metacharacters (CS-0085); `!` exclusion exists for
+`ingredients`, not outputs — a `"!"` entry would resolve as a literal
+path and silently match nothing. Declare the positive globs only.
+
 ## Polyglot ordering: `requires`
 
 Cook creates **no ordering edge from path equality**: when a pnpm task
@@ -164,7 +212,7 @@ descendants.
 
 | Function | Purpose |
 |---|---|
-| `cook_pnpm.workspace(opts)` | Parse + probe + mint (`tasks`, `checks`, `requires`, `install`) |
+| `cook_pnpm.workspace(opts)` | Parse + probe + mint (`tasks`, `checks`, `requires`, `inputs`, `install`) |
 | `cook_pnpm.task(name, opts)` | Incremental single-task mint (single-batch defaults; prefer `workspace{tasks}`) |
 | `cook_pnpm.run(pkg, script, opts)` | Single `pnpm --filter <pkg> run <script>` recipe |
 | `cook_pnpm.install(opts)` | Explicit install-stage recipe |
@@ -174,7 +222,8 @@ descendants.
 | `cook_pnpm.find(tool)` / `find_or_error` / `register_finder` | JS dev-tool locators |
 
 Per-task opts: `inputs`, `outputs`, `depends_on`, `requires`,
-`kind = "build" | "check"`.
+`kind = "build" | "check"`. Task keys: `"<task>"` (every declaring
+package) or `"<pkg>#<task>"` (that package only; replaces the base cfg).
 
 ## Migrating from 0.2
 

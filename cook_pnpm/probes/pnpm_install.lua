@@ -34,11 +34,16 @@ local function hash_file(path)
     return hash:sub(1, 16)
 end
 
-local function produce_body()
-    return [[
-        local out = cook.sh("pnpm install --frozen-lockfile 2>&1")
-        return { installed = true, output = out }
-    ]]
+-- The returned value participates in every consuming recipe's seal
+-- contribution, so it must be DETERMINISTIC for a given lockfile. Raw
+-- `pnpm install` output is not (transient WARN lines vary run to run —
+-- found dogfooding a 25-project workspace, where the churn cache-missed
+-- every build every run); only the lockfile hash goes into the value.
+local function produce_body(lockfile_hash)
+    return string.format([[
+        cook.sh("pnpm install --frozen-lockfile 2>&1")
+        return { installed = true, lockfile_hash = %q }
+    ]], lockfile_hash)
 end
 
 function M.ensure_probe_registered(lockfile_path)
@@ -52,7 +57,7 @@ function M.ensure_probe_registered(lockfile_path)
             files    = { lockfile_path },
             tools    = { "pnpm" },
         },
-        produce = produce_body(),
+        produce = produce_body(h),
     })
     state.registered[key] = true
     return key

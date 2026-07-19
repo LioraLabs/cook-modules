@@ -50,6 +50,59 @@
 -- output declarations actually use (`dir/**`, `*.ext`, literals); it is
 -- used ONLY to subtract build products from default input sets, never
 -- for cache-key resolution itself.
+--
+-- Per-package overrides (0.4, Turborepo "<pkg>#<task>"): a tasks-map key
+-- of that form REPLACES the base task cfg for that package — no merge,
+-- turbo semantics; a key with no base entry mints the task for that
+-- package only. Override outputs join the package's default-input
+-- exclusion set exactly like base outputs. An override naming a package
+-- not in the workspace is a register-time error.
+--
+-- Workspace inputs (0.4, turbo globalDependencies): workspace{inputs}
+-- entries are WORKSPACE-ROOT-relative (never pkg-anchored) and appended
+-- to every minted task's inputs, builds and checks alike. A literal
+-- entry that does not exist at register time is DROPPED: the engine
+-- treats a missing declared input as never-a-clean-hit, which would
+-- silently disable caching for every task; a dropped literal re-enters
+-- the moment the file appears, since the register phase re-evaluates on
+-- every invocation. Glob entries pass through and resolve to whatever
+-- exists.
+--
+-- Negated output globs ("!.next/cache/**") are REJECTED at register
+-- time: the engine's outputs[] surface recognises only `*`, `?`, `[`
+-- (CS-0085) — `!` exclusion exists for ingredients (§8.2), not outputs;
+-- a "!" entry would resolve as a literal path and silently match
+-- nothing.
+--
+-- Dependency-output folding (0.4): a task's fingerprint must cover the
+-- CONTENT of the dependency artifacts it consumes, with the engine's
+-- output-content early cutoff (a dep that re-runs to byte-identical
+-- output must not re-key the consumer — CS-0138's argument, §17.1.1).
+-- The dep file list is unknowable at register time on a cold build, so
+-- register-time surfaces (input expansion, file_refs/CS-0101) would
+-- fingerprint an empty set once and re-key on the second run. Instead:
+--   - BUILD units append a depfile generator to the command and declare
+--     it via `discovered_inputs` (§17.5): after the pnpm script runs,
+--     one `find | sort` over the dependency packages' claimed output
+--     dirs records exactly the files that existed; later runs
+--     content-hash that recorded set. Zero settle runs; make-format is
+--     whitespace-separated, so dep artifact paths containing spaces are
+--     unsupported.
+--   - CHECK units get the dep output dirs as plain `<dir>/**/*` inputs —
+--     test-unit inputs resolve at READY time (CS-0138), after ordered
+--     predecessors materialise, so cold builds fingerprint the real set.
+-- The consumed set is the dep package's whole claimed-output union (all
+-- its batch tasks), an over-approximation that can only over-invalidate,
+-- never go stale. Checks with no explicit depends_on default to
+-- {"^build"}: a typecheck reads dep artifacts (tsc -b loads dep .d.ts),
+-- so running it unordered against its producers is a race.
+--
+-- Env (0.4): `env = { "VAR", ... }` on a BUILD task cfg (and/or
+-- workspace-level `env`, folded into every build unit) lowers to
+-- `consulted_env_keys` — the auto-fold path §17.1.2.1 prescribes for
+-- variables the command consumes; no probe needed. Test units have no
+-- consulted-env surface (CS-0127), so `env` on a check is a
+-- register-time error and workspace-level env skips checks.
 
 local toolchain = require("cook_pnpm.toolchain")
 local workspace = require("cook_pnpm.workspace")
@@ -133,12 +186,20 @@ local function default_inputs(pkg, all_outputs)
         end
     end
     -- Top-level files: expand now (small, and globs cannot be filtered
-    -- post-hoc), drop output matches.
+    -- post-hoc), drop output matches. `*.tsbuildinfo` is dropped too:
+    -- `tsc -b` writes it beside tsconfig on every run, so taking it as an
+    -- input self-invalidates the check that produced it (one wasted
+    -- re-run before the fingerprint settles).
     for _, m in ipairs(fs.glob(pkg.dir .. "/*")) do
         local rel = m:match("([^/]+)$")
-        local is_output = false
+        -- Tool/module state is never an input: *.tsbuildinfo (tsc -b
+        -- writes it beside tsconfig every run) and the depfile this
+        -- module's own build units write (self-re-keying otherwise).
+        local is_output = rel:match("%.tsbuildinfo$") ~= nil
+                       or rel == M.DEPFILE_NAME
         for _, g in ipairs(all_outputs) do
-            if glob_matches(g, rel) then is_output = true break end
+            if is_output then break end
+            if glob_matches(g, rel) then is_output = true end
         end
         if not is_output then entries[#entries + 1] = pkg.dir .. "/" .. rel end
     end
@@ -166,26 +227,134 @@ local function anchor_globs(globs, dir, normalize)
     return out
 end
 
--- A `depends_on` edge only fires if the referenced recipe will actually
--- exist (Turborepo's "no-op on missing script"; prevents dangling edges).
-local function resolve_depends_on(pkg, depends_on, by_name)
-    local result = {}
+-- Split "<pkg>#<task>" override keys out of the raw tasks map. `#` never
+-- appears in npm package names, so the LAST `#` is the separator.
+local function split_overrides(tasks_map, by_name)
+    local base, overrides = {}, {}
+    for key, cfg in pairs(tasks_map) do
+        local pkg_name, task_name = key:match("^(.+)#([^#]+)$")
+        if pkg_name then
+            if not by_name[pkg_name] then
+                error("[pnpm.task] override key '" .. key .. "' names unknown "
+                      .. "package '" .. pkg_name .. "' — not in the pnpm "
+                      .. "workspace (check pnpm-workspace.yaml / the package's "
+                      .. "\"name\" field)", 4)
+            end
+            overrides[pkg_name] = overrides[pkg_name] or {}
+            overrides[pkg_name][task_name] = cfg
+        elseif key:find("#", 1, true) then
+            error("[pnpm.task] malformed task key '" .. key .. "' — the "
+                  .. "per-package form is \"<pkg>#<task>\", both parts "
+                  .. "non-empty", 4)
+        else
+            base[key] = cfg
+        end
+    end
+    return base, overrides
+end
+
+-- Engine gap (CS-0085): outputs[] admits only `*`, `?`, `[` — a Turbo
+-- "!"-negated entry would be taken as a literal path and match nothing.
+local function reject_negated_outputs(cfg, label)
+    for _, g in ipairs(cfg.outputs or {}) do
+        if g:sub(1, 1) == "!" then
+            error("[pnpm.task] output '" .. g .. "' (" .. label .. ") is a "
+                  .. "negated glob — the cook engine's outputs[] surface "
+                  .. "(CS-0085) supports only *, ?, [ metacharacters; `!` "
+                  .. "exclusion exists for ingredients, not outputs. Declare "
+                  .. "the positive globs only.", 4)
+        end
+    end
+end
+
+-- A `depends_on` edge fires if the referenced package declares the
+-- script (Turborepo's "no-op on missing script") — the recipe may be
+-- minted by another task()/workspace() call in the same register phase,
+-- so batch-local knowledge cannot veto a user-written edge. When
+-- `strict` is set (used only for the MODULE-invented default check edge,
+-- which must never dangle), the edge additionally requires the batch to
+-- mint the target (ctx.has_task). Returns the resolved recipe names
+-- plus the (pkg, task) pairs behind them — the pairs drive
+-- dependency-output folding (which is batch-scoped via pkg_outputs
+-- regardless: an unminted dep task claims no dirs there).
+local function resolve_depends_on(pkg, depends_on, ctx, strict)
+    local requires, dep_units = {}, {}
+    local function eligible(dep_pkg, task_name)
+        if not dep_pkg.package.scripts[task_name] then return false end
+        if strict and not ctx.has_task(dep_pkg, task_name) then return false end
+        return true
+    end
+    local function add(dep_pkg, task_name)
+        requires[#requires + 1] = recipe_name(dep_pkg, task_name)
+        dep_units[#dep_units + 1] = { pkg = dep_pkg, task = task_name }
+    end
     for _, dep in ipairs(depends_on or {}) do
         if dep:sub(1, 1) == "^" then
             local task_name = dep:sub(2)
             for _, dep_pkg_name in ipairs(pkg.workspace_deps) do
-                local dep_pkg = by_name[dep_pkg_name]
-                if dep_pkg and dep_pkg.package.scripts[task_name] then
-                    result[#result + 1] = recipe_name(dep_pkg, task_name)
+                local dep_pkg = ctx.by_name[dep_pkg_name]
+                if dep_pkg and eligible(dep_pkg, task_name) then
+                    add(dep_pkg, task_name)
                 end
             end
         else
-            if pkg.package.scripts[dep] then
-                result[#result + 1] = recipe_name(pkg, dep)
+            if eligible(pkg, dep) then add(pkg, dep) end
+        end
+    end
+    return requires, dep_units
+end
+
+-- Workspace-relative directories the given dependency units claim as
+-- outputs — the whole per-package union (see header: over-approximation
+-- is safe). Sorted for deterministic commands.
+local function dep_output_dirs(dep_units, ctx)
+    local dirs, seen = {}, {}
+    for _, du in ipairs(dep_units) do
+        for _, g in ipairs(ctx.pkg_outputs[du.pkg.name] or {}) do
+            local sub = claimed_subdir(g)
+            if sub then
+                local d = du.pkg.dir .. "/" .. sub
+                if not seen[d] then
+                    seen[d] = true
+                    dirs[#dirs + 1] = d
+                end
             end
         end
     end
-    return result
+    table.sort(dirs)
+    return dirs
+end
+
+-- Basename of the per-package depfile a build unit writes after its pnpm
+-- script succeeds. Dot-named so it can never enter a default input set
+-- (default_inputs also excludes it explicitly — a depfile that were its
+-- own unit's input would re-key the unit it was recorded by).
+M.DEPFILE_NAME = ".cook-pnpm.d"
+
+-- Working-dir-relative form of a workspace path. The engine requires
+-- discovered_inputs.from to be relative (commands run from the
+-- workspace root), and relative paths in the depfile body keep the
+-- recorded input set machine-portable.
+local function workdir_rel(p, root)
+    -- Engine paths carry the root marker ("<abs root>/./<rel>"); the
+    -- segment after the marker IS the working-dir-relative path.
+    local marked = p:match("^.*/%./(.+)$")
+    if marked then return marked end
+    local prefix = root .. "/"
+    if p:sub(1, #prefix) == prefix then return p:sub(#prefix + 1) end
+    return p
+end
+
+-- Shell fragment appended to a build command: one make-format rule
+-- enumerating every file currently under the dep output dirs. `sort`
+-- pins the line's byte content for a given file set; a missing dir (dep
+-- produced nothing yet) contributes nothing rather than failing.
+local function depfile_command(dirs, dpath)
+    local q = {}
+    for i, d in ipairs(dirs) do q[i] = "'" .. d .. "'" end
+    return "{ printf 'cook-pnpm-deps: '; find " .. table.concat(q, " ")
+        .. " -type f 2>/dev/null | LC_ALL=C sort | tr '\\n' ' '; echo; } > '"
+        .. dpath .. "'"
 end
 
 local function build_command_for(pkg, task_name)
@@ -200,14 +369,6 @@ end
 -- the batch-wide knowledge: by_name, install_key, lockfile, workspace
 -- requires, and the union of this package's declared outputs.
 local function mint_one(pkg, task_name, cfg, ctx, origin)
-    local requires = resolve_depends_on(pkg, cfg.depends_on, ctx.by_name)
-    for _, extra in ipairs(ctx.workspace_requires or {}) do
-        requires[#requires + 1] = extra
-    end
-    for _, extra in ipairs(cfg.requires or {}) do
-        requires[#requires + 1] = extra
-    end
-
     local outputs = cfg.outputs or {}
     local kind = cfg.kind or ((#outputs > 0) and "build" or "check")
     if kind ~= "build" and kind ~= "check" then
@@ -219,10 +380,40 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
               .. "= \"check\"; a check unit produces no artifacts — drop the "
               .. "outputs or use kind = \"build\"", 3)
     end
+    if kind == "check" and cfg.env then
+        error("[pnpm.task] task '" .. task_name .. "' declares env but is a "
+              .. "check — engine test units (cook.add_test, CS-0127) have no "
+              .. "consulted-env surface; make it a build (declare outputs) or "
+              .. "drop env", 3)
+    end
+
+    -- Checks read dependency artifacts (tsc -b loads dep .d.ts), so an
+    -- unordered check is a race; default the edge Turbo leaves implicit.
+    -- The defaulted edge resolves strictly (batch-minted targets only —
+    -- module-invented edges must never dangle); user-written depends_on
+    -- resolves as always.
+    local depends_on, strict = cfg.depends_on, false
+    if kind == "check" and depends_on == nil then
+        depends_on, strict = { "^build" }, true
+    end
+
+    local requires, dep_units = resolve_depends_on(pkg, depends_on, ctx, strict)
+    for _, extra in ipairs(ctx.workspace_requires or {}) do
+        requires[#requires + 1] = extra
+    end
+    for _, extra in ipairs(cfg.requires or {}) do
+        requires[#requires + 1] = extra
+    end
+    local dep_dirs = dep_output_dirs(dep_units, ctx)
 
     local input_globs = cfg.inputs
         and anchor_globs(cfg.inputs, pkg.dir, true)
         or  default_inputs(pkg, ctx.pkg_outputs[pkg.name] or {})
+    -- Workspace-level extras ride on every task, explicit inputs or not
+    -- (already root-anchored + existence-filtered by mint_batch).
+    for _, g in ipairs(ctx.extra_inputs or {}) do
+        input_globs[#input_globs + 1] = g
+    end
 
     local r_name = recipe_name(pkg, task_name)
 
@@ -241,16 +432,36 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
             end
             -- package.json participates so a `scripts` edit invalidates.
             inputs[#inputs + 1] = pkg.dir .. "/package.json"
+            -- Dep-output content fold via discovered inputs (see header):
+            -- the command records what it consumed; later runs hash that.
+            local command = build_command_for(pkg, task_name) .. " "
+            local discovered
+            if #dep_dirs > 0 then
+                local dpath = workdir_rel(pkg.dir, ctx.root) .. "/" .. M.DEPFILE_NAME
+                local rel_dirs = {}
+                for i, d in ipairs(dep_dirs) do
+                    rel_dirs[i] = workdir_rel(d, ctx.root)
+                end
+                command = command .. "&& " .. depfile_command(rel_dirs, dpath)
+                discovered = { from = dpath, format = "make" }
+            end
+            -- Consulted env: workspace-level keys + per-task keys, in that
+            -- order (§17.1.2.1 auto-fold; values fold, dup keys harmless).
+            local env_keys = {}
+            for _, k in ipairs(ctx.workspace_env or {}) do env_keys[#env_keys + 1] = k end
+            for _, k in ipairs(cfg.env or {}) do env_keys[#env_keys + 1] = k end
             cook.add_unit({
                 inputs   = inputs,
                 outputs  = anchor_globs(outputs, pkg.dir, false),
-                command  = build_command_for(pkg, task_name) .. " ",
+                command  = command,
                 -- Toolchain probe is consumed as DATA (the command
                 -- interpolates the binary path — §12.7.4); the install
                 -- probe is a deterministic, invalidate-only determinant
                 -- (lockfile content hash) → carried as a seal (§12.7.5).
                 probes   = { toolchain.get_probe_key() },
                 seal     = { ctx.install_key },
+                discovered_inputs  = discovered,
+                consulted_env_keys = (#env_keys > 0) and env_keys or nil,
             })
         else
             local inputs = {}
@@ -260,6 +471,11 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
             -- test units take no seal field, and their commands get no
             -- probe substitution (CS-0127) — plain `pnpm` from PATH.
             inputs[#inputs + 1] = ctx.lockfile
+            -- Dep artifacts as ready-time glob inputs (see header): the
+            -- ^build edge above guarantees they exist before resolution.
+            for _, d in ipairs(dep_dirs) do
+                inputs[#inputs + 1] = d .. "/**/*"
+            end
             cook.add_test({
                 command = "pnpm --filter " .. pkg.name .. " run " .. task_name,
                 suite   = pkg.name,
@@ -274,40 +490,91 @@ end
 -- in the batch contributes its outputs to the exclusion set BEFORE any
 -- default input set is computed — this is why the workspace{tasks=...}
 -- form is preferred over serial cook_pnpm.task() calls.
-local function mint_batch(tasks_map, workspace_requires, origin)
+local function mint_batch(tasks_map, workspace_requires, workspace_inputs, workspace_env, origin)
     local packages = workspace.list()
     local snap = workspace.snapshot()
+    local root = snap.root_dir or "."
 
-    -- Union of declared output globs per package (package-relative).
+    local base, overrides = split_overrides(tasks_map, snap.by_name)
+    for task_name, cfg in pairs(base) do
+        reject_negated_outputs(cfg, "task '" .. task_name .. "'")
+    end
+    for pkg_name, per_pkg in pairs(overrides) do
+        for task_name, cfg in pairs(per_pkg) do
+            reject_negated_outputs(cfg, "task '" .. pkg_name .. "#" .. task_name .. "'")
+        end
+    end
+
+    -- Effective cfg for (pkg, task): the override REPLACES the base cfg
+    -- entirely (turbo semantics — no merge).
+    local function cfg_for(pkg, task_name)
+        local per_pkg = overrides[pkg.name]
+        if per_pkg and per_pkg[task_name] ~= nil then return per_pkg[task_name] end
+        return base[task_name]
+    end
+
+    -- Task-name universe: base names plus override-only names.
+    local name_set = {}
+    for task_name in pairs(base) do name_set[task_name] = true end
+    for _, per_pkg in pairs(overrides) do
+        for task_name in pairs(per_pkg) do name_set[task_name] = true end
+    end
+
+    -- Union of declared output globs per package (package-relative),
+    -- through the effective cfg — override outputs claim exclusions for
+    -- their package exactly like base outputs.
     local pkg_outputs = {}
     for _, pkg in ipairs(packages) do
         local union = {}
-        for task_name, cfg in pairs(tasks_map) do
-            if pkg.package.scripts[task_name] then
+        for task_name in pairs(name_set) do
+            local cfg = cfg_for(pkg, task_name)
+            if cfg and pkg.package.scripts[task_name] then
                 for _, g in ipairs(cfg.outputs or {}) do union[#union + 1] = g end
             end
         end
         pkg_outputs[pkg.name] = union
     end
 
+    -- Root-anchored workspace extras. A missing literal is dropped (a
+    -- declared-but-absent input is never-a-clean-hit engine-side, i.e.
+    -- silent cache-off for every task); it re-enters once the file
+    -- exists, since register re-evaluates per invocation.
+    local extra_inputs = {}
+    for _, g in ipairs(workspace_inputs or {}) do
+        local anchored = root .. "/" .. normalize_input_glob(g)
+        if anchored:find("[%*%?%[]") or fs.exists(anchored) then
+            extra_inputs[#extra_inputs + 1] = anchored
+        end
+    end
+
     local ctx = {
         by_name            = snap.by_name,
         install_key        = snap.install_key,
-        lockfile           = (snap.root_dir or ".") .. "/pnpm-lock.yaml",
+        root               = root,
+        lockfile           = root .. "/pnpm-lock.yaml",
         workspace_requires = workspace_requires,
+        workspace_env      = workspace_env,
         pkg_outputs        = pkg_outputs,
+        extra_inputs       = extra_inputs,
+        -- True iff this batch mints (dep_pkg, task): script declared AND
+        -- an effective cfg covers it — the dangling-edge guard for
+        -- resolve_depends_on.
+        has_task           = function(p, t)
+            return cfg_for(p, t) ~= nil and p.package.scripts[t] ~= nil
+        end,
     }
 
     -- Deterministic mint order: sorted task names, packages in topo order.
     local names = {}
-    for task_name in pairs(tasks_map) do names[#names + 1] = task_name end
+    for task_name in pairs(name_set) do names[#names + 1] = task_name end
     table.sort(names)
     for _, task_name in ipairs(names) do
-        local cfg = tasks_map[task_name]
         for _, pkg in ipairs(packages) do
             -- Skip packages that don't declare the script (Turborepo
-            -- no-op-on-missing-script).
-            if pkg.package.scripts[task_name] then
+            -- no-op-on-missing-script) or have no cfg for this name
+            -- (override-only tasks mint solely for their package).
+            local cfg = cfg_for(pkg, task_name)
+            if cfg and pkg.package.scripts[task_name] then
                 mint_one(pkg, task_name, cfg, ctx, origin)
             end
         end
@@ -320,7 +587,7 @@ end
 -- into test's default inputs. Prefer workspace{tasks = {...}}, which
 -- mints the whole batch with the full output picture.
 function M.task(task_name, opts)
-    mint_batch({ [task_name] = opts or {} }, nil, "cook_pnpm.task")
+    mint_batch({ [task_name] = opts or {} }, nil, nil, nil, "cook_pnpm.task")
 end
 
 -- Called by cook_pnpm.workspace() (via init.lua) after bootstrap.
@@ -347,7 +614,8 @@ function M.mint_from_workspace(opts)
     end
 
     if next(tasks_map) ~= nil then
-        mint_batch(tasks_map, opts.requires, "cook_pnpm.workspace")
+        mint_batch(tasks_map, opts.requires, opts.inputs, opts.env,
+                   "cook_pnpm.workspace")
     end
 end
 
