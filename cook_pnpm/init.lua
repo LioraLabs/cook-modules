@@ -1,9 +1,25 @@
 -- cook_pnpm — blessed Cook module for pnpm-driven JS/TS monorepos.
 --
--- Public surface (v0.1, see milestone "cook_pnpm" in cliban project COOK).
--- This is a first rough draft; surface is NOT yet specified in the Cook
--- Standard. A future chapter §29 will normatively cover it once the
--- v0.1 surface has stabilised against the smoke fixture.
+-- Public surface (v0.3). The one-call form:
+--
+--   cook_pnpm.workspace({
+--       packages = "auto",            -- read pnpm-workspace.yaml; or {"apps/*", ...}
+--       node     = ">=18",
+--       pm       = "pnpm@10",
+--       requires = { "wasm" },        -- non-pnpm producer recipes, every minted task
+--       tasks    = {                  -- the task map, minted as one batch
+--           build = { outputs = { "dist/**" } },
+--       },
+--       checks   = "auto",            -- auto-mint test/lint/typecheck/check-types
+--       install  = "install",         -- opt-in: mint the install recipe under
+--                                     -- this name (true → "pnpm:install")
+--   })
+--
+-- Tasks with outputs become cached cook units (restored from the store);
+-- tasks without become cached CHECK units (engine test units: pass
+-- results replayed, run by `cook test`). Omitted inputs default to the
+-- package's file tree minus node_modules and declared outputs. See
+-- tasks.lua for the full contract.
 
 local workspace = require("cook_pnpm.workspace")
 local tasks     = require("cook_pnpm.tasks")
@@ -18,12 +34,25 @@ function M.init()
     -- `cook_pnpm.workspace(...)` call. Nothing to do here.
 end
 
--- Workspace bootstrap. Parses pnpm-workspace.yaml + each package's
--- package.json, registers the toolchain + install probes, and primes
--- in-memory state for subsequent pnpm.task / pnpm.run calls.
-M.workspace  = workspace.bootstrap
+-- Workspace bootstrap + task minting. Parses pnpm-workspace.yaml + each
+-- package's package.json, registers the toolchain + install probes, then
+-- mints opts.tasks / opts.checks as one batch (full-output-picture
+-- default inputs) and the install recipe.
+function M.workspace(opts)
+    opts = opts or {}
+    local result = workspace.bootstrap(opts)
+    tasks.mint_from_workspace(opts)
+    -- Opt-in (a default mint would duplicate-register against Cookfiles
+    -- that already call cook_pnpm.install() explicitly).
+    if opts.install then
+        pnpm_cli.install({
+            name = (type(opts.install) == "string") and opts.install or nil,
+        })
+    end
+    return result
+end
 
--- Register one cook.recipe per (package, task) with topo-correct deps.
+-- Incremental task minting (single-batch defaults; prefer workspace{tasks}).
 M.task       = tasks.task
 
 -- Low-level escape hatches.

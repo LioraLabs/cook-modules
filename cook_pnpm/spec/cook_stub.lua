@@ -7,6 +7,7 @@ local probe_registrations = {}      -- key -> opts
 local cache_store         = {}      -- key -> any
 local export_store        = {}      -- name -> info
 local added_units         = {}
+local added_tests         = {}      -- cook.add_test captures (0.3 check units)
 local recipes             = {}      -- name -> { opts, body_executed }
 local sh_handlers         = {}
 local pkg_responses       = {}
@@ -21,6 +22,7 @@ function M.reset()
     cache_store         = {}
     export_store        = {}
     added_units         = {}
+    added_tests         = {}
     recipes             = {}
     sh_handlers         = {}
     pkg_responses       = {}
@@ -40,6 +42,7 @@ end
 
 function M.probe_opts(key)   return probe_registrations[key] end
 function M.added_units()     return added_units end
+function M.added_tests()     return added_tests end
 function M.recipes()         return recipes end
 function M.set_file_exists(p, exists) file_exists_set[p] = exists and true or false end
 function M.set_file_contents(p, c)    file_contents[p] = c; file_exists_set[p] = true end
@@ -66,6 +69,7 @@ function M.install()
         export = function(name, info) export_store[name] = info end,
         import = function(name) return export_store[name] end,
         add_unit = function(u) added_units[#added_units + 1] = u end,
+        add_test = function(t) added_tests[#added_tests + 1] = t end,
         recipe = function(name, opts, body_fn)
             recipes[name] = { opts = opts, body_executed = false }
             body_fn()

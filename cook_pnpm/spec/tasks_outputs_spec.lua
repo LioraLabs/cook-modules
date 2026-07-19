@@ -1,6 +1,11 @@
 -- cook-modules/cook_pnpm/spec/tasks_outputs_spec.lua
--- Encodes the cook_pnpm 0.2 outputs contract (post-execute resolution
--- via CS-0085). See COOK-47.
+-- Encodes the cook_pnpm 0.3 shape-inference contract:
+--   outputs non-empty -> BUILD (cook.add_unit, post-execute output
+--     resolution per CS-0085, install-probe seal per §12.7.5);
+--   outputs empty/absent -> CHECK (cook.add_test, Standard §8.6/§17.4
+--     test-result caching; lockfile rides as a declared input).
+-- Supersedes the 0.2 "outputs={} yields an empty-outputs cook unit"
+-- contract — that shape was an engine OneShot and never cached.
 
 local stub = require("cook_stub")
 
@@ -25,7 +30,14 @@ local function unit_for(pkg_name)
     return nil
 end
 
-describe("cook_pnpm.tasks v0.2 outputs", function()
+local function test_for(pkg_name)
+    for _, t in ipairs(stub.added_tests()) do
+        if t.command and t.command:find(pkg_name, 1, true) then return t end
+    end
+    return nil
+end
+
+describe("cook_pnpm.tasks 0.3 shape inference", function()
     local workspace, tasks
     before_each(function()
         stub.reset()
@@ -44,47 +56,81 @@ describe("cook_pnpm.tasks v0.2 outputs", function()
         workspace.bootstrap({})
         tasks.task("build", { outputs = { ".next/**" } })
 
-        assert.equals(2, #stub.added_units(), "expected one unit per (pkg, build)")
+        assert.equals(2, #stub.added_units(), "expected one BUILD unit per (pkg, build)")
         local web = unit_for("@scope/web")
         assert.is_not_nil(web, "missing @scope/web unit")
         assert.same({ "./apps/web/.next/**" }, web.outputs,
             "outputs must be the literal workspace-anchored glob, NOT fs.glob-expanded")
     end)
 
-    it("treats `outputs = {}` as no-restoration (empty outputs on the emitted unit)", function()
+    it("mints a CHECK (cook.add_test) when outputs are absent", function()
+        bootstrap_two_pkg_workspace()
+        workspace.bootstrap({})
+        tasks.task("build", {})
+
+        assert.equals(0, #stub.added_units(), "no cook units for an outputs-less task")
+        assert.equals(2, #stub.added_tests(), "one test unit per (pkg, build)")
+        local web = test_for("@scope/web")
+        assert.is_not_nil(web)
+        assert.equals("pnpm --filter @scope/web run build", web.command,
+            "check commands use plain pnpm — test commands get no probe substitution (CS-0127)")
+        assert.equals("@scope/web", web.suite)
+    end)
+
+    it("mints a CHECK when outputs = {}", function()
         bootstrap_two_pkg_workspace()
         workspace.bootstrap({})
         tasks.task("build", { outputs = {} })
 
-        assert.equals(2, #stub.added_units())
-        for _, u in ipairs(stub.added_units()) do
-            assert.same({}, u.outputs, "outputs={} must yield empty outputs[]")
-        end
+        assert.equals(0, #stub.added_units())
+        assert.equals(2, #stub.added_tests())
     end)
 
-    it("treats absent `outputs` as no-restoration (empty outputs on the emitted unit)", function()
+    it("carries the lockfile + package.json as CHECK inputs (no seal field on test units)", function()
         bootstrap_two_pkg_workspace()
         workspace.bootstrap({})
-        tasks.task("build", {})
+        tasks.task("lint", {})   -- only @scope/web declares lint
 
-        assert.equals(2, #stub.added_units())
-        for _, u in ipairs(stub.added_units()) do
-            assert.same({}, u.outputs, "absent outputs must yield empty outputs[]")
+        assert.equals(1, #stub.added_tests())
+        local t = stub.added_tests()[1]
+        local has_lock, has_manifest = false, false
+        for _, i in ipairs(t.inputs) do
+            if i == "./pnpm-lock.yaml" then has_lock = true end
+            if i == "./apps/web/package.json" then has_manifest = true end
         end
+        assert.is_true(has_lock,
+            "lockfile must be a declared input — the check's install determinant")
+        assert.is_true(has_manifest)
+        assert.is_nil(t.seal, "test units take no seal field")
     end)
 
-    it("seals the install probe (invalidate-only lockfile-hash determinant) and keeps toolchain in probes (§12.7.5)", function()
+    it("rejects kind=\"check\" with declared outputs", function()
+        bootstrap_two_pkg_workspace()
+        workspace.bootstrap({})
+        assert.error_matches(function()
+            tasks.task("build", { kind = "check", outputs = { "dist/**" } })
+        end, "declares outputs but kind")
+    end)
+
+    it("honours kind=\"build\" without outputs (explicit OneShot escape hatch)", function()
+        bootstrap_two_pkg_workspace()
+        workspace.bootstrap({})
+        tasks.task("build", { kind = "build" })
+
+        assert.equals(2, #stub.added_units())
+        assert.equals(0, #stub.added_tests())
+        assert.same({}, unit_for("@scope/web").outputs)
+    end)
+
+    it("seals the install probe on BUILD units and keeps toolchain in probes (§12.7.5)", function()
         bootstrap_two_pkg_workspace()
         local result = workspace.bootstrap({})
-        tasks.task("build", {})
+        tasks.task("build", { outputs = { ".next/**" } })
 
         local web = unit_for("@scope/web")
         assert.is_not_nil(web)
-        -- install probe is a deterministic invalidate-only determinant → seal
         assert.same({ result.install_key }, web.seal,
             "install probe must be sealed, not consumed as a data probe")
-        -- toolchain is data-consumed via $<...pnpm> → stays in probes; install
-        -- probe must NOT appear in the data-probe list.
         for _, k in ipairs(web.probes or {}) do
             assert.is_nil(k:match("^pnpm:install:"),
                 "install probe must not sit in the data `probes` set")
