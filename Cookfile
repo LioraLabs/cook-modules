@@ -1,19 +1,351 @@
 # Cookfile for cook-modules — the source-of-truth monorepo for blessed
 # Cook modules published to rocks.usecook.com.
 #
-# Publishing a new revision (canonical flow, run from this directory):
-#   1. Edit/add cook_<name>/cook_<name>-<X.Y.Z>-<R>.rockspec on a clean main
-#   2. git commit
-#   3. MODULE=cook_<name> VERSION=<X.Y.Z>-<R> cook publish
+# Authoring + publishing a new revision (canonical flow, from this dir):
+#   1. Edit module sources, commit.
+#   2. cook rockspec          — detects the changed module, prompts nothing
+#      you didn't ask for (bump defaults to minor; `cook rockspec rev`,
+#      `cook rockspec minor cook_cc`, `cook rockspec "" cook_cc 1.0.0-1`),
+#      generates the next rockspec (version, source.tag, build.modules
+#      regenerated from disk), and opens $EDITOR git-commit-style on a
+#      changelog buffer whose '#' comments list the module's commits since
+#      its last published tag. Empty message aborts and removes the file.
+#   3. git add + commit the rockspec.
+#   4. cook publish-pending   — publishes every module whose newest
+#      rockspec has no git tag yet (cook pending = read-only list).
 #
-# `cook publish` runs the whole pipeline locally — tag HEAD, push to Gitea
-# (origin) and GitHub (github) so luarocks pack can fetch the source.url
-# tag, pack the rock, stage it in ~/dev/cook-rocks, commit there, and
-# invoke that repo's own `cook publish` which pushes to Gitea and force-
-# pushes the GitHub orphan snapshot Cloudflare Pages serves.
-#
-# `pack` and `publish-to-index` are piecewise helpers for debugging; both
-# require MODULE and VERSION.
+# `cook publish` (MODULE= VERSION= env) remains the canonical explicit
+# pipeline; publish-pending drives the same steps. `pack` and
+# `publish-to-index` are piecewise debugging helpers.
+
+chore rockspec bump="minor" module="" version=""
+    >{
+        -- Step 1 of 3: detect, generate, write the editor buffer.
+        -- Lua state does NOT survive across chore steps; everything the
+        -- later steps need goes through .cook/rockspec-state.
+        local function lines_of(s)
+            local t = {}
+            for l in (s or ""):gmatch("[^\n]+") do t[#t + 1] = l end
+            return t
+        end
+        local function vparse(v)
+            local a, b, c, d = v:match("^(%d+)%.(%d+)%.(%d+)%-(%d+)$")
+            if not a then return nil end
+            return { tonumber(a), tonumber(b), tonumber(c), tonumber(d) }
+        end
+        local function vless(x, y)
+            local p, q = vparse(x), vparse(y)
+            for i = 1, 4 do if p[i] ~= q[i] then return p[i] < q[i] end end
+            return false
+        end
+        local function newest_version(m)
+            local vs = {}
+            for _, f in ipairs(lines_of(cook.sh(
+                'find "' .. m .. '" -maxdepth 1 -name "' .. m .. '-*.rockspec" -printf "%f\\n" 2>/dev/null || true'))) do
+                local v = f:match("^" .. m .. "%-(.+)%.rockspec$")
+                if v and vparse(v) then vs[#vs + 1] = v end
+            end
+            table.sort(vs, vless)
+            return vs[#vs]
+        end
+        local function tagged(m, v)
+            return cook.sh('git rev-parse -q --verify "refs/tags/' .. m .. "-" .. v
+                .. '" >/dev/null 2>&1 && echo yes || true'):match("yes") ~= nil
+        end
+        local function changed_since(m, v)
+            return cook.sh('git diff --quiet "' .. m .. "-" .. v .. '"..HEAD -- "' .. m
+                .. '/" 2>/dev/null && echo clean || echo changed'):match("changed") ~= nil
+        end
+
+        -- Pick the module: explicit param, or first changed one.
+        local m, old = module, nil
+        if m == "" then
+            for _, dir in ipairs(lines_of(cook.sh('ls -d cook_*/ 2>/dev/null || true'))) do
+                local cand = dir:gsub("/$", "")
+                local v = newest_version(cand)
+                if v then
+                    if not tagged(cand, v) then
+                        print("SKIP  " .. cand .. ": " .. cand .. "-" .. v
+                            .. " is authored but unpublished (edit it, or cook publish-pending)")
+                    elseif changed_since(cand, v) then
+                        m, old = cand, v
+                        break
+                    end
+                end
+            end
+            if m == "" then
+                error("nothing to author: no module has committed changes since its last published tag")
+            end
+        else
+            old = newest_version(m)
+            if not old then error("no existing rockspec in " .. m .. " (first release is manual)") end
+            if not tagged(m, old) then
+                error(m .. "-" .. old .. " is already authored but unpublished — edit it, or cook publish-pending")
+            end
+        end
+
+        -- Next version: explicit, or bump.
+        local new = version
+        if new ~= "" then
+            if not vparse(new) then error("version must be X.Y.Z-R, got: " .. new) end
+        else
+            local p = vparse(old)
+            local kind = (bump == "") and "minor" or bump
+            if     kind == "major" then new = (p[1] + 1) .. ".0.0-1"
+            elseif kind == "minor" then new = p[1] .. "." .. (p[2] + 1) .. ".0-1"
+            elseif kind == "patch" then new = p[1] .. "." .. p[2] .. "." .. (p[3] + 1) .. "-1"
+            elseif kind == "rev"   then new = p[1] .. "." .. p[2] .. "." .. p[3] .. "-" .. (p[4] + 1)
+            else error("bump must be major|minor|patch|rev, got: " .. kind) end
+        end
+        local src = m .. "/" .. m .. "-" .. old .. ".rockspec"
+        local dst = m .. "/" .. m .. "-" .. new .. ".rockspec"
+        if cook.sh('test -e "' .. dst .. '" && echo yes || true'):match("yes") then
+            error("already exists: " .. dst)
+        end
+
+        -- Generate: version + source.tag rewrite, changelog marker at the
+        -- newest-first anchor (first 6-space-indented version paragraph).
+        -- NB: lines_of drops empty lines (right for command output, wrong
+        -- for file content) — file content goes through split_lines.
+        local function split_lines(s)
+            local t = {}
+            for l in (s .. "\n"):gmatch("(.-)\n") do t[#t + 1] = l end
+            if t[#t] == "" then table.remove(t) end
+            return t
+        end
+        local out, inserted = {}, false
+        for _, l in ipairs(split_lines(fs.read(src))) do
+            if l:match("^version = ") then
+                l = 'version = "' .. new .. '"'
+            elseif l:find('tag = "' .. m .. "-", 1, true) then
+                l = '   tag = "' .. m .. "-" .. new .. '",'
+            elseif not inserted and l:match("^      %d+%.%d+") then
+                out[#out + 1] = "@@COOK_CHANGELOG@@"
+                out[#out + 1] = ""
+                inserted = true
+            end
+            out[#out + 1] = l
+        end
+        if not inserted then
+            error("no changelog anchor found in " .. src .. " — expected a 6-space-indented version paragraph")
+        end
+
+        -- build.modules: regenerate from disk when drifted. Keys are read
+        -- from the modules block only (changelog prose may contain ["..."]).
+        local expected, names = {}, {}
+        for _, f in ipairs(lines_of(cook.sh(
+            'find "' .. m .. '" -name "*.lua" -not -path "' .. m .. '/spec/*" | sort'))) do
+            local rel = f:sub(#m + 2)
+            local name = (rel == "init.lua") and m or (m .. "." .. rel:gsub("%.lua$", ""):gsub("/", "."))
+            expected[name] = f
+            names[#names + 1] = name
+        end
+        table.sort(names)
+        local current, in_block = {}, false
+        for _, l in ipairs(out) do
+            if l:match("^   modules = {") then in_block = true
+            elseif in_block and l:match("^   }") then in_block = false
+            elseif in_block then
+                local k = l:match('%["([^"]+)"%]')
+                if k then current[#current + 1] = k end
+            end
+        end
+        table.sort(current)
+        local drifted = #current ~= #names
+        if not drifted then
+            for i = 1, #names do if names[i] ~= current[i] then drifted = true break end end
+        end
+        if drifted then
+            print("build.modules drift — regenerating (sorted)")
+            local width = 0
+            for _, n in ipairs(names) do if #n + 4 > width then width = #n + 4 end end
+            local rebuilt, skip = {}, false
+            for _, l in ipairs(out) do
+                if l:match("^   modules = {") then
+                    rebuilt[#rebuilt + 1] = l
+                    for _, n in ipairs(names) do
+                        local key = '["' .. n .. '"]'
+                        rebuilt[#rebuilt + 1] = string.format('     %-' .. width .. 's = "%s",', key, expected[n])
+                    end
+                    skip = true
+                elseif skip and l:match("^   }") then
+                    skip = false
+                    rebuilt[#rebuilt + 1] = l
+                elseif not skip then
+                    rebuilt[#rebuilt + 1] = l
+                end
+            end
+            out = rebuilt
+        end
+        fs.write(dst, table.concat(out, "\n") .. "\n")
+
+        -- Editor buffer, git-commit style.
+        local pver = new:match("^(.+)%-%d+$")
+        local buf = { pver .. ": ",
+            "# " .. m .. " " .. new .. "  (was " .. old .. ")",
+            "# Write the changelog paragraph above, starting at column 0; it is",
+            "# indented and spliced newest-first into description.detailed.",
+            "# Lines starting with '#' are ignored. An empty message aborts and",
+            "# removes " .. dst .. ".",
+            "#" }
+        local log = cook.sh('git log --oneline "' .. m .. "-" .. old .. '"..HEAD -- "' .. m .. '/" 2>/dev/null || true')
+        if log ~= "" then
+            buf[#buf + 1] = "# Commits touching " .. m .. "/ since " .. m .. "-" .. old .. ":"
+            for _, l in ipairs(lines_of(log)) do buf[#buf + 1] = "#   " .. l end
+        else
+            buf[#buf + 1] = "# No commits touching " .. m .. "/ since " .. m .. "-" .. old .. "."
+        end
+        if cook.sh('git status --porcelain -- "' .. m .. '/"') ~= "" then
+            buf[#buf + 1] = "#"
+            buf[#buf + 1] = "# NOTE: " .. m .. "/ has uncommitted changes; commit before publishing."
+        end
+        fs.write(".cook/rockspec-changelog", table.concat(buf, "\n") .. "\n")
+        fs.write(".cook/rockspec-state", m .. "\t" .. old .. "\t" .. new .. "\t" .. dst .. "\n")
+        print("authoring " .. dst .. "  (" .. old .. " -> " .. new .. ")")
+    }
+    "${VISUAL:-${EDITOR:-vi}}" .cook/rockspec-changelog || { rm -f "$(cut -f4 .cook/rockspec-state)" .cook/rockspec-changelog .cook/rockspec-state; echo "editor aborted — rockspec removed"; exit 1; }
+    >{
+        -- Step 3 of 3: strip comments, splice or abort.
+        local state = fs.read(".cook/rockspec-state")
+        local m, old, new, dst = state:match("^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\n]+)")
+        local pver = new:match("^(.+)%-%d+$")
+        local kept = {}
+        for l in fs.read(".cook/rockspec-changelog"):gmatch("[^\n]*\n?") do
+            l = l:gsub("\n$", "")
+            if not l:match("^#") then kept[#kept + 1] = l:gsub("%s+$", "") end
+        end
+        while #kept > 0 and kept[1] == "" do table.remove(kept, 1) end
+        while #kept > 0 and kept[#kept] == "" do table.remove(kept) end
+        os.remove(".cook/rockspec-changelog")
+        os.remove(".cook/rockspec-state")
+        local body = table.concat(kept, "\n")
+        if body == "" or body == pver .. ":" then
+            os.remove(dst)
+            error("empty changelog — aborted, " .. dst .. " removed")
+        end
+        local prose = {}
+        for _, l in ipairs(kept) do
+            prose[#prose + 1] = (l == "") and "" or ("      " .. l)
+        end
+        local content = fs.read(dst):gsub("@@COOK_CHANGELOG@@",
+            function() return table.concat(prose, "\n") end, 1)
+        fs.write(dst, content)
+        print(cook.sh('luarocks lint "' .. dst .. '" 2>&1 || true'))
+        print("Wrote " .. dst)
+        print("Next: review, update description.summary if needed, commit, cook publish-pending")
+    }
+
+# A module is PENDING when its newest rockspec (version-sorted) has no
+# matching `<module>-<version>` git tag. `pending` lists; `publish-pending`
+# runs the same pipeline as `chore publish` for each, oldest-name-first,
+# after checking both repos are clean of tracked modifications.
+
+chore pending
+    >{
+        local function lines_of(s)
+            local t = {}
+            for l in (s or ""):gmatch("[^\n]+") do t[#t + 1] = l end
+            return t
+        end
+        local function vparse(v)
+            local a, b, c, d = v:match("^(%d+)%.(%d+)%.(%d+)%-(%d+)$")
+            if not a then return nil end
+            return { tonumber(a), tonumber(b), tonumber(c), tonumber(d) }
+        end
+        local found = false
+        for _, dir in ipairs(lines_of(cook.sh('ls -d cook_*/ 2>/dev/null || true'))) do
+            local m = dir:gsub("/$", "")
+            local vs = {}
+            for _, f in ipairs(lines_of(cook.sh(
+                'find "' .. m .. '" -maxdepth 1 -name "' .. m .. '-*.rockspec" -printf "%f\\n" 2>/dev/null || true'))) do
+                local v = f:match("^" .. m .. "%-(.+)%.rockspec$")
+                if v and vparse(v) then vs[#vs + 1] = v end
+            end
+            table.sort(vs, function(x, y)
+                local p, q = vparse(x), vparse(y)
+                for i = 1, 4 do if p[i] ~= q[i] then return p[i] < q[i] end end
+                return false
+            end)
+            local v = vs[#vs]
+            if v then
+                local has_tag = cook.sh('git rev-parse -q --verify "refs/tags/' .. m .. "-" .. v
+                    .. '" >/dev/null 2>&1 && echo yes || true'):match("yes")
+                if not has_tag then
+                    print("PENDING  " .. m .. "  " .. v)
+                    found = true
+                elseif cook.sh('git diff --quiet "' .. m .. "-" .. v .. '"..HEAD -- "' .. m
+                    .. '/" 2>/dev/null && echo clean || echo changed'):match("changed") then
+                    print("WARN  " .. m .. ": sources changed since " .. m .. "-" .. v
+                        .. " but no new rockspec — run cook rockspec")
+                end
+            end
+        end
+        if not found then print("Nothing pending: every module's newest rockspec is tagged.") end
+    }
+
+chore publish-pending
+    >{
+        local function lines_of(s)
+            local t = {}
+            for l in (s or ""):gmatch("[^\n]+") do t[#t + 1] = l end
+            return t
+        end
+        local function vparse(v)
+            local a, b, c, d = v:match("^(%d+)%.(%d+)%.(%d+)%-(%d+)$")
+            if not a then return nil end
+            return { tonumber(a), tonumber(b), tonumber(c), tonumber(d) }
+        end
+        -- Pre-flight: tracked modifications in either repo abort before any
+        -- tag or push. Untracked files are tolerated.
+        for _, repo in ipairs({ ".", os.getenv("HOME") .. "/dev/cook-rocks" }) do
+            local dirty = cook.sh('git -C "' .. repo .. '" status --porcelain | grep -v "^??" || true')
+            if dirty ~= "" then
+                error("ABORT " .. repo .. " has uncommitted tracked changes:\n" .. dirty)
+            end
+        end
+        local pending = {}
+        for _, dir in ipairs(lines_of(cook.sh('ls -d cook_*/ 2>/dev/null || true'))) do
+            local m = dir:gsub("/$", "")
+            local vs = {}
+            for _, f in ipairs(lines_of(cook.sh(
+                'find "' .. m .. '" -maxdepth 1 -name "' .. m .. '-*.rockspec" -printf "%f\\n" 2>/dev/null || true'))) do
+                local v = f:match("^" .. m .. "%-(.+)%.rockspec$")
+                if v and vparse(v) then vs[#vs + 1] = v end
+            end
+            table.sort(vs, function(x, y)
+                local p, q = vparse(x), vparse(y)
+                for i = 1, 4 do if p[i] ~= q[i] then return p[i] < q[i] end end
+                return false
+            end)
+            local v = vs[#vs]
+            if v and not cook.sh('git rev-parse -q --verify "refs/tags/' .. m .. "-" .. v
+                .. '" >/dev/null 2>&1 && echo yes || true'):match("yes") then
+                pending[#pending + 1] = { m = m, v = v }
+            end
+        end
+        if #pending == 0 then
+            print("Nothing pending: every module's newest rockspec is tagged.")
+            return
+        end
+        -- Same steps as `chore publish`, kept in lockstep with it.
+        local rocks = os.getenv("HOME") .. "/dev/cook-rocks"
+        for _, p in ipairs(pending) do
+            local mv = p.m .. "-" .. p.v
+            print("== publishing " .. mv)
+            print(cook.sh('git tag -a "' .. mv .. '" -m "' .. mv .. '" 2>&1'))
+            print(cook.sh('git push github main "' .. mv .. '" 2>&1'))
+            print(cook.sh('git push origin main "' .. mv .. '" 2>&1'))
+            print(cook.sh('cd "' .. p.m .. '" && luarocks pack "' .. mv .. '.rockspec" 2>&1'))
+            cook.sh('cp "' .. p.m .. "/" .. mv .. '.rockspec" "' .. rocks .. '/"')
+            cook.sh('cp "' .. p.m .. "/" .. mv .. '.src.rock" "' .. rocks .. '/"')
+            print(cook.sh('cd "' .. rocks .. '" && luarocks-admin make-manifest . 2>&1'))
+            cook.sh('cd "' .. rocks .. '" && git add manifest manifest-5.* index.html "'
+                .. mv .. '.rockspec" "' .. mv .. '.src.rock"')
+            print(cook.sh('cd "' .. rocks .. '" && git commit -m "publish: ' .. mv .. '" 2>&1'))
+            print(cook.sh('cd "' .. rocks .. '" && cook publish 2>&1'))
+        end
+        print("Done. Verify: curl -sf https://rocks.usecook.com/manifest-5.4 | grep <version>")
+    }
 
 chore pack
     : "${MODULE:?set MODULE=<name>}" "${VERSION:?set VERSION=<x.y.z-rockrev>}"
