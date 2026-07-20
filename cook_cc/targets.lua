@@ -73,6 +73,11 @@ local function gather_sources(opts)
     return sources
 end
 
+local function join_flags(a, b)
+    if a and b then return a .. " " .. b end
+    return a or b
+end
+
 local function build_opts(opts, kind)
     opts = opts or {}
     local d = toolchain.get_defaults()
@@ -95,8 +100,11 @@ local function build_opts(opts, kind)
         frameworks    = merged_fw,
         standard      = opts.standard,
         warnings      = opts.warnings,
-        extra_cflags  = opts.extra_cflags,
-        extra_ldflags = opts.extra_ldflags,
+        -- Toolchain-default extra flags APPEND, target flags follow —
+        -- mirroring the defines/includes merge above. These were previously
+        -- dropped whenever a target declared no extra_cflags of its own.
+        extra_cflags  = join_flags(d.extra_cflags,  opts.extra_cflags),
+        extra_ldflags = join_flags(d.extra_ldflags, opts.extra_ldflags),
         export_includes      = opts.export_includes,
         export_defines       = opts.export_defines,
         export_system_libs   = opts.export_system_libs,
