@@ -154,6 +154,16 @@ function M.install()
             end
             probe_registrations[key] = opts
         end,
+        -- CS-0158: cook.tools.id(name) → { hash, path } | nil. Deterministic
+        -- stand-in: a fake 64-hex "hash" derived from the name so specs can
+        -- assert identity folding without touching the real filesystem.
+        tools = {
+            id = function(name)
+                local h = ("%s"):format(name):gsub("[^%w]", "x")
+                local hash = (h .. string.rep("0", 64)):sub(1, 64)
+                return { hash = hash, path = "/stub/bin/" .. name }
+            end,
+        },
         export = function(name, info) export_store[name] = info end,
         import = function(name) return export_store[name] end,
         add_unit = function(u) added_units[#added_units + 1] = u end,

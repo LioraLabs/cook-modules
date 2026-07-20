@@ -16,6 +16,18 @@ local function produce_body(override)
     local override_literal = override and string.format("%q", override) or "nil"
     return string.format([[
         local override = %s
+        -- CS-0158: fold the CHOSEN drivers' canonical identities
+        -- (resolved-binary content hashes) into the value. Names alone
+        -- under-key: gcc 13 and gcc 14 sealed identically, so a compiler
+        -- upgrade reused stale objects — including from the shared store
+        -- across machines with different compilers. The hash is the
+        -- machine-independent identity the seal policy demands (12.7.5);
+        -- the path stays out (it would re-key identical toolchains at
+        -- different locations).
+        local function id_of(name)
+            local t = cook.tools.id(name)
+            return t and t.hash or "<missing>"
+        end
         if override then
             local out = cook.sh("command -v " .. override .. " 2>/dev/null")
             if not out:match("%%S") then
@@ -25,11 +37,13 @@ local function produce_body(override)
             if override:match("clang") then cc = "clang"
             elseif override:match("g%%+%%+") then cc = "gcc"
             else cc = "cc" end
-            return { cxx = override, cc = cc }
+            return { cxx = override, cc = cc, cxx_id = id_of(override), cc_id = id_of(cc) }
         end
         for _, c in ipairs({ {cxx="g++",cc="gcc"}, {cxx="clang++",cc="clang"} }) do
             local out = cook.sh("command -v " .. c.cxx .. " 2>/dev/null")
-            if out:match("%%S") then return c end
+            if out:match("%%S") then
+                return { cxx = c.cxx, cc = c.cc, cxx_id = id_of(c.cxx), cc_id = id_of(c.cc) }
+            end
         end
         error("[cc.toolchain] no C/C++ compiler on PATH (tried g++, clang++)")
     ]], override_literal)
