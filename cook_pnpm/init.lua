@@ -10,6 +10,11 @@
 --       inputs   = { ".env" },        -- ROOT-relative extras appended to every
 --                                     -- minted task's inputs (turbo
 --                                     -- globalDependencies); missing literals drop
+--       exclude_inputs =              -- ROOT-relative globs SUBTRACTED from every
+--           { "apps/web/app/.well-known/workflow/**" },
+--                                     -- minted task's inputs (tool-written
+--                                     -- files in source dirs must not self-invalidate;
+--                                     -- also on task cfg, package-relative)
 --       env      = { "CI" },          -- env keys folded into every BUILD unit's
 --                                     -- key (consulted_env_keys auto-fold)
 --       tasks    = {                  -- the task map, minted as one batch

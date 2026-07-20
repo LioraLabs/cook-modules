@@ -6,7 +6,7 @@ remote caching, cached test/lint results, watcher-driven incremental
 rebuilds, and a unified build graph with the rest of your stack (a wasm
 step, codegen, a Rust backend).
 
-**Status: v0.4 — correct-by-content caching.** One `workspace()` call
+**Status: v0.5 — input exclusions.** One `workspace()` call
 parses the workspace, mints every configured task (with Turbo-spelled
 `"<pkg>#<task>"` per-package overrides), auto-mints conventional checks,
 defaults inputs safely, folds dependency-output CONTENT into every
@@ -22,7 +22,7 @@ In your project's `cook.toml`:
 
 ```toml
 [modules]
-cook_pnpm = "0.4.0-1"
+cook_pnpm = "0.5.0-1"
 ```
 
 Then `cook modules install`.
@@ -141,6 +141,48 @@ never-a-clean-hit (silent cache-off for the whole task), and since the
 register phase re-evaluates on every invocation, the file starts
 participating the moment it exists. Glob entries pass through and
 resolve to whatever exists.
+
+## Excluding inputs: `exclude_inputs`
+
+Some tools write derived, nondeterministic state INTO source
+directories — `next build` rewriting
+`app/.well-known/workflow/v1/manifest.json` is the flagship case. Left
+in the input set, that file re-keys the very task that wrote it: every
+foreign build makes the next `cook build` re-run the task with no stated
+cause. `exclude_inputs` subtracts such paths:
+
+```
+workspace({
+    -- ROOT-relative, subtracted from every minted task:
+    exclude_inputs = { "apps/web/app/.well-known/workflow/**" },
+    tasks = {
+        -- or PACKAGE-relative, per task cfg (composes with the
+        -- workspace level; also applies when `inputs` replaces the
+        -- default set):
+        build = { outputs  = { ".next/**" },
+                  exclude_inputs = { "app/.well-known/workflow/**" } },
+    },
+})
+```
+
+The `!` is implied — write the glob without it. Build-unit inputs are
+filtered at register-time expansion, so a matching file nested anywhere
+inside a kept subtree glob is subtracted. Check-unit inputs resolve
+engine-side at ready time, so exclusion there is entry-level: an input
+glob **wholly inside** an excluded subtree is dropped whole, but a
+single file nested in a kept subtree glob cannot be subtracted from a
+check unit yet.
+
+This generalises the module's own hardcoded exclusions (`*.tsbuildinfo`,
+the depfile): tool state is never an input; it self-invalidates
+otherwise.
+
+## Negated input globs: rejected loudly
+
+A `!`-prefixed entry on any *inputs* surface (workspace `inputs`, task
+`inputs`) is a **register-time error** pointing at `exclude_inputs`.
+Anchoring used to corrupt such entries into mid-path literals
+(`./!apps/...`) that silently matched nothing.
 
 ## Negated output globs: not supported
 

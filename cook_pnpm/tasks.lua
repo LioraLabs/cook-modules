@@ -74,6 +74,18 @@
 -- a "!" entry would resolve as a literal path and silently match
 -- nothing.
 --
+-- Input exclusions (0.5, `exclude_inputs`): tools that write
+-- derived state INTO source dirs (next build rewriting
+-- app/.well-known/... manifests) must not re-key their own task.
+-- Task-cfg entries are package-relative, workspace-level entries
+-- root-relative; both are subtracted from every affected task's inputs
+-- — per-file at build-unit fs.glob expansion, entry-level (whole glob
+-- inside an excluded subtree) for check units, whose globs resolve
+-- engine-side. The `!` is implied. `!`-prefixed entries on any INPUTS
+-- surface are a loud register-time error (anchoring would corrupt the
+-- `!` into a mid-path literal that silently matches nothing — the
+-- origin bug this surface exists to prevent).
+--
 -- Dependency-output folding (0.4): a task's fingerprint must cover the
 -- CONTENT of the dependency artifacts it consumes, with the engine's
 -- output-content early cutoff (a dep that re-runs to byte-identical
@@ -125,9 +137,10 @@ local function normalize_input_glob(g)
     return g
 end
 
--- Limited glob matcher for OUTPUT-EXCLUSION ONLY (see header). Supports
--- the shapes output declarations use: `dir/**`, `dir/**/*`, `*.ext`,
--- `?`, and literal paths. Paths are package-relative.
+-- Limited glob matcher for SUBTRACTION ONLY — output exclusion in
+-- default_inputs and 0.5 `exclude_inputs` filtering; never cache-key
+-- resolution (that stays engine-side). Supports the shapes those surfaces
+-- use: `dir/**`, `dir/**/*`, `*.ext`, `?`, and literal paths.
 local function glob_to_pattern(g)
     local p = g:gsub("[%^%$%(%)%%%.%[%]%+%-]", "%%%1")
     p = p:gsub("%*%*/%*", "\1")   -- **/* -> any subpath
@@ -357,6 +370,56 @@ local function depfile_command(dirs, dpath)
         .. dpath .. "'"
 end
 
+-- 0.5: `!`-prefixed entries on any *inputs* surface are rejected
+-- loudly. Anchoring (`dir .. "/" .. g`) would corrupt the `!` into a
+-- mid-path literal (`apps/web/!foo/**`) that silently matches nothing —
+-- the exact failure mode that hid a tool-written file re-keying a 29s
+-- build. The declared subtraction surface is `exclude_inputs`.
+local function reject_negated_inputs(globs, label)
+    for _, g in ipairs(globs or {}) do
+        if g:sub(1, 1) == "!" then
+            error("[pnpm.task] input '" .. g .. "' (" .. label .. ") is a "
+                  .. "negated glob — anchoring would corrupt the `!` into a "
+                  .. "mid-path literal that silently matches nothing. Use "
+                  .. "exclude_inputs = { \"" .. g:sub(2) .. "\" } instead.", 4)
+        end
+    end
+end
+
+-- 0.5: compile `exclude_inputs` globs into match patterns over
+-- workspace-relative paths. `dir` anchors the entries: the package dir
+-- for task-cfg exclusions, the workspace root for workspace-level ones.
+-- The `!` is implied; a `!`-prefixed entry here is an error, not a
+-- double negation.
+local function compile_excludes(globs, dir, root, label)
+    local pats = {}
+    for _, g in ipairs(globs or {}) do
+        if g:sub(1, 1) == "!" then
+            error("[pnpm.task] exclude_inputs entry '" .. g .. "' (" .. label
+                  .. ") — the `!` is implied on this surface; write the glob "
+                  .. "without it", 4)
+        end
+        local anchored = dir .. "/" .. normalize_input_glob(g)
+        pats[#pats + 1] = glob_to_pattern(workdir_rel(anchored, root))
+    end
+    return pats
+end
+
+-- True when `path` (workspace path, any anchoring form) falls inside one
+-- of the compiled exclude patterns. Also true for a GLOB entry that lies
+-- wholly inside an excluded subtree — `apps/web/app/**/*` matches the
+-- compiled `^apps/web/app/.*$` textually — which is what lets exclusion
+-- drop whole default-input entries for check units, whose globs the
+-- engine resolves ready-time and the module never expands.
+local function is_excluded(path, root, pats)
+    if #pats == 0 then return false end
+    local rel = workdir_rel(path, root)
+    for _, p in ipairs(pats) do
+        if rel:match(p) then return true end
+    end
+    return false
+end
+
 local function build_command_for(pkg, task_name)
     toolchain.ensure_probe_registered()
     local key = toolchain.get_probe_key()
@@ -415,6 +478,23 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
         input_globs[#input_globs + 1] = g
     end
 
+    -- 0.5: subtract exclusions (per-task cfg + workspace level).
+    -- Entry-level here — an entry wholly inside an excluded subtree is
+    -- dropped for build AND check units; per-file filtering of fs.glob
+    -- expansions happens in the build branch below.
+    local excludes = compile_excludes(cfg.exclude_inputs, pkg.dir, ctx.root,
+                                      "task '" .. task_name .. "'")
+    for _, p in ipairs(ctx.exclude_patterns or {}) do
+        excludes[#excludes + 1] = p
+    end
+    if #excludes > 0 then
+        local kept = {}
+        for _, g in ipairs(input_globs) do
+            if not is_excluded(g, ctx.root, excludes) then kept[#kept + 1] = g end
+        end
+        input_globs = kept
+    end
+
     local r_name = recipe_name(pkg, task_name)
 
     -- Data-driven fan-out carve-out (explicit-recipes contract): minted
@@ -425,7 +505,14 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
             local inputs = {}
             for _, g in ipairs(input_globs) do
                 if g:find("[%*%?%[]") then
-                    for _, m in ipairs(fs.glob(g)) do inputs[#inputs + 1] = m end
+                    for _, m in ipairs(fs.glob(g)) do
+                        -- 0.5: a tool-written file nested inside a kept
+                        -- subtree glob (the manifest.json case) is dropped
+                        -- here, at expansion.
+                        if not is_excluded(m, ctx.root, excludes) then
+                            inputs[#inputs + 1] = m
+                        end
+                    end
                 else
                     inputs[#inputs + 1] = g
                 end
@@ -490,7 +577,7 @@ end
 -- in the batch contributes its outputs to the exclusion set BEFORE any
 -- default input set is computed — this is why the workspace{tasks=...}
 -- form is preferred over serial cook_pnpm.task() calls.
-local function mint_batch(tasks_map, workspace_requires, workspace_inputs, workspace_env, origin)
+local function mint_batch(tasks_map, workspace_requires, workspace_inputs, workspace_env, origin, workspace_exclude_inputs)
     local packages = workspace.list()
     local snap = workspace.snapshot()
     local root = snap.root_dir or "."
@@ -498,10 +585,12 @@ local function mint_batch(tasks_map, workspace_requires, workspace_inputs, works
     local base, overrides = split_overrides(tasks_map, snap.by_name)
     for task_name, cfg in pairs(base) do
         reject_negated_outputs(cfg, "task '" .. task_name .. "'")
+        reject_negated_inputs(cfg.inputs, "task '" .. task_name .. "'")
     end
     for pkg_name, per_pkg in pairs(overrides) do
         for task_name, cfg in pairs(per_pkg) do
             reject_negated_outputs(cfg, "task '" .. pkg_name .. "#" .. task_name .. "'")
+            reject_negated_inputs(cfg.inputs, "task '" .. pkg_name .. "#" .. task_name .. "'")
         end
     end
 
@@ -539,6 +628,7 @@ local function mint_batch(tasks_map, workspace_requires, workspace_inputs, works
     -- declared-but-absent input is never-a-clean-hit engine-side, i.e.
     -- silent cache-off for every task); it re-enters once the file
     -- exists, since register re-evaluates per invocation.
+    reject_negated_inputs(workspace_inputs, "workspace inputs")
     local extra_inputs = {}
     for _, g in ipairs(workspace_inputs or {}) do
         local anchored = root .. "/" .. normalize_input_glob(g)
@@ -546,6 +636,11 @@ local function mint_batch(tasks_map, workspace_requires, workspace_inputs, works
             extra_inputs[#extra_inputs + 1] = anchored
         end
     end
+
+    -- 0.5: workspace-level exclusions (root-relative), subtracted from
+    -- every minted task's input set in mint_one.
+    local exclude_patterns = compile_excludes(
+        workspace_exclude_inputs, root, root, "workspace exclude_inputs")
 
     local ctx = {
         by_name            = snap.by_name,
@@ -556,6 +651,7 @@ local function mint_batch(tasks_map, workspace_requires, workspace_inputs, works
         workspace_env      = workspace_env,
         pkg_outputs        = pkg_outputs,
         extra_inputs       = extra_inputs,
+        exclude_patterns   = exclude_patterns,
         -- True iff this batch mints (dep_pkg, task): script declared AND
         -- an effective cfg covers it — the dangling-edge guard for
         -- resolve_depends_on.
@@ -615,7 +711,7 @@ function M.mint_from_workspace(opts)
 
     if next(tasks_map) ~= nil then
         mint_batch(tasks_map, opts.requires, opts.inputs, opts.env,
-                   "cook_pnpm.workspace")
+                   "cook_pnpm.workspace", opts.exclude_inputs)
     end
 end
 
