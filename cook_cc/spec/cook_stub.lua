@@ -20,6 +20,7 @@ local recipe_names_list     = {}     -- array of registered recipe names, regist
 local recipe_meta_store     = {}     -- name -> meta table captured from cook.recipe
 local require_recipe_edges_list = {} -- array of names passed to cook.require_recipe, call order
 local register_complete_queue = {}   -- array of fns passed to cook.on_register_complete, queue order
+local step_group_log = {}            -- one entry per cook.step_group call: array of added_units indices registered inside it
 
 function M.reset()
     cache_store = {}
@@ -38,6 +39,7 @@ function M.reset()
     recipe_meta_store       = {}
     require_recipe_edges_list = {}
     register_complete_queue   = {}
+    step_group_log            = {}
 end
 
 function M.probe_keys()
@@ -78,6 +80,12 @@ end
 
 function M.added_units()
     return added_units
+end
+
+-- One array of added_units indices per cook.step_group invocation, in call
+-- order. Lets specs assert which units were registered inside a group.
+function M.step_groups()
+    return step_group_log
 end
 
 function M.require_recipe_edges()
@@ -167,6 +175,16 @@ function M.install()
         export = function(name, info) export_store[name] = info end,
         import = function(name) return export_store[name] end,
         add_unit = function(u) added_units[#added_units + 1] = u end,
+        step_group = function(fn)
+            if type(fn) ~= "function" then
+                error("[cook_stub] cook.step_group requires a function", 2)
+            end
+            local first = #added_units + 1
+            fn()
+            local members = {}
+            for i = first, #added_units do members[#members + 1] = i end
+            step_group_log[#step_group_log + 1] = members
+        end,
         recipe_name = current_recipe_name_or_error,
         on_register_complete = function(fn)
             if type(fn) ~= "function" then

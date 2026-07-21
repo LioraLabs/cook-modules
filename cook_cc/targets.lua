@@ -139,21 +139,29 @@ local function record_export(id, sources, b, lib_path)
     })
 end
 
+-- One step group for the whole fan-out: compile units are independent, and
+-- bare add_unit calls are sequential per §15.1 — without the group, N sources
+-- become a depth-N chain and compiles serialize. The archive/link units the
+-- makers register afterwards stay bare, so the §15.1 barrier still orders
+-- all-compiles → archive → link. Nested step_group is unspecified (§22.5):
+-- nothing under cc.compile may open one.
 local function compile_all(name, sources, b)
     local objs = {}
-    for _, src in ipairs(sources) do
-        objs[#objs + 1] = cc.compile(src, {
-            target_name       = name,
-            includes          = b.includes,
-            defines           = b.defines,
-            standard          = b.standard,
-            warnings          = b.warnings,
-            extra_cflags      = b.extra_cflags,
-            fpic              = b.fpic,
-            needs             = b.needs,
-            generated_headers = b.generated_headers,
-        })
-    end
+    cook.step_group(function()
+        for _, src in ipairs(sources) do
+            objs[#objs + 1] = cc.compile(src, {
+                target_name       = name,
+                includes          = b.includes,
+                defines           = b.defines,
+                standard          = b.standard,
+                warnings          = b.warnings,
+                extra_cflags      = b.extra_cflags,
+                fpic              = b.fpic,
+                needs             = b.needs,
+                generated_headers = b.generated_headers,
+            })
+        end
+    end)
     return objs
 end
 

@@ -38,6 +38,16 @@ describe("cc.bin", function()
         assert.equals("build/bin/app",     units[3].output)
     end)
 
+    it("registers the compile fan-out inside one step group; link stays sequential", function()
+        local targets = require("cook_cc.targets")
+        in_recipe("app", function()
+            targets.bin({ sources = { "src/a.cpp", "src/b.cpp" } })
+        end)
+        local groups = stub.step_groups()
+        assert.equals(1, #groups)
+        assert.same({ 1, 2 }, groups[1])  -- both compiles grouped, link (unit 3) outside
+    end)
+
     it("registers known_targets in module-local state", function()
         local targets = require("cook_cc.targets")
         in_recipe("app", function()
@@ -191,6 +201,16 @@ describe("cc.lib", function()
         assert.equals("build/obj/mathlib/v.o", units[1].output)
         assert.equals("build/lib/libmathlib.a", units[2].output)
         assert.matches("^ar rcs ", units[2].command)
+    end)
+
+    it("registers the compile fan-out inside one step group; archive stays sequential", function()
+        local targets = require("cook_cc.targets")
+        in_recipe("mathlib", function()
+            targets.lib({ sources = { "math/v.cpp", "math/m.cpp" } })
+        end)
+        local groups = stub.step_groups()
+        assert.equals(1, #groups)
+        assert.same({ 1, 2 }, groups[1])  -- both compiles grouped, archive (unit 3) outside
     end)
 
     it("errors when called outside a recipe body", function()
