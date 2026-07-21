@@ -1,8 +1,8 @@
 local stub = require("cook_stub")
 
 local function reload()
-    package.loaded["cook_cc._probe_helpers"] = nil
-    return require("cook_cc._probe_helpers")
+    package.loaded["cook_cc.discovery._probe_helpers"] = nil
+    return require("cook_cc.discovery._probe_helpers")
 end
 
 describe("_probe_helpers", function()

@@ -3,9 +3,9 @@ local stub = require("cook_stub")
 describe("finders.gl", function()
     before_each(function()
         stub.reset(); stub.install()
-        package.loaded["cook_cc.finders.gl"] = nil
-        package.loaded["cook_cc.finders.pkg_config"] = nil
-        package.loaded["cook_cc.finders.bare_probe"] = nil
+        package.loaded["cook_cc.discovery.finders.gl"] = nil
+        package.loaded["cook_cc.discovery.finders.pkg_config"] = nil
+        package.loaded["cook_cc.discovery.finders.bare_probe"] = nil
         stub.set_sh_handler("cc -print-search-dirs",
             function() return "libraries: =/usr/lib\n" end)
     end)
@@ -14,7 +14,7 @@ describe("finders.gl", function()
         stub.set_pkg_config_response("gl", {
             exists = true, cflags = "", libs = "-lGL", version = "1.0",
         })
-        local f = require("cook_cc.finders.gl")
+        local f = require("cook_cc.discovery.finders.gl")
         local a = f.find({})
         assert.equals("hit", a.outcome)
         assert.same({ "GL" }, a.payload.system_libs)
@@ -22,14 +22,14 @@ describe("finders.gl", function()
 
     it("Linux: bare probe libGL.so fallback", function()
         stub.set_file_exists("/usr/lib/libGL.so", true)
-        local f = require("cook_cc.finders.gl")
+        local f = require("cook_cc.discovery.finders.gl")
         local a = f.find({})
         assert.equals("hit", a.outcome)
     end)
 
     it("macOS returns frameworks={OpenGL}", function()
         stub.set_platform_os("macos")
-        local f = require("cook_cc.finders.gl")
+        local f = require("cook_cc.discovery.finders.gl")
         local a = f.find({})
         assert.equals("hit", a.outcome)
         assert.same({ "OpenGL" }, a.payload.frameworks)
@@ -39,8 +39,8 @@ describe("finders.gl", function()
         stub.set_pkg_config_response("gl", {
             exists = true, cflags = "", libs = "-lGL", version = "1.0",
         })
-        package.loaded["cook_cc.finders"] = nil
-        local curated = require("cook_cc.finders")
+        package.loaded["cook_cc.discovery.finders"] = nil
+        local curated = require("cook_cc.discovery.finders")
         local fn = curated.lookup("opengl")
         assert.is_function(fn)
         local a = fn({})

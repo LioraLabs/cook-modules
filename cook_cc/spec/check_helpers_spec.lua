@@ -1,11 +1,11 @@
 local stub = require("cook_stub")
 
 local function reload()
-    package.loaded["cook_cc._check_helpers"] = nil
-    return require("cook_cc._check_helpers")
+    package.loaded["cook_cc.discovery._check_helpers"] = nil
+    return require("cook_cc.discovery._check_helpers")
 end
 
-describe("cook_cc._check_helpers.fingerprint", function()
+describe("cook_cc.discovery._check_helpers.fingerprint", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("is stable for equal opts", function()
@@ -41,7 +41,7 @@ describe("cook_cc._check_helpers.fingerprint", function()
     end)
 end)
 
-describe("cook_cc._check_helpers.probe_c", function()
+describe("cook_cc.discovery._check_helpers.probe_c", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("has-header emits an #include and main", function()
@@ -92,7 +92,7 @@ describe("cook_cc._check_helpers.probe_c", function()
     end)
 end)
 
-describe("cook_cc._check_helpers.evaluate", function()
+describe("cook_cc.discovery._check_helpers.evaluate", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("has-header returns true when compile ok", function()

@@ -1,8 +1,8 @@
 local stub = require("cook_stub")
 
 local function reload()
-    package.loaded["cook_cc.finders.cmake_compat"] = nil
-    return require("cook_cc.finders.cmake_compat")
+    package.loaded["cook_cc.discovery.finders.cmake_compat"] = nil
+    return require("cook_cc.discovery.finders.cmake_compat")
 end
 
 describe("cmake_compat driver probe", function()
@@ -13,7 +13,7 @@ describe("cmake_compat driver probe", function()
     -- execute-phase probe bodies, where `cook.probe` is a register-only
     -- guard. Registration now happens explicitly via
     -- `ensure_probe_registered()` from
-    -- `cook_cc.finder.register_find_probe` during register phase.
+    -- `cook_cc.discovery.finder.register_find_probe` during register phase.
     it("require alone does NOT register cc:cmake-driver", function()
         reload()
         local keys = stub.probe_keys()

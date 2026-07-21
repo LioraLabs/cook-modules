@@ -1,15 +1,15 @@
 local stub = require("cook_stub")
 
 local function reload()
-    package.loaded["cook_cc.config_header"]            = nil
-    package.loaded["cook_cc.config_header_renderer"]   = nil
-    package.loaded["cook_cc.checks"]                   = nil
-    package.loaded["cook_cc._check_helpers"]           = nil
+    package.loaded["cook_cc.codegen.config_header"]            = nil
+    package.loaded["cook_cc.codegen.config_header_renderer"]   = nil
+    package.loaded["cook_cc.discovery.checks"]                   = nil
+    package.loaded["cook_cc.discovery._check_helpers"]           = nil
     package.loaded["cook_cc.toolchain"]                = nil
-    return require("cook_cc.config_header")
+    return require("cook_cc.codegen.config_header")
 end
 
-describe("cook_cc.config_header register-phase behaviour", function()
+describe("cook_cc.codegen.config_header register-phase behaviour", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("registers a cook.add_unit with the template as input and output as output", function()
@@ -23,7 +23,7 @@ describe("cook_cc.config_header register-phase behaviour", function()
 
     it("collects every $<cc:check:...> sigil into the unit's probes list", function()
         local config_header = reload()
-        local checks = require("cook_cc.checks")
+        local checks = require("cook_cc.discovery.checks")
         local sig1 = checks.has_header("stdint.h")
         local sig2 = checks.has_function("strdup")
         config_header({
@@ -61,7 +61,7 @@ describe("cook_cc.config_header register-phase behaviour", function()
 
     it("emits sigils verbatim inside the vars-literal arg (sigil expansion happens at execute)", function()
         local config_header = reload()
-        local checks = require("cook_cc.checks")
+        local checks = require("cook_cc.discovery.checks")
         local sig = checks.has_header("stdint.h")
         config_header({ from = "raylib.h.in", to = "build/raylib.h", vars = { HAVE_STDINT_H = sig } })
         local cmd = stub.added_units()[1].command
@@ -71,13 +71,13 @@ describe("cook_cc.config_header register-phase behaviour", function()
         assert.is_truthy(probe_key)
     end)
 
-    it("mints the support recipe with origin = cook_cc.config_header metadata", function()
+    it("mints the support recipe with origin = cook_cc.codegen.config_header metadata", function()
         local config_header = reload()
         local recipe_name = config_header({ from = "raylib.h.in", to = "build/raylib.h", vars = { VERSION = "5.0" } })
         assert.equals("__cc_config_header__build_raylib_h", recipe_name)
         local meta = stub.recipe_meta(recipe_name)
         assert.is_not_nil(meta)
-        assert.equals("cook_cc.config_header", meta.origin)
+        assert.equals("cook_cc.codegen.config_header", meta.origin)
     end)
 
     it("get_headers() reports the output path and outdir", function()

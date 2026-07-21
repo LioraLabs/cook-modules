@@ -9,13 +9,13 @@ describe("cc.compile", function()
     before_each(function()
         stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
-        package.loaded["cook_cc.cc"] = nil
+        package.loaded["cook_cc.units.cc"] = nil
         package.loaded["cook_cc.toolchain"] = nil
         with_toolchain()
     end)
 
     it("emits a $<cc:compiler:auto.cxx> sigil command for a .cpp source", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         local obj = cc.compile("src/main.cpp", { target_name = "app" })
         local units = stub.added_units()
         assert.equals(1, #units)
@@ -27,25 +27,25 @@ describe("cc.compile", function()
     end)
 
     it("emits a $<cc:compiler:auto.cc> sigil command for a .c source", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.compile("src/main.c", { target_name = "app" })
         assert.matches("^%$<cc:compiler:auto%.cc> ", stub.added_units()[1].command)
     end)
 
     it("includes -std flag for C++ sources when standard is set", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.compile("src/main.cpp", { target_name = "app", standard = "c++17" })
         assert.matches(" %-std=c%+%+17 ", stub.added_units()[1].command)
     end)
 
     it("does not pass -std to C sources", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.compile("src/main.c", { target_name = "app", standard = "c++17" })
         assert.is_falsy(stub.added_units()[1].command:match("%-std="))
     end)
 
     it("appends -I and -D from opts", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.compile("src/main.cpp", {
             target_name = "app",
             includes = { "include/" },
@@ -57,7 +57,7 @@ describe("cc.compile", function()
     end)
 
     it("emits -MMD -MF <dep_file> for header dep tracking", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.compile("src/main.cpp", { target_name = "app" })
         local u = stub.added_units()[1]
         assert.matches(" %-MMD ", u.command)
@@ -67,7 +67,7 @@ describe("cc.compile", function()
     end)
 
     it("seals the resolved toolchain probe as an auditable determinant (§12.7.5)", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.compile("src/main.cpp", { target_name = "app" })
         local u = stub.added_units()[1]
         assert.same({ "cc:compiler:auto" }, u.probes)
@@ -79,13 +79,13 @@ describe("cc.archive", function()
     before_each(function()
         stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
-        package.loaded["cook_cc.cc"] = nil
+        package.loaded["cook_cc.units.cc"] = nil
         package.loaded["cook_cc.toolchain"] = nil
         with_toolchain()
     end)
 
     it("emits an `ar rcs` command with the given objects + output", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.archive({ "build/obj/a/x.o", "build/obj/a/y.o" }, "build/lib/liba.a")
         local u = stub.added_units()[1]
         assert.matches("^ar rcs build/lib/liba%.a ", u.command)
@@ -99,13 +99,13 @@ describe("cc.link", function()
     before_each(function()
         stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
-        package.loaded["cook_cc.cc"] = nil
+        package.loaded["cook_cc.units.cc"] = nil
         package.loaded["cook_cc.toolchain"] = nil
         with_toolchain()
     end)
 
     it("emits a $<cc:compiler:auto.cxx> link with -l<name> per system_lib", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.link(
             { "build/obj/app/main.o" },
             "build/bin/app",
@@ -119,7 +119,7 @@ describe("cc.link", function()
     end)
 
     it("seals the resolved compiler + finder probes as auditable determinants (§12.7.5)", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.link(
             { "build/obj/app/main.o" },
             "build/bin/app",
@@ -136,14 +136,14 @@ end)
 describe("cc.link frameworks", function()
     before_each(function()
         stub.reset(); stub.install()
-        package.loaded["cook_cc.cc"] = nil
+        package.loaded["cook_cc.units.cc"] = nil
         package.loaded["cook_cc.toolchain"] = nil
         with_toolchain()
     end)
 
     it("emits -framework <name> on macOS", function()
         stub.set_platform_os("macos")
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.link({ "a.o" }, "build/bin/x", { frameworks = { "OpenGL", "Cocoa" } })
         local cmd = stub.added_units()[1].command
         assert.matches("%-framework OpenGL", cmd)
@@ -151,7 +151,7 @@ describe("cc.link frameworks", function()
     end)
 
     it("ignores frameworks on Linux", function()
-        local cc = require("cook_cc.cc")
+        local cc = require("cook_cc.units.cc")
         cc.link({ "a.o" }, "build/bin/x", { frameworks = { "OpenGL" } })
         local cmd = stub.added_units()[1].command
         assert.is_nil(cmd:find("%-framework"))

@@ -3,13 +3,13 @@ local stub = require("cook_stub")
 describe("cc.compile_commands", function()
     before_each(function()
         stub.reset(); stub.install()
-        package.loaded["cook_cc.targets"]    = nil
-        package.loaded["cook_cc.compile_db"] = nil
+        package.loaded["cook_cc.units.targets"]    = nil
+        package.loaded["cook_cc.codegen.compile_db"] = nil
         stub.set_sh_handler("pwd", function() return "/proj\n" end)
     end)
 
     it("writes one entry per source per known target", function()
-        local tg = require("cook_cc.targets")
+        local tg = require("cook_cc.units.targets")
         tg._known_list[#tg._known_list + 1] = "app"
         cook.export("app", {
             compile_info = {
@@ -21,7 +21,7 @@ describe("cc.compile_commands", function()
             },
         })
         local cjson = require("cjson")
-        local db = require("cook_cc.compile_db")
+        local db = require("cook_cc.codegen.compile_db")
         db.write()
         local fs_units = {}
         for _, u in ipairs(stub.added_units()) do
@@ -39,7 +39,7 @@ describe("cc.compile_commands", function()
     end)
 
     it("uses gcc instead of cxx for .c sources", function()
-        local tg = require("cook_cc.targets")
+        local tg = require("cook_cc.units.targets")
         tg._known_list[#tg._known_list + 1] = "app"
         cook.export("app", {
             compile_info = {
@@ -50,7 +50,7 @@ describe("cc.compile_commands", function()
             },
         })
         local cjson = require("cjson")
-        local db = require("cook_cc.compile_db")
+        local db = require("cook_cc.codegen.compile_db")
         db.write()
         for _, u in ipairs(stub.added_units()) do
             if u.kind == "fs.write" then
@@ -63,7 +63,7 @@ describe("cc.compile_commands", function()
 
     it("emits an empty array when there are no known targets", function()
         local cjson = require("cjson")
-        local db = require("cook_cc.compile_db")
+        local db = require("cook_cc.codegen.compile_db")
         db.write()
         for _, u in ipairs(stub.added_units()) do
             if u.kind == "fs.write" then
@@ -76,8 +76,8 @@ end)
 describe("cc.compile_commands (top-level finalizer, CS-0149)", function()
     before_each(function()
         stub.reset(); stub.install()
-        package.loaded["cook_cc.targets"]    = nil
-        package.loaded["cook_cc.compile_db"] = nil
+        package.loaded["cook_cc.units.targets"]    = nil
+        package.loaded["cook_cc.codegen.compile_db"] = nil
         stub.set_sh_handler("pwd", function() return "/proj\n" end)
     end)
 
@@ -92,10 +92,10 @@ describe("cc.compile_commands (top-level finalizer, CS-0149)", function()
     end
 
     it("writes a DB covering targets registered AFTER the call, with no link between them (disconnected-plugin regression)", function()
-        local db = require("cook_cc.compile_db")
+        local db = require("cook_cc.codegen.compile_db")
         db.compile_commands()   -- top-level call FIRST, before any targets exist
 
-        local tg = require("cook_cc.targets")
+        local tg = require("cook_cc.units.targets")
         tg._known_list[#tg._known_list + 1] = "base"
         cook.export("base", {
             compile_info = {
@@ -128,7 +128,7 @@ describe("cc.compile_commands (top-level finalizer, CS-0149)", function()
     end)
 
     it("is idempotent per VM: two top-level calls queue exactly one finalizer and write once", function()
-        local db = require("cook_cc.compile_db")
+        local db = require("cook_cc.codegen.compile_db")
 
         local queue_count = 0
         local original_on_register_complete = cook.on_register_complete
@@ -147,7 +147,7 @@ describe("cc.compile_commands (top-level finalizer, CS-0149)", function()
     end)
 
     it("raises loudly when called from inside a recipe body, and queues nothing", function()
-        local db = require("cook_cc.compile_db")
+        local db = require("cook_cc.codegen.compile_db")
 
         local queued_anything = false
         local original_on_register_complete = cook.on_register_complete

@@ -6,8 +6,8 @@ describe("init module surface", function()
         stub.set_sh_handler("command -v g++", function() return "/usr/bin/g++\n" end)
         stub.set_sh_handler("command -v clang++", function() error("nope") end)
         for _, m in ipairs({
-            "cook_cc","cook_cc.toolchain","cook_cc.cc","cook_cc.targets",
-            "cook_cc.transitive","cook_cc.finder","cook_cc.compile_db",
+            "cook_cc","cook_cc.toolchain","cook_cc.units.cc","cook_cc.units.targets",
+            "cook_cc.units.transitive","cook_cc.discovery.finder","cook_cc.codegen.compile_db",
         }) do package.loaded[m] = nil end
     end)
 
@@ -29,16 +29,16 @@ end)
 
 describe("cook_cc init wiring (M3)", function()
     before_each(function()
-        for _, m in ipairs({ "cook_cc", "cook_cc.checks", "cook_cc.config_header",
-                             "cook_cc.config_header_renderer",
-                             "cook_cc._check_helpers", "cook_cc.toolchain" }) do
+        for _, m in ipairs({ "cook_cc", "cook_cc.discovery.checks", "cook_cc.codegen.config_header",
+                             "cook_cc.codegen.config_header_renderer",
+                             "cook_cc.discovery._check_helpers", "cook_cc.toolchain" }) do
             package.loaded[m] = nil
         end
         require("cook_stub").reset()
         require("cook_stub").install()
     end)
 
-    it("exposes cook_cc.checks as the checks module table", function()
+    it("exposes cook_cc.discovery.checks as the checks module table", function()
         local cc = require("cook_cc")
         assert.equals("function", type(cc.checks.has_header))
         assert.equals("function", type(cc.checks.has_function))
@@ -49,7 +49,7 @@ describe("cook_cc init wiring (M3)", function()
         assert.equals("function", type(cc.checks.has_link_flag))
     end)
 
-    it("exposes cook_cc.config_header as a callable", function()
+    it("exposes cook_cc.codegen.config_header as a callable", function()
         local cc = require("cook_cc")
         assert.equals("function", type(cc.config_header))
     end)

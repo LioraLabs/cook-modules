@@ -20,14 +20,14 @@ describe("cc.bin", function()
         stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
         for _, m in ipairs({
-            "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
-            "cook_cc.config_header",
+            "cook_cc.toolchain","cook_cc.units.cc","cook_cc.units.targets","cook_cc.units.transitive",
+            "cook_cc.codegen.config_header",
         }) do reset_module(m) end
         with_toolchain()
     end)
 
     it("compiles each source and links to build/bin/<name>", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("app", function()
             targets.bin({ sources = { "src/a.cpp", "src/b.cpp" } })
         end)
@@ -39,7 +39,7 @@ describe("cc.bin", function()
     end)
 
     it("registers the compile fan-out inside one step group; link stays sequential", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("app", function()
             targets.bin({ sources = { "src/a.cpp", "src/b.cpp" } })
         end)
@@ -49,7 +49,7 @@ describe("cc.bin", function()
     end)
 
     it("registers known_targets in module-local state", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("app", function()
             targets.bin({ sources = { "src/a.cpp" } })
         end)
@@ -57,7 +57,7 @@ describe("cc.bin", function()
     end)
 
     it("calls cook.export with compile_info for compile_commands", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("app", function()
             targets.bin({ sources = { "src/a.cpp" }, includes = { "inc/" } })
         end)
@@ -68,21 +68,21 @@ describe("cc.bin", function()
     end)
 
     it("errors if sources is empty and no dir is given", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         assert.has_error(function()
             in_recipe("app", function() targets.bin({}) end)
         end, "[cc.bin] no sources found for target 'app'")
     end)
 
     it("errors when called outside a recipe body", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         assert.has_error(function()
             targets.bin({ sources = { "src/a.cpp" } })
         end, "[cc.bin] must be called inside a recipe block; wrap it in a `recipe` block")
     end)
 
     it("CS-cook_cc-0.1.1: bin's link command includes archive paths from cc.lib links", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
         end)
@@ -103,7 +103,7 @@ describe("cc.bin", function()
     end)
 
     it("CS-cook_cc-0.1.1b: bin's link unit folds dep archive paths into inputs", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
         end)
@@ -123,7 +123,7 @@ describe("cc.bin", function()
     end)
 
     it("CS-cook_cc-0.1.2: bin's compile commands include export_includes from cc.lib links", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources = { "src/foo.c" },
@@ -154,7 +154,7 @@ describe("cc.bin", function()
     it("delegates an unknown-recipe link to require_recipe (no module-side gate)", function()
         -- The module no longer raises its own "links references unknown
         -- recipe" error; a genuine typo surfaces via cook.require_recipe instead.
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
         end)
@@ -169,7 +169,7 @@ describe("cc.bin", function()
     end)
 
     it("declares an ordering edge (require_recipe) for each known link", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
         end)
@@ -185,14 +185,14 @@ describe("cc.lib", function()
         stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
         for _, m in ipairs({
-            "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
-            "cook_cc.config_header",
+            "cook_cc.toolchain","cook_cc.units.cc","cook_cc.units.targets","cook_cc.units.transitive",
+            "cook_cc.codegen.config_header",
         }) do reset_module(m) end
         with_toolchain()
     end)
 
     it("compiles + archives to build/lib/lib<name>.a", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("mathlib", function()
             targets.lib({ sources = { "math/v.cpp" } })
         end)
@@ -204,7 +204,7 @@ describe("cc.lib", function()
     end)
 
     it("registers the compile fan-out inside one step group; archive stays sequential", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("mathlib", function()
             targets.lib({ sources = { "math/v.cpp", "math/m.cpp" } })
         end)
@@ -214,14 +214,14 @@ describe("cc.lib", function()
     end)
 
     it("errors when called outside a recipe body", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         assert.has_error(function()
             targets.lib({ sources = { "src/a.c" } })
         end, "[cc.lib] must be called inside a recipe block; wrap it in a `recipe` block")
     end)
 
     it("CS-cook_cc-0.1.2: lib's compile commands include export_includes from cc.lib links", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("baselib", function()
             targets.lib({
                 sources = { "src/base.c" },
@@ -254,14 +254,14 @@ describe("cc.shared", function()
         stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
         for _, m in ipairs({
-            "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
-            "cook_cc.config_header",
+            "cook_cc.toolchain","cook_cc.units.cc","cook_cc.units.targets","cook_cc.units.transitive",
+            "cook_cc.codegen.config_header",
         }) do reset_module(m) end
         with_toolchain()
     end)
 
     it("compiles -fPIC + links -shared to build/lib/lib<name>.so", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("plug", function()
             targets.shared({ sources = { "p.cpp" } })
         end)
@@ -273,7 +273,7 @@ describe("cc.shared", function()
     end)
 
     it("CS-0084: opts.output overrides the default link path verbatim", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("base", function()
             targets.shared({
                 sources = { "src/base.cpp" },
@@ -289,14 +289,14 @@ describe("cc.shared", function()
     end)
 
     it("errors when called outside a recipe body", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         assert.has_error(function()
             targets.shared({ sources = { "src/plug.c" } })
         end, "[cc.shared] must be called inside a recipe block; wrap it in a `recipe` block")
     end)
 
     it("CS-cook_cc-0.1.2: shared's compile commands include export_includes from cc.lib links", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("iface", function()
             targets.lib({
                 sources = { "src/iface.c" },
@@ -328,8 +328,8 @@ describe("targets frameworks", function()
     before_each(function()
         stub.reset(); stub.install()
         for _, m in ipairs({
-            "cook_cc.targets","cook_cc.cc","cook_cc.toolchain","cook_cc.transitive",
-            "cook_cc.config_header",
+            "cook_cc.units.targets","cook_cc.units.cc","cook_cc.toolchain","cook_cc.units.transitive",
+            "cook_cc.codegen.config_header",
         }) do package.loaded[m] = nil end
         stub.set_sh_handler("__exists", function() return true end)
         stub.set_probe_value("cc:compiler:auto", { cxx = "g++", cc = "gcc" })
@@ -338,7 +338,7 @@ describe("targets frameworks", function()
     end)
 
     it("cc.bin passes frameworks through to link command", function()
-        local t = require("cook_cc.targets")
+        local t = require("cook_cc.units.targets")
         in_recipe("app", function()
             t.bin({ sources = { "src/main.c" }, frameworks = { "OpenGL" } })
         end)
@@ -347,7 +347,7 @@ describe("targets frameworks", function()
     end)
 
     it("cc.lib exports frameworks via cook.export (CS-0080: export_frameworks)", function()
-        local t = require("cook_cc.targets")
+        local t = require("cook_cc.units.targets")
         -- Updated for CS-0080: PRIVATE-by-default flips bare `frameworks` to
         -- target-local; explicit propagation is via `export_frameworks`.
         in_recipe("gfx", function()
@@ -363,14 +363,14 @@ describe("cc.headers", function()
         stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
         for _, m in ipairs({
-            "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
-            "cook_cc.config_header",
+            "cook_cc.toolchain","cook_cc.units.cc","cook_cc.units.targets","cook_cc.units.transitive",
+            "cook_cc.codegen.config_header",
         }) do reset_module(m) end
         with_toolchain()
     end)
 
     it("registers exports but emits no units", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("idlib", function()
             targets.headers({ export_includes = { "include/" } })
         end)
@@ -380,7 +380,7 @@ describe("cc.headers", function()
     end)
 
     it("errors when called outside a recipe body", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         assert.has_error(function()
             targets.headers({ export_includes = { "include/" } })
         end, "[cc.headers] must be called inside a recipe block; wrap it in a `recipe` block")
@@ -390,19 +390,19 @@ end)
 describe("known_targets module-local state (T5)", function()
     before_each(function()
         stub.reset(); stub.install()
-        package.loaded["cook_cc.targets"]    = nil
-        package.loaded["cook_cc.compile_db"] = nil
+        package.loaded["cook_cc.units.targets"]    = nil
+        package.loaded["cook_cc.codegen.compile_db"] = nil
     end)
 
     it("targets._known() exposes a list accessor", function()
-        local tg = require("cook_cc.targets")
+        local tg = require("cook_cc.units.targets")
         local list = tg._known()
         assert.is_table(list)
         assert.equals(0, #list)
     end)
 
     it("compile_db.write reads from targets._known, not cook.probes.get", function()
-        local db = require("cook_cc.compile_db")
+        local db = require("cook_cc.codegen.compile_db")
         -- No targets registered and no cook.probes entry — write should produce []
         db.write()
         local units = stub.added_units()
@@ -422,8 +422,8 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
         stub.reset(); stub.install()
         stub.set_sh_handler("__exists", function() return true end)
         for _, m in ipairs({
-            "cook_cc.toolchain","cook_cc.cc","cook_cc.targets","cook_cc.transitive",
-            "cook_cc.config_header",
+            "cook_cc.toolchain","cook_cc.units.cc","cook_cc.units.targets","cook_cc.units.transitive",
+            "cook_cc.codegen.config_header",
         }) do reset_module(m) end
         with_toolchain()
     end)
@@ -431,7 +431,7 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
     -- ----- defines ---------------------------------------------------
 
     it("bare `defines` on cc.lib does NOT propagate to consumer compile (PRIVATE)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources = { "src/foo.c" },
@@ -453,7 +453,7 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
     end)
 
     it("`export_defines` on cc.lib DOES propagate to consumer compile (PUBLIC)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources        = { "src/foo.c" },
@@ -485,7 +485,7 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
     -- ----- system_libs ----------------------------------------------
 
     it("bare `system_libs` on cc.lib does NOT propagate to consumer link (PRIVATE)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources     = { "src/foo.c" },
@@ -504,7 +504,7 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
     end)
 
     it("`export_system_libs` on cc.lib DOES propagate to consumer link (PUBLIC)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources            = { "src/foo.c" },
@@ -528,7 +528,7 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
     -- ----- frameworks ----------------------------------------------
 
     it("bare `frameworks` on cc.lib does NOT propagate to consumer link (PRIVATE)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources    = { "src/foo.c" },
@@ -548,7 +548,7 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
 
     it("`export_frameworks` on cc.lib DOES propagate to consumer link (PUBLIC)", function()
         stub.set_platform_os("macos")  -- cc.link emits -framework only on macOS
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources           = { "src/foo.c" },
@@ -569,7 +569,7 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
     -- ----- extra_ldflags --------------------------------------------
 
     it("bare `extra_ldflags` on cc.lib does NOT propagate to consumer link (PRIVATE)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources       = { "src/foo.c" },
@@ -588,7 +588,7 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
     end)
 
     it("`export_extra_ldflags` on cc.lib DOES propagate to consumer link (PUBLIC)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources              = { "src/foo.c" },
@@ -609,7 +609,7 @@ describe("cc PRIVATE/PUBLIC propagation (CS-0080, M4-narrow)", function()
     -- ----- backcompat: export_includes fall-back stays green --------
 
     it("`export_includes` absent → falls back to `includes` (CS-0080 backcompat carve-out)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({
                 sources  = { "src/foo.c" },

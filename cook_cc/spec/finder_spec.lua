@@ -1,11 +1,11 @@
 local stub = require("cook_stub")
 
 local function reload()
-    package.loaded["cook_cc.finder"] = nil
+    package.loaded["cook_cc.discovery.finder"] = nil
     package.loaded["cook_cc.toolchain"] = nil
-    package.loaded["cook_cc.finders.bare_probe"] = nil
-    package.loaded["cook_cc.finders.cmake_compat"] = nil
-    return require("cook_cc.finder")
+    package.loaded["cook_cc.discovery.finders.bare_probe"] = nil
+    package.loaded["cook_cc.discovery.finders.cmake_compat"] = nil
+    return require("cook_cc.discovery.finder")
 end
 
 describe("cc.find probe registration", function()

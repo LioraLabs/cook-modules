@@ -1,13 +1,13 @@
 local stub = require("cook_stub")
 
 local function reload()
-    package.loaded["cook_cc.checks"]        = nil
+    package.loaded["cook_cc.discovery.checks"]        = nil
     package.loaded["cook_cc.toolchain"]     = nil
-    package.loaded["cook_cc._check_helpers"] = nil
-    return require("cook_cc.checks")
+    package.loaded["cook_cc.discovery._check_helpers"] = nil
+    return require("cook_cc.discovery.checks")
 end
 
-describe("cook_cc.checks.has_header", function()
+describe("cook_cc.discovery.checks.has_header", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("returns a sigil string with kind=has-header and the header name", function()
@@ -65,7 +65,7 @@ describe("cook_cc.checks.has_header", function()
     end)
 end)
 
-describe("cook_cc.checks.has_function", function()
+describe("cook_cc.discovery.checks.has_function", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("returns a sigil string with kind=has-function and the function name", function()
@@ -92,7 +92,7 @@ describe("cook_cc.checks.has_function", function()
     end)
 end)
 
-describe("cook_cc.checks.has_define", function()
+describe("cook_cc.discovery.checks.has_define", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("returns a sigil string with kind=has-define and the macro name", function()
@@ -112,7 +112,7 @@ describe("cook_cc.checks.has_define", function()
     end)
 end)
 
-describe("cook_cc.checks.sizeof", function()
+describe("cook_cc.discovery.checks.sizeof", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("returns a sigil string with kind=sizeof and the type name", function()
@@ -139,7 +139,7 @@ describe("cook_cc.checks.sizeof", function()
     end)
 end)
 
-describe("cook_cc.checks.endian", function()
+describe("cook_cc.discovery.checks.endian", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("returns a sigil string with kind=endian", function()
@@ -159,7 +159,7 @@ describe("cook_cc.checks.endian", function()
     end)
 end)
 
-describe("cook_cc.checks.has_compile_flag", function()
+describe("cook_cc.discovery.checks.has_compile_flag", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("returns a sigil string with kind=has-compile-flag and the sanitised flag name", function()
@@ -176,7 +176,7 @@ describe("cook_cc.checks.has_compile_flag", function()
     end)
 end)
 
-describe("cook_cc.checks.has_link_flag", function()
+describe("cook_cc.discovery.checks.has_link_flag", function()
     before_each(function() stub.reset(); stub.install() end)
 
     it("returns a sigil string with kind=has-link-flag", function()

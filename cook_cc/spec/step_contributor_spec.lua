@@ -27,12 +27,12 @@ end
 -- state.target_registered, finder._registered) starts fresh AND every
 -- submodule that `require`s another reloaded submodule sees the SAME
 -- instance (critical for REQUIRED #4: targets.lua and this spec must both
--- observe the one reloaded cook_cc.config_header instance).
+-- observe the one reloaded cook_cc.codegen.config_header instance).
 local function reset_modules()
     for _, m in ipairs({
-        "cook_cc.toolchain", "cook_cc.cc", "cook_cc.targets", "cook_cc.transitive",
-        "cook_cc.finder", "cook_cc.finders.bare_probe", "cook_cc.finders.cmake_compat",
-        "cook_cc.config_header",
+        "cook_cc.toolchain", "cook_cc.units.cc", "cook_cc.units.targets", "cook_cc.units.transitive",
+        "cook_cc.discovery.finder", "cook_cc.discovery.finders.bare_probe", "cook_cc.discovery.finders.cmake_compat",
+        "cook_cc.codegen.config_header",
     }) do
         package.loaded[m] = nil
     end
@@ -52,14 +52,14 @@ end)
 -- ---------------------------------------------------------------------
 describe("REQUIRED #1: maker-outside-recipe error", function()
     it("cc.bin errors when called at top level (not inside a recipe)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         assert.has_error(function()
             targets.bin({ sources = { "a.cpp" } })
         end, "[cc.bin] must be called inside a recipe block; wrap it in a `recipe` block")
     end)
 
     it("cc.lib errors when called at top level (not inside a recipe)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         assert.has_error(function()
             targets.lib({ sources = { "a.c" } })
         end, "[cc.lib] must be called inside a recipe block; wrap it in a `recipe` block")
@@ -72,7 +72,7 @@ end)
 -- ---------------------------------------------------------------------
 describe("REQUIRED #2: undeclared-needs error", function()
     it("errors when needs references a probe that was never declared with cook_cc.uses()", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         assert.has_error(function()
             in_recipe("game", function()
                 targets.bin({ sources = { "src/main.c" }, needs = { "sdl2" } })
@@ -108,7 +108,7 @@ end)
 -- ---------------------------------------------------------------------
 describe("REQUIRED #3: links delegates ordering + validation to require_recipe", function()
     it("records a require_recipe edge for each link and does NOT raise a module-side gate", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
         end)
@@ -121,7 +121,7 @@ describe("REQUIRED #3: links delegates ordering + validation to require_recipe",
     end)
 
     it("surfaces the engine's unknown-recipe error for a genuine typo (via require_recipe, not a module gate)", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
         end)
@@ -140,12 +140,12 @@ describe("REQUIRED #3: links delegates ordering + validation to require_recipe",
 end)
 
 -- ---------------------------------------------------------------------
--- REQUIRED #4: cook_cc.config_header() must be declared BEFORE any cc
+-- REQUIRED #4: cook_cc.codegen.config_header() must be declared BEFORE any cc
 -- target; calling it after one has registered errors.
 -- ---------------------------------------------------------------------
 describe("REQUIRED #4: config_header-after-target error", function()
     it("errors when config_header() is called after a cc target has already registered", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         local cc      = require("cook_cc")
         in_recipe("app", function()
             targets.bin({ sources = { "src/main.c" } })
@@ -162,7 +162,7 @@ end)
 -- ---------------------------------------------------------------------
 describe("REQUIRED #5: dep archive present in link-unit inputs", function()
     it("build/lib/libfoolib.a is in app's link-unit inputs when app links foolib", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "foo.c" } })
         end)
@@ -185,7 +185,7 @@ end)
 
 -- ---------------------------------------------------------------------
 -- REQUIRED #6 (THE COVERAGE GAP): a generated config header, declared at
--- top level via cook_cc.config_header(), must show up end-to-end as a
+-- top level via cook_cc.codegen.config_header(), must show up end-to-end as a
 -- declared input on every compile unit for a target declared AFTER it,
 -- AND that target's compile commands must auto-gain -I<outdir>.
 -- ---------------------------------------------------------------------
@@ -194,7 +194,7 @@ describe("REQUIRED #6: generated config header present in compile-unit inputs (e
         local cc = require("cook_cc")
         cc.config_header({ from = "config.h.in", to = "build/dhewm3/config.h", vars = {} })
 
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("app", function()
             targets.bin({ sources = { "src/main.cpp" } })
         end)
@@ -226,7 +226,7 @@ end)
 -- ---------------------------------------------------------------------
 describe("REQUIRED #7: cook.require_recipe edge declared for each links entry", function()
     it("declares an edge for every linked recipe, in links order", function()
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("a", function()
             targets.lib({ sources = { "a.c" } })
         end)
@@ -241,7 +241,7 @@ describe("REQUIRED #7: cook.require_recipe edge declared for each links entry", 
 end)
 
 -- ---------------------------------------------------------------------
--- REQUIRED #8: a target declared after cook_cc.config_header()
+-- REQUIRED #8: a target declared after cook_cc.codegen.config_header()
 -- must declare a cook.require_recipe ORDERING edge to the config_header
 -- support recipe — not merely the file-input edge. cook only schedules
 -- recipes inside the requested target's require_recipe closure, so without
@@ -256,7 +256,7 @@ describe("REQUIRED #8: config_header support recipe is an ordering edge on later
         local support = cc.config_header({ from = "config.h.in", to = "build/dhewm3/config.h", vars = {} })
         assert.is_string(support)
 
-        local targets = require("cook_cc.targets")
+        local targets = require("cook_cc.units.targets")
         in_recipe("app", function()
             targets.bin({ sources = { "src/main.cpp" } })
         end)

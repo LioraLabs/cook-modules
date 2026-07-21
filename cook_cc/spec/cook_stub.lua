@@ -1,6 +1,21 @@
 -- Minimal stand-ins for the cook-engine-provided globals so busted can
 -- exercise cook_cc submodules in isolation. Each spec resets the state.
 
+-- src/ searcher: production installs map module names to paths via the
+-- rockspec's build.modules, but no single-? package.path pattern can map
+-- cook_cc.units.targets -> src/units/targets.lua, so resolve the prefix
+-- here. Test-only; busted runs with cwd = cook_cc/.
+table.insert(package.searchers or package.loaders, 2, function(name)
+    local rest = name:match("^cook_cc%.(.+)$")
+    if not rest then return nil end
+    local rel = rest:gsub("%.", "/")
+    for _, p in ipairs({ "./src/" .. rel .. ".lua", "./src/" .. rel .. "/init.lua" }) do
+        local f = io.open(p, "r")
+        if f then f:close(); return assert(loadfile(p)), p end
+    end
+    return "\n\tno file './src/" .. rel .. "[.lua|/init.lua]' (cook_cc src searcher)"
+end)
+
 local M = {}
 
 local probe_registrations = {}      -- key -> opts

@@ -38,10 +38,16 @@ chore rockspec bump="minor" module="" version=""
             for i = 1, 4 do if p[i] ~= q[i] then return p[i] < q[i] end end
             return false
         end
+        -- New-layout modules keep rockspecs in <m>/rockspecs/; old-layout at
+        -- <m>/ root. Search both (find tolerates a missing dir via 2>/dev/null).
+        local function rockspec_dir(m)
+            return cook.sh('test -d "' .. m .. '/rockspecs" && echo yes || true'):match("yes")
+                and (m .. "/rockspecs") or m
+        end
         local function newest_version(m)
             local vs = {}
             for _, f in ipairs(lines_of(cook.sh(
-                'find "' .. m .. '" -maxdepth 1 -name "' .. m .. '-*.rockspec" -printf "%f\\n" 2>/dev/null || true'))) do
+                'find "' .. m .. '/rockspecs" "' .. m .. '" -maxdepth 1 -name "' .. m .. '-*.rockspec" -printf "%f\\n" 2>/dev/null | sort -u || true'))) do
                 local v = f:match("^" .. m .. "%-(.+)%.rockspec$")
                 if v and vparse(v) then vs[#vs + 1] = v end
             end
@@ -97,8 +103,9 @@ chore rockspec bump="minor" module="" version=""
             elseif kind == "rev"   then new = p[1] .. "." .. p[2] .. "." .. p[3] .. "-" .. (p[4] + 1)
             else error("bump must be major|minor|patch|rev, got: " .. kind) end
         end
-        local src = m .. "/" .. m .. "-" .. old .. ".rockspec"
-        local dst = m .. "/" .. m .. "-" .. new .. ".rockspec"
+        local rdir = rockspec_dir(m)
+        local src = rdir .. "/" .. m .. "-" .. old .. ".rockspec"
+        local dst = rdir .. "/" .. m .. "-" .. new .. ".rockspec"
         if cook.sh('test -e "' .. dst .. '" && echo yes || true'):match("yes") then
             error("already exists: " .. dst)
         end
@@ -135,7 +142,9 @@ chore rockspec bump="minor" module="" version=""
         local expected, names = {}, {}
         for _, f in ipairs(lines_of(cook.sh(
             'find "' .. m .. '" -name "*.lua" -not -path "' .. m .. '/spec/*" | sort'))) do
-            local rel = f:sub(#m + 2)
+            -- New layout keeps sources under <m>/src/; the src/ segment is a
+            -- disk convention only and never part of the module name.
+            local rel = f:sub(#m + 2):gsub("^src/", "")
             local name = (rel == "init.lua") and m or (m .. "." .. rel:gsub("%.lua$", ""):gsub("/", "."))
             expected[name] = f
             names[#names + 1] = name
@@ -257,7 +266,7 @@ chore pending
             local m = dir:gsub("/$", "")
             local vs = {}
             for _, f in ipairs(lines_of(cook.sh(
-                'find "' .. m .. '" -maxdepth 1 -name "' .. m .. '-*.rockspec" -printf "%f\\n" 2>/dev/null || true'))) do
+                'find "' .. m .. '/rockspecs" "' .. m .. '" -maxdepth 1 -name "' .. m .. '-*.rockspec" -printf "%f\\n" 2>/dev/null | sort -u || true'))) do
                 local v = f:match("^" .. m .. "%-(.+)%.rockspec$")
                 if v and vparse(v) then vs[#vs + 1] = v end
             end
@@ -308,7 +317,7 @@ chore publish-pending
             local m = dir:gsub("/$", "")
             local vs = {}
             for _, f in ipairs(lines_of(cook.sh(
-                'find "' .. m .. '" -maxdepth 1 -name "' .. m .. '-*.rockspec" -printf "%f\\n" 2>/dev/null || true'))) do
+                'find "' .. m .. '/rockspecs" "' .. m .. '" -maxdepth 1 -name "' .. m .. '-*.rockspec" -printf "%f\\n" 2>/dev/null | sort -u || true'))) do
                 local v = f:match("^" .. m .. "%-(.+)%.rockspec$")
                 if v and vparse(v) then vs[#vs + 1] = v end
             end
@@ -331,13 +340,17 @@ chore publish-pending
         local rocks = os.getenv("HOME") .. "/dev/cook-rocks"
         for _, p in ipairs(pending) do
             local mv = p.m .. "-" .. p.v
+            -- New-layout modules keep rockspecs in <m>/rockspecs/ (pack runs
+            -- there, so the untracked .src.rock lands there too).
+            local rdir = cook.sh('test -d "' .. p.m .. '/rockspecs" && echo yes || true'):match("yes")
+                and (p.m .. "/rockspecs") or p.m
             print("== publishing " .. mv)
             print(cook.sh('git tag -a "' .. mv .. '" -m "' .. mv .. '" 2>&1'))
             print(cook.sh('git push github main "' .. mv .. '" 2>&1'))
             print(cook.sh('git push origin main "' .. mv .. '" 2>&1'))
-            print(cook.sh('cd "' .. p.m .. '" && luarocks pack "' .. mv .. '.rockspec" 2>&1'))
-            cook.sh('cp "' .. p.m .. "/" .. mv .. '.rockspec" "' .. rocks .. '/"')
-            cook.sh('cp "' .. p.m .. "/" .. mv .. '.src.rock" "' .. rocks .. '/"')
+            print(cook.sh('cd "' .. rdir .. '" && luarocks pack "' .. mv .. '.rockspec" 2>&1'))
+            cook.sh('cp "' .. rdir .. "/" .. mv .. '.rockspec" "' .. rocks .. '/"')
+            cook.sh('cp "' .. rdir .. "/" .. mv .. '.src.rock" "' .. rocks .. '/"')
             print(cook.sh('cd "' .. rocks .. '" && luarocks-admin make-manifest . 2>&1'))
             cook.sh('cd "' .. rocks .. '" && git add manifest manifest-5.* index.html "'
                 .. mv .. '.rockspec" "' .. mv .. '.src.rock"')
@@ -347,26 +360,28 @@ chore publish-pending
         print("Done. Verify: curl -sf https://rocks.usecook.com/manifest-5.4 | grep <version>")
     }
 
+# NB: chore lines are individually-invoked shells, so RDIR (rockspecs/ for
+# new-layout modules, module root for old) is resolved inline per line.
 chore pack
     : "${MODULE:?set MODULE=<name>}" "${VERSION:?set VERSION=<x.y.z-rockrev>}"
-    cd "${MODULE}" && luarocks pack "${MODULE}-${VERSION}.rockspec"
+    RDIR="${MODULE}/rockspecs"; [ -d "${RDIR}" ] || RDIR="${MODULE}"; cd "${RDIR}" && luarocks pack "${MODULE}-${VERSION}.rockspec"
 
 chore publish-to-index
     : "${MODULE:?set MODULE=<name>}" "${VERSION:?set VERSION=<x.y.z-rockrev>}"
-    cp "${MODULE}/${MODULE}-${VERSION}.rockspec" "${HOME}/dev/cook-rocks/"
-    cp "${MODULE}/${MODULE}-${VERSION}.src.rock" "${HOME}/dev/cook-rocks/"
+    RDIR="${MODULE}/rockspecs"; [ -d "${RDIR}" ] || RDIR="${MODULE}"; cp "${RDIR}/${MODULE}-${VERSION}.rockspec" "${HOME}/dev/cook-rocks/"
+    RDIR="${MODULE}/rockspecs"; [ -d "${RDIR}" ] || RDIR="${MODULE}"; cp "${RDIR}/${MODULE}-${VERSION}.src.rock" "${HOME}/dev/cook-rocks/"
     cd "${HOME}/dev/cook-rocks" && luarocks-admin make-manifest .
     echo "Staged in ${HOME}/dev/cook-rocks — review, then run 'cook publish' from there."
 
 chore publish
     : "${MODULE:?set MODULE=<name>}" "${VERSION:?set VERSION=<x.y.z-rockrev>}"
-    ls "${MODULE}/${MODULE}-${VERSION}.rockspec" >/dev/null
+    RDIR="${MODULE}/rockspecs"; [ -d "${RDIR}" ] || RDIR="${MODULE}"; ls "${RDIR}/${MODULE}-${VERSION}.rockspec" >/dev/null
     git tag -a "${MODULE}-${VERSION}" -m "${MODULE}-${VERSION}"
     git push github main "${MODULE}-${VERSION}"
     git push origin main "${MODULE}-${VERSION}"
-    cd "${MODULE}" && luarocks pack "${MODULE}-${VERSION}.rockspec"
-    cp "${MODULE}/${MODULE}-${VERSION}.rockspec" "${HOME}/dev/cook-rocks/"
-    cp "${MODULE}/${MODULE}-${VERSION}.src.rock" "${HOME}/dev/cook-rocks/"
+    RDIR="${MODULE}/rockspecs"; [ -d "${RDIR}" ] || RDIR="${MODULE}"; cd "${RDIR}" && luarocks pack "${MODULE}-${VERSION}.rockspec"
+    RDIR="${MODULE}/rockspecs"; [ -d "${RDIR}" ] || RDIR="${MODULE}"; cp "${RDIR}/${MODULE}-${VERSION}.rockspec" "${HOME}/dev/cook-rocks/"
+    RDIR="${MODULE}/rockspecs"; [ -d "${RDIR}" ] || RDIR="${MODULE}"; cp "${RDIR}/${MODULE}-${VERSION}.src.rock" "${HOME}/dev/cook-rocks/"
     cd "${HOME}/dev/cook-rocks" && luarocks-admin make-manifest .
     cd "${HOME}/dev/cook-rocks" && git add manifest manifest-5.* index.html "${MODULE}-${VERSION}.rockspec" "${MODULE}-${VERSION}.src.rock"
     cd "${HOME}/dev/cook-rocks" && git commit -m "publish: ${MODULE}-${VERSION}"

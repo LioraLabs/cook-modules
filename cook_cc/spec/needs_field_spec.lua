@@ -7,9 +7,9 @@ local stub = require("cook_stub")
 
 local function reload_all()
     for _, m in ipairs({
-        "cook_cc.toolchain", "cook_cc.finder", "cook_cc.targets",
-        "cook_cc.cc", "cook_cc.transitive", "cook_cc.finders.bare_probe",
-        "cook_cc.finders.cmake_compat", "cook_cc",
+        "cook_cc.toolchain", "cook_cc.discovery.finder", "cook_cc.units.targets",
+        "cook_cc.units.cc", "cook_cc.units.transitive", "cook_cc.discovery.finders.bare_probe",
+        "cook_cc.discovery.finders.cmake_compat", "cook_cc",
     }) do package.loaded[m] = nil end
     return require("cook_cc")
 end

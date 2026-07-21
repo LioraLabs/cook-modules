@@ -3,7 +3,7 @@ local stub = require("cook_stub")
 describe("finders.pkg_config.try", function()
     before_each(function()
         stub.reset(); stub.install()
-        package.loaded["cook_cc.finders.pkg_config"] = nil
+        package.loaded["cook_cc.discovery.finders.pkg_config"] = nil
     end)
 
     it("returns hit Attempt with payload on success", function()
@@ -13,7 +13,7 @@ describe("finders.pkg_config.try", function()
             libs   = "-L/usr/lib -lz",
             version = "1.2.13",
         })
-        local pkg = require("cook_cc.finders.pkg_config")
+        local pkg = require("cook_cc.discovery.finders.pkg_config")
         local a = pkg.try("zlib")
         assert.equals("hit", a.outcome)
         assert.equals("pkg-config", a.strategy)
@@ -25,7 +25,7 @@ describe("finders.pkg_config.try", function()
     end)
 
     it("returns nil on miss", function()
-        local pkg = require("cook_cc.finders.pkg_config")
+        local pkg = require("cook_cc.discovery.finders.pkg_config")
         local a = pkg.try("nonesuch")
         assert.is_nil(a)
     end)
@@ -34,7 +34,7 @@ describe("finders.pkg_config.try", function()
         stub.set_pkg_config_response("gl-macos", {
             exists = true, cflags = "", libs = "-framework OpenGL", version = "1.0",
         })
-        local pkg = require("cook_cc.finders.pkg_config")
+        local pkg = require("cook_cc.discovery.finders.pkg_config")
         local a = pkg.try("gl-macos")
         assert.same({ "OpenGL" }, a.payload.frameworks)
     end)

@@ -1,10 +1,14 @@
+-- cook_cc — public entry point wiring toolchain, target makers, finders, checks, and codegen into the exported api
+-- domain:  public surface — re-exports the module API
+-- effects: pure
+-- std:     §28
 local toolchain     = require("cook_cc.toolchain")
-local cc            = require("cook_cc.cc")
-local targets       = require("cook_cc.targets")
-local finder        = require("cook_cc.finder")
-local db            = require("cook_cc.compile_db")
-local checks        = require("cook_cc.checks")
-local config_header = require("cook_cc.config_header")
+local cc            = require("cook_cc.units.cc")
+local targets       = require("cook_cc.units.targets")
+local finder        = require("cook_cc.discovery.finder")
+local db            = require("cook_cc.codegen.compile_db")
+local checks        = require("cook_cc.discovery.checks")
+local config_header = require("cook_cc.codegen.config_header")
 
 local M = {}
 

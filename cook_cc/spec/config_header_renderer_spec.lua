@@ -1,8 +1,8 @@
 local stub = require("cook_stub")
 
 local function reload()
-    package.loaded["cook_cc.config_header_renderer"] = nil
-    return require("cook_cc.config_header_renderer")
+    package.loaded["cook_cc.codegen.config_header_renderer"] = nil
+    return require("cook_cc.codegen.config_header_renderer")
 end
 
 -- Helper for tests: capture render output to a string via a fake file-write hook.
@@ -16,7 +16,7 @@ local function setup_captures()
     _G.fs.exists  = function(p) return captured["__read:" .. p] ~= nil end
 end
 
-describe("cook_cc.config_header_renderer.render", function()
+describe("cook_cc.codegen.config_header_renderer.render", function()
     before_each(function() stub.reset(); stub.install(); setup_captures() end)
 
     it("substitutes @VAR@ with stringified value", function()
