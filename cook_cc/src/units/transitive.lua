@@ -21,6 +21,11 @@ function M.resolve_links(links)
         frameworks    = {},
         lib_paths     = {},
         extra_ldflags = "",
+        -- CS-0161 §28.4: names of walked targets whose export carries a
+        -- non-empty lib_path, in first-seen walk order. Target makers pass
+        -- this as `dep_recipes` to cc.archive / cc.link so the emitted unit
+        -- is ordered after every artifact-producing target in its closure.
+        link_dep_recipes = {},
     }
     local seen_inc, seen_def, seen_lib, seen_fw, seen_path = {}, {}, {}, {}, {}
     local visited = {}
@@ -38,6 +43,7 @@ function M.resolve_links(links)
         -- can include it.  Exported by M.lib / M.shared via lib_path.
         if info.lib_path and info.lib_path ~= "" then
             add_unique(merged.lib_paths, { info.lib_path }, seen_path)
+            merged.link_dep_recipes[#merged.link_dep_recipes + 1] = name
         end
         if info.extra_ldflags and info.extra_ldflags ~= "" then
             if merged.extra_ldflags ~= "" then

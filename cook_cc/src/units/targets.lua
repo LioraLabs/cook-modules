@@ -1,6 +1,6 @@
 -- cook_cc.units.targets — bin/lib/shared/headers target makers: option merging, compile fan-out, exports, link ordering edges
 -- domain:  units — builds commands and registers work on the engine
--- effects: cook.export, cook.require_recipe
+-- effects: cook.export, cook.dep_order, cook.require_recipe (config headers only)
 -- std:     §28
 local cc         = require("cook_cc.units.cc")
 local toolchain  = require("cook_cc.toolchain")
@@ -41,28 +41,35 @@ local function check_needs_declared(kind, needs)
     end
 end
 
--- Declare an ordering edge to each linked recipe. `links` names sibling
--- recipes (each built by its own maker). cook.require_recipe records the
--- ordering edge (and validates existence across all VMs), so the linked
--- artifact's export (includes/defines/lib_path) is available when we
--- resolve_links — regardless of declaration order.
+-- Force each linked recipe's body and record fine-grained ordering.
+-- `links` names sibling recipes (each built by its own maker).
 --
 -- NOTE (bare vs qualified): link refs are BARE declared names. Under an import
 -- prefix the engine bridges bare link refs to the corresponding qualified
 -- exports within scope; in the stub there is no prefix so bare == qualified.
 local function declare_link_deps(_kind, links)
-    for _, dep in ipairs(links or {}) do
-        -- Declaration order is NOT a rule, and a fatal
-        -- is_known() gate here is wrong. M._known_list is a per-VM accumulator;
-        -- cook evaluates some maker bodies (notably `shared`) in separate worker
-        -- VMs, so a perfectly valid cross-recipe link (e.g. base -> idLib) can be
-        -- absent from THIS VM's list and would spuriously fail the gate — which
-        -- blocked every dhewm3 build. Ordering AND unknown-recipe validation are
-        -- the engine's job: cook.require_recipe records the ordering edge and
-        -- raises on a genuinely nonexistent recipe (across all VMs), which the
-        -- module cannot see. Do not re-add a module-side hard error here.
-        cook.require_recipe(dep)
-    end
+    if #(links or {}) == 0 then return end
+    -- CS-0161: NO require_recipe here.
+    --
+    -- The only thing this ever needed from the engine was the register-order
+    -- guarantee: force each linked recipe's body so resolve_links below can
+    -- read its export (includes/defines/lib_path). require_recipe supplied
+    -- that, but dragged a coarse whole-recipe barrier along with it, which is
+    -- what made every compile in this target queue behind the linked lib's
+    -- ARCHIVE -- an artifact no compile reads.
+    --
+    -- cook.dep_order now carries that same forcing guarantee, and records a
+    -- per-unit edge instead of a recipe-level one. The empty step_group is
+    -- load-bearing: refs accumulated inside a group are discarded at its
+    -- close, so the force happens and NO unit inherits an edge from it. The
+    -- units that genuinely need ordering ask for it themselves -- cc.archive
+    -- and cc.link call dep_order via opts.dep_recipes, right before their own
+    -- add_unit, so the edge lands on that unit alone.
+    cook.step_group(function()
+        for _, dep in ipairs(links) do
+            cook.dep_order(dep)
+        end
+    end)
 end
 
 local function gather_sources(opts)
@@ -295,6 +302,7 @@ function M.bin(opts)
         frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
         extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
         link_inputs   = merged.lib_paths,   -- fold dep archive paths into the link unit's inputs (cache-key fold)
+        dep_recipes   = merged.link_dep_recipes,   -- CS-0161: ordering half
         needs         = b.needs,
     })
 end
@@ -324,7 +332,10 @@ function M.lib(opts)
     b.defines  = merge_defines(b.defines, merged.defines)
     record_export(id, sources, b, archive_path)
     local objs = compile_all(name, sources, b)
-    cc.archive(objs, archive_path)   -- archives (no link) → no link_inputs
+    -- CS-0161: dep_order refs on the archive fine-cover this recipe's requires
+    -- edges, so the compile fan-out above runs as roots. No link_inputs — an
+    -- archive still consumes only its own objects.
+    cc.archive(objs, archive_path, { dep_recipes = merged.link_dep_recipes })
 end
 
 function M.shared(opts)
@@ -355,6 +366,7 @@ function M.shared(opts)
         frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
         extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
         link_inputs   = merged.lib_paths,   -- fold dep archive paths into the link unit's inputs (cache-key fold)
+        dep_recipes   = merged.link_dep_recipes,   -- CS-0161: ordering half
         shared        = true,
         needs         = b.needs,
     })

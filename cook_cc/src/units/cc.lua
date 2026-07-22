@@ -84,10 +84,18 @@ function M.compile(source, opts)
     return obj_out
 end
 
-function M.archive(objects, output)
+function M.archive(objects, output, opts)
+    opts = opts or {}
     fs.mkdir_p(path.dir(output))
     -- Trailing space ensures assertions like "x.o " match the last token.
     local cmd = "ar rcs " .. output .. " " .. table.concat(objects, " ") .. " "
+    -- CS-0161 §28.3.6: order this unit after each named recipe without folding
+    -- anything into its cache inputs. Called here — after the compile step
+    -- group has closed — so the refs attach to the archive unit and nothing
+    -- earlier, which is what fine-covers the recipe's `requires` edges.
+    for _, dep in ipairs(opts.dep_recipes or {}) do
+        cook.dep_order(dep)
+    end
     -- ar tool identity is an unmodeled determinant (no probe today) — a known
     -- pre-existing gap, out of scope for this seal adoption.
     cook.add_unit({
@@ -142,6 +150,14 @@ function M.link(objects, output, opts)
     for _, o in ipairs(objects) do unit_inputs[#unit_inputs + 1] = o end
     for _, li in ipairs(opts.link_inputs or {}) do
         unit_inputs[#unit_inputs + 1] = li
+    end
+
+    -- CS-0161 §28.3.7: execution edges onto every artifact-producing target in
+    -- the link closure. The DATA dependency is already carried by link_inputs
+    -- above (folded into the cache key); these refs supply the ordering that
+    -- makes those reads safe once the recipe-level `requires` edges narrow.
+    for _, dep in ipairs(opts.dep_recipes or {}) do
+        cook.dep_order(dep)
     end
 
     -- §12.7.5: seal the resolved toolchain + finder determinants (see

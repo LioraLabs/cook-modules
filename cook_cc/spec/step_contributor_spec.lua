@@ -100,14 +100,14 @@ end)
 
 -- ---------------------------------------------------------------------
 -- REQUIRED #3: `links` delegates ordering + unknown-recipe validation to
--- cook.require_recipe. The module MUST NOT impose its own hard is_known()
+-- cook.dep_order (CS-0161; was cook.require_recipe before 0.17.0). The module MUST NOT impose its own hard is_known()
 -- gate: M._known_list is a per-VM accumulator and cannot see a
 -- recipe whose maker body ran in a different worker VM (e.g. `shared`), so
 -- a module-side fatal gate spuriously rejects valid cross-recipe links and
--- blocked every dhewm3 build. The engine's require_recipe owns both concerns.
+-- blocked every dhewm3 build. The engine's dep_order owns both concerns.
 -- ---------------------------------------------------------------------
-describe("REQUIRED #3: links delegates ordering + validation to require_recipe", function()
-    it("records a require_recipe edge for each link and does NOT raise a module-side gate", function()
+describe("REQUIRED #3: links delegates ordering + validation to dep_order", function()
+    it("records a dep_order edge for each link and does NOT raise a module-side gate", function()
         local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
@@ -115,12 +115,13 @@ describe("REQUIRED #3: links delegates ordering + validation to require_recipe",
         in_recipe("app", function()
             targets.bin({ sources = { "m.cpp" }, links = { "foolib" } })
         end)
-        -- The ordering edge is the require_recipe call, not a module error.
-        -- (before_each resets stub state, so this is the only edge recorded.)
-        assert.same({ "foolib" }, stub.require_recipe_edges())
+        -- The ordering edge is the dep_order call, not a module error.
+        -- (before_each resets stub state, so foolib is the only name recorded.)
+        assert.same({}, stub.require_recipe_edges())
+        assert.same("foolib", stub.dep_order_edges()[1])
     end)
 
-    it("surfaces the engine's unknown-recipe error for a genuine typo (via require_recipe, not a module gate)", function()
+    it("surfaces the engine's unknown-recipe error for a genuine typo (via dep_order, not a module gate)", function()
         local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
@@ -132,10 +133,10 @@ describe("REQUIRED #3: links delegates ordering + validation to require_recipe",
         end)
         assert.is_false(ok)
         assert.is_string(err)
-        -- The error originates in cook.require_recipe (the engine's concern),
+        -- The error originates in cook.dep_order (the engine's concern),
         -- NOT a cc-module "links references unknown recipe" gate.
         assert.matches("unknown recipe 'foolim'", err, 1, true)
-        assert.matches("require_recipe", err, 1, true)
+        assert.matches("dep_order", err, 1, true)
     end)
 end)
 
@@ -221,10 +222,10 @@ describe("REQUIRED #6: generated config header present in compile-unit inputs (e
 end)
 
 -- ---------------------------------------------------------------------
--- REQUIRED #7: a cook.require_recipe ordering edge is declared for each
+-- REQUIRED #7: a cook.dep_order ordering edge is declared for each
 -- entry in `links`.
 -- ---------------------------------------------------------------------
-describe("REQUIRED #7: cook.require_recipe edge declared for each links entry", function()
+describe("REQUIRED #7: cook.dep_order edge declared for each links entry", function()
     it("declares an edge for every linked recipe, in links order", function()
         local targets = require("cook_cc.units.targets")
         in_recipe("a", function()
@@ -236,7 +237,10 @@ describe("REQUIRED #7: cook.require_recipe edge declared for each links entry", 
         in_recipe("app", function()
             targets.bin({ sources = { "main.c" }, links = { "a", "b" } })
         end)
-        assert.same({ "a", "b" }, stub.require_recipe_edges())
+        -- links order preserved; declare_link_deps forces in order, then
+        -- cc.link mints the link unit's own edges in closure walk order.
+        assert.same({}, stub.require_recipe_edges())
+        assert.same({ "a", "b" }, { stub.dep_order_edges()[1], stub.dep_order_edges()[2] })
     end)
 end)
 

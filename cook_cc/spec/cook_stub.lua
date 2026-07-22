@@ -34,6 +34,7 @@ local known_recipe_names    = {}     -- name -> true, for cook.require_recipe va
 local recipe_names_list     = {}     -- array of registered recipe names, registration order
 local recipe_meta_store     = {}     -- name -> meta table captured from cook.recipe
 local require_recipe_edges_list = {} -- array of names passed to cook.require_recipe, call order
+local dep_order_edges_list  = {}     -- array of names passed to cook.dep_order, call order
 local register_complete_queue = {}   -- array of fns passed to cook.on_register_complete, queue order
 local step_group_log = {}            -- one entry per cook.step_group call: array of added_units indices registered inside it
 
@@ -53,6 +54,7 @@ function M.reset()
     recipe_names_list       = {}
     recipe_meta_store       = {}
     require_recipe_edges_list = {}
+    dep_order_edges_list      = {}
     register_complete_queue   = {}
     step_group_log            = {}
 end
@@ -105,6 +107,13 @@ end
 
 function M.require_recipe_edges()
     return require_recipe_edges_list
+end
+
+-- CS-0161: names passed to cook.dep_order, in call order. This is the channel
+-- `links` uses now — it forces the referent's body exactly as require_recipe
+-- did, but records a per-unit edge instead of a whole-recipe one.
+function M.dep_order_edges()
+    return dep_order_edges_list
 end
 
 function M.recipe_meta(name)
@@ -212,6 +221,12 @@ function M.install()
                 error("[cook_stub] cook.require_recipe: unknown recipe '" .. name .. "'")
             end
             require_recipe_edges_list[#require_recipe_edges_list + 1] = name
+        end,
+        dep_order = function(name)
+            if not known_recipe_names[name] then
+                error("[cook_stub] cook.dep_order: unknown recipe '" .. name .. "'")
+            end
+            dep_order_edges_list[#dep_order_edges_list + 1] = name
         end,
         recipe = function(name, meta, body_fn)
             if not known_recipe_names[name] then

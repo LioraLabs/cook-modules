@@ -151,9 +151,11 @@ describe("cc.bin", function()
         end
     end)
 
-    it("delegates an unknown-recipe link to require_recipe (no module-side gate)", function()
+    it("delegates an unknown-recipe link to dep_order (no module-side gate)", function()
         -- The module no longer raises its own "links references unknown
-        -- recipe" error; a genuine typo surfaces via cook.require_recipe instead.
+        -- recipe" error; a genuine typo surfaces via cook.dep_order instead
+        -- (CS-0161 — dep_order replaced require_recipe on the link path and
+        -- validates the name identically).
         local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
@@ -164,11 +166,11 @@ describe("cc.bin", function()
             end)
         end)
         assert.is_false(ok)
-        assert.matches("require_recipe", err, 1, true)
+        assert.matches("dep_order", err, 1, true)
         assert.matches("unknown recipe 'foolim'", err, 1, true)
     end)
 
-    it("declares an ordering edge (require_recipe) for each known link", function()
+    it("declares a fine-grained ordering edge (dep_order) for each known link", function()
         local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
@@ -176,7 +178,13 @@ describe("cc.bin", function()
         in_recipe("app", function()
             targets.bin({ sources = { "src/main.c" }, links = { "foolib" } })
         end)
-        assert.same({ "foolib" }, stub.require_recipe_edges())
+        -- CS-0161: the link path forces + orders through dep_order. The force
+        -- happens in declare_link_deps (inside an empty step_group, so no
+        -- compile inherits an edge); cc.link then mints the edge on the link
+        -- unit itself, hence foolib appears once per channel use.
+        assert.same({}, stub.require_recipe_edges())
+        assert.is_true(#stub.dep_order_edges() >= 1)
+        assert.same("foolib", stub.dep_order_edges()[1])
     end)
 end)
 
