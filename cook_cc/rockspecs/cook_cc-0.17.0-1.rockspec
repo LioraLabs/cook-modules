@@ -13,12 +13,14 @@ description = {
       recipe's body so resolve_links can read its export. The whole-recipe
       ordering edge that came with it made every compile in the target queue
       behind the linked library's ARCHIVE, an artifact no compile reads, so
-      C++ builds executed as sequential per-recipe waves. cook.dep_order now
-      carries the same forcing guarantee while recording a per-unit edge:
-      declare_link_deps forces inside an empty step_group (refs are discarded
-      at group close, so no compile inherits an edge), and cc.archive /
-      cc.link take a dep_recipes list and mint the edge on their own unit
-      only. Requires an engine with cook.dep_order forcing. Compile commands
+      C++ builds executed as sequential per-recipe waves. cook.import now
+      forces the referent's body itself, so there is no declare_link_deps step
+      at all: transitive.resolve_links walks each linked name, imports it, and
+      the import forces. Unknown-recipe validation rides the same call.
+      cc.archive / cc.link take a dep_recipes list and call cook.dep_order
+      immediately before their own add_unit, so the ordering edge lands on that
+      unit alone. Requires an engine where cook.import forces inside a recipe
+      body and cook.dep_order records a per-unit edge. Compile commands
       and unit inputs are unchanged, so cache keys are unaffected and a
       settled tree stays fully cached across the upgrade. Measured on the
       dhewm3 dogfood repo (32 cores): renderer-wide header sweep 4.74s ->

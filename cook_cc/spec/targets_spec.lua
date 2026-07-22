@@ -151,11 +151,10 @@ describe("cc.bin", function()
         end
     end)
 
-    it("delegates an unknown-recipe link to dep_order (no module-side gate)", function()
+    it("delegates an unknown-recipe link to cook.import (no module-side gate)", function()
         -- The module no longer raises its own "links references unknown
-        -- recipe" error; a genuine typo surfaces via cook.dep_order instead
-        -- (CS-0161 — dep_order replaced require_recipe on the link path and
-        -- validates the name identically).
+        -- recipe" error; a genuine typo surfaces when resolve_links imports
+        -- the name (CS-0161 — cook.import forces, and the forcer validates).
         local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
@@ -166,7 +165,7 @@ describe("cc.bin", function()
             end)
         end)
         assert.is_false(ok)
-        assert.matches("dep_order", err, 1, true)
+        assert.matches("cook.import", err, 1, true)
         assert.matches("unknown recipe 'foolim'", err, 1, true)
     end)
 

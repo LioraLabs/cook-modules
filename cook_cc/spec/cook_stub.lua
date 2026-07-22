@@ -197,7 +197,23 @@ function M.install()
             end,
         },
         export = function(name, info) export_store[name] = info end,
-        import = function(name) return export_store[name] end,
+        -- CS-0161: cook.import forces the referent's body when called from
+        -- inside a recipe body, so an unknown recipe name surfaces the
+        -- forcer's error here rather than degrading to nil. The stub has no
+        -- body driver to re-enter, so it models the validation half only:
+        -- known name -> whatever it has exported so far (possibly nil);
+        -- unknown name -> the same hard error the engine raises.
+        import = function(name)
+            -- Already exported => the engine skips the forcer entirely and
+            -- returns the stored value. Model that first, so a spec that
+            -- seeds the export store directly needs no recipe registration.
+            local exported = export_store[name]
+            if exported ~= nil then return exported end
+            if not known_recipe_names[name] then
+                error("[cook_stub] cook.import: unknown recipe '" .. name .. "'")
+            end
+            return nil
+        end,
         add_unit = function(u) added_units[#added_units + 1] = u end,
         step_group = function(fn)
             if type(fn) ~= "function" then

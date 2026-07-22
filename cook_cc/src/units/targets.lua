@@ -41,36 +41,15 @@ local function check_needs_declared(kind, needs)
     end
 end
 
--- Force each linked recipe's body and record fine-grained ordering.
--- `links` names sibling recipes (each built by its own maker).
---
 -- NOTE (bare vs qualified): link refs are BARE declared names. Under an import
 -- prefix the engine bridges bare link refs to the corresponding qualified
 -- exports within scope; in the stub there is no prefix so bare == qualified.
-local function declare_link_deps(_kind, links)
-    if #(links or {}) == 0 then return end
-    -- CS-0161: NO require_recipe here.
-    --
-    -- The only thing this ever needed from the engine was the register-order
-    -- guarantee: force each linked recipe's body so resolve_links below can
-    -- read its export (includes/defines/lib_path). require_recipe supplied
-    -- that, but dragged a coarse whole-recipe barrier along with it, which is
-    -- what made every compile in this target queue behind the linked lib's
-    -- ARCHIVE -- an artifact no compile reads.
-    --
-    -- cook.dep_order now carries that same forcing guarantee, and records a
-    -- per-unit edge instead of a recipe-level one. The empty step_group is
-    -- load-bearing: refs accumulated inside a group are discarded at its
-    -- close, so the force happens and NO unit inherits an edge from it. The
-    -- units that genuinely need ordering ask for it themselves -- cc.archive
-    -- and cc.link call dep_order via opts.dep_recipes, right before their own
-    -- add_unit, so the edge lands on that unit alone.
-    cook.step_group(function()
-        for _, dep in ipairs(links) do
-            cook.dep_order(dep)
-        end
-    end)
-end
+--
+-- There is deliberately no declare_link_deps step any more. Forcing a linked
+-- recipe's body is a consequence of READING its export, and cook.import does
+-- that itself now: transitive.resolve_links(links) walks each name, imports
+-- it, and the import forces. Unknown-recipe validation rides along on the same
+-- call. The module contributes nothing but the walk.
 
 local function gather_sources(opts)
     local sources = opts.sources or {}
@@ -283,7 +262,6 @@ function M.bin(opts)
     toolchain.ensure_probe_registered()           -- idempotent; toolchain() registered it top-level
     require("cook_cc.codegen.config_header").mark_target_registered()
     check_needs_declared("bin", opts.needs)
-    declare_link_deps("bin", opts.links)
     local b = build_opts(opts, "bin")
     b.needs = opts.needs or {}
     apply_config_headers(b)
@@ -317,7 +295,6 @@ function M.lib(opts)
     -- An archive does not consume dependency archives, but its OWN compiles
     -- depend on the linked libs' exported includes/defines (resolve_links
     -- reads their exports), so we still declare the ordering edges here.
-    declare_link_deps("lib", opts.links)
     local b = build_opts(opts, "lib")
     b.needs = opts.needs or {}
     apply_config_headers(b)
@@ -345,7 +322,6 @@ function M.shared(opts)
     toolchain.ensure_probe_registered()
     require("cook_cc.codegen.config_header").mark_target_registered()
     check_needs_declared("shared", opts.needs)
-    declare_link_deps("shared", opts.links)
     local b = build_opts(opts, "shared")
     b.needs = opts.needs or {}
     apply_config_headers(b)

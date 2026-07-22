@@ -121,7 +121,7 @@ describe("REQUIRED #3: links delegates ordering + validation to dep_order", func
         assert.same("foolib", stub.dep_order_edges()[1])
     end)
 
-    it("surfaces the engine's unknown-recipe error for a genuine typo (via dep_order, not a module gate)", function()
+    it("surfaces the engine's unknown-recipe error for a genuine typo (via cook.import, not a module gate)", function()
         local targets = require("cook_cc.units.targets")
         in_recipe("foolib", function()
             targets.lib({ sources = { "src/foo.c" } })
@@ -133,10 +133,10 @@ describe("REQUIRED #3: links delegates ordering + validation to dep_order", func
         end)
         assert.is_false(ok)
         assert.is_string(err)
-        -- The error originates in cook.dep_order (the engine's concern),
+        -- The error originates in cook.import's forcing (the engine's concern),
         -- NOT a cc-module "links references unknown recipe" gate.
         assert.matches("unknown recipe 'foolim'", err, 1, true)
-        assert.matches("dep_order", err, 1, true)
+        assert.matches("cook.import", err, 1, true)
     end)
 end)
 
