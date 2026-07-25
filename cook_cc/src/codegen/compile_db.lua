@@ -2,6 +2,12 @@
 -- domain:  codegen — files cook_cc writes itself
 -- effects: cook.on_register_complete, fs.write
 local cjson = require("cjson")
+-- §28.3.11: the object path here MUST come from the same derivation the
+-- compile units use, never a second copy of it. This module used to re-derive
+-- the stem itself; the two copies then disagreed about every source whose
+-- basename repeated, and the emitted database pointed at objects the build
+-- never produced.
+local object_path = require("cook_cc.units.object_path")
 
 local M = {}
 
@@ -28,10 +34,10 @@ local function format_command(src, ci)
     end
     for _, inc in ipairs(ci.includes or {}) do flags[#flags + 1] = "-I" .. inc end
     for _, def in ipairs(ci.defines  or {}) do flags[#flags + 1] = "-D" .. def end
-    local stem = src:match("([^/]+)%.[^.]+$") or src
+    local obj = object_path.object(ci.target_name or "default", src)
     -- Trailing space so spec assertions like " -std=... " match the last token.
     return compiler .. " " .. table.concat(flags, " ") .. " " .. src
-        .. " -o build/obj/" .. (ci.target_name or "default") .. "/" .. stem .. ".o "
+        .. " -o " .. obj .. " "
 end
 
 function M.write()

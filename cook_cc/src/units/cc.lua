@@ -3,6 +3,7 @@
 -- effects: cook.add_unit
 -- std:     §28.3
 local toolchain = require("cook_cc.toolchain")
+local object_path = require("cook_cc.units.object_path")
 
 local M = {}
 
@@ -14,13 +15,20 @@ function M.compile(source, opts)
         error("[cc.compile] source file not found: " .. source, 2)
     end
     local target_name = opts.target_name or "default"
-    local stem = path.stem(source)
-    local obj_dir = "build/obj/" .. target_name
-    local obj_out = opts.output or (obj_dir .. "/" .. stem .. ".o")
-    local dep_dir = ".cook/deps/" .. target_name
-    local dep_file = dep_dir .. "/" .. stem .. ".d"
+    -- §28.3.5.1: source-relative, injective by construction. An explicit
+    -- opts.output still wins verbatim.
+    local obj_out = opts.output or object_path.object(target_name, source)
+    -- The depfile's identity follows the OBJECT, not the source's basename.
+    -- Repeated file names are normal in a real tree (DuckDB has 34 such
+    -- pairs), and two translation units sharing one `.d` is doubly wrong: each
+    -- compile overwrites the other's discovered-header set, and cook then sees
+    -- the loser's recorded depfile as drifted and restores it on EVERY
+    -- subsequent run — permanent cache churn plus a silently incorrect header
+    -- dependency set.
+    local dep_file = object_path.depfile(obj_out)
+    local dep_dir = path.dir(dep_file)
 
-    fs.mkdir_p(obj_dir)
+    fs.mkdir_p(path.dir(obj_out))
     fs.mkdir_p(dep_dir)
 
     -- Compiler comes from the cc:compiler:<override> probe at execute time.

@@ -8,6 +8,10 @@ local state = {
     compiler_override     = nil,         -- nil means "auto"
     default_standard      = nil,
     warnings              = "default",
+    -- CS-0168 codegen vocabulary; nil means "not requested".
+    optimize              = nil,
+    debug_symbols         = nil,
+    gc_sections           = nil,
     defaults              = {},
     probe_registered      = {},          -- set: key -> true
 }
@@ -83,6 +87,9 @@ function M.set(opts)
     if opts.compiler then state.compiler_override = opts.compiler end
     if opts.standard then state.default_standard = opts.standard end
     if opts.warnings then state.warnings = opts.warnings end
+    if opts.optimize      ~= nil then state.optimize      = opts.optimize      end
+    if opts.debug_symbols ~= nil then state.debug_symbols = opts.debug_symbols end
+    if opts.gc_sections   ~= nil then state.gc_sections   = opts.gc_sections   end
     -- Register the compiler probe at TOP LEVEL when the user calls
     -- cook_cc.toolchain({...}) (probes must be top-level per CS-0083; makers
     -- must not mint probes inside a body). Idempotent, so safe to call here.
@@ -124,6 +131,54 @@ function M.warning_flags(override)
     elseif w == "strict" then return "-Wall -Wextra -Wpedantic"
     elseif w == "none" then return ""
     else return w end
+end
+
+-- §28.3.10.1. A preset, or any other string passed through as raw flags —
+-- the same escape hatch warnings offers.
+local OPTIMIZE_PRESETS = {
+    ["none"]   = "-O0",
+    ["debug"]  = "-Og",
+    ["size"]   = "-Os -DNDEBUG",
+    ["speed"]  = "-O2 -DNDEBUG",
+    ["max"]    = "-O3 -DNDEBUG",
+}
+
+-- Compile-side codegen flags for a target. `opts` carries the target-level
+-- overrides; anything nil there falls back to the toolchain-wide setting.
+function M.codegen_cflags(opts)
+    opts = opts or {}
+    local parts = {}
+
+    local o = opts.optimize
+    if o == nil then o = state.optimize end
+    if o ~= nil then
+        parts[#parts + 1] = OPTIMIZE_PRESETS[o] or o
+    end
+
+    local g = opts.debug_symbols
+    if g == nil then g = state.debug_symbols end
+    -- Independent of optimize: `max` + symbols is the ordinary
+    -- shippable-with-symbols build, and neither option may suppress the other.
+    if g then parts[#parts + 1] = "-g" end
+
+    local gc = opts.gc_sections
+    if gc == nil then gc = state.gc_sections end
+    if gc then parts[#parts + 1] = "-ffunction-sections -fdata-sections" end
+
+    return table.concat(parts, " ")
+end
+
+-- Link-side half of gc_sections. Emitting the compile half without this is the
+-- silent, strictly-costly state §28.3.10.1 forbids: bigger objects, slower
+-- links, none of the reduction. The two halves are produced by one option so a
+-- half-configured build cannot be expressed.
+function M.codegen_ldflags(opts)
+    opts = opts or {}
+    local gc = opts.gc_sections
+    if gc == nil then gc = state.gc_sections end
+    if not gc then return "" end
+    if cook.platform.os == "macos" then return "-Wl,-dead_strip" end
+    return "-Wl,--gc-sections"
 end
 
 return M

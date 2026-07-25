@@ -19,11 +19,11 @@ describe("cc.compile", function()
         local obj = cc.compile("src/main.cpp", { target_name = "app" })
         local units = stub.added_units()
         assert.equals(1, #units)
-        assert.equals("build/obj/app/main.o", units[1].output)
+        assert.equals("build/obj/app/src/main.cpp.o", units[1].output)
         assert.matches("^%$<cc:compiler:auto%.cxx> ", units[1].command)
         assert.matches(" %-c ", units[1].command)
         assert.matches(" src/main%.cpp ", units[1].command)
-        assert.equals(obj, "build/obj/app/main.o")
+        assert.equals(obj, "build/obj/app/src/main.cpp.o")
     end)
 
     it("emits a $<cc:compiler:auto.cc> sigil command for a .c source", function()
@@ -63,7 +63,62 @@ describe("cc.compile", function()
         assert.matches(" %-MMD ", u.command)
         assert.matches(" %-MF ", u.command)
         assert.equals("make", u.discovered_inputs.format)
-        assert.matches("%.cook/deps/app/main%.d$", u.discovered_inputs.from)
+        -- The depfile mirrors the object path, so translation units sharing a
+        -- basename get distinct depfiles.
+        assert.matches("%.cook/deps/build/obj/app/src/main%.cpp%.o%.d$", u.discovered_inputs.from)
+    end)
+
+    it("gives same-basename sources distinct objects and depfiles", function()
+        local cc = require("cook_cc.units.cc")
+        cc.compile("src/a/util.cpp", { target_name = "app" })
+        cc.compile("src/b/util.cpp", { target_name = "app" })
+        local units = stub.added_units()
+        assert.equals("build/obj/app/src/a/util.cpp.o", units[1].output)
+        assert.equals("build/obj/app/src/b/util.cpp.o", units[2].output)
+        assert.are_not.equals(units[1].output, units[2].output)
+        assert.are_not.equals(
+            units[1].discovered_inputs.from,
+            units[2].discovered_inputs.from
+        )
+    end)
+
+    -- §28.3.5.1 forbids deriving the object path by folding separators into a
+    -- flat name, because that transform is not injective either. This is the
+    -- pair that proves it: both spellings fold to `dictionary_compression`.
+    it("keeps a/b.cpp distinct from a_b.cpp (sanitisation would alias them)", function()
+        local cc = require("cook_cc.units.cc")
+        cc.compile("src/dictionary_compression.cpp", { target_name = "app" })
+        cc.compile("src/dictionary/compression.cpp", { target_name = "app" })
+        local units = stub.added_units()
+        assert.are_not.equals(units[1].output, units[2].output)
+    end)
+
+    -- The extension is retained rather than replaced: one target may legally
+    -- compile both, and they dispatch to different drivers.
+    it("keeps foo.c distinct from foo.cpp", function()
+        local cc = require("cook_cc.units.cc")
+        cc.compile("src/foo.c", { target_name = "app" })
+        cc.compile("src/foo.cpp", { target_name = "app" })
+        local units = stub.added_units()
+        assert.equals("build/obj/app/src/foo.c.o", units[1].output)
+        assert.equals("build/obj/app/src/foo.cpp.o", units[2].output)
+    end)
+
+    -- fs.glob hands back ABSOLUTE paths; an author writes the relative form.
+    -- Both spellings of one source must derive one object, or a globbed target
+    -- and a listed target disagree about what they already built.
+    it("derives one object from either spelling of the same source", function()
+        local cc = require("cook_cc.units.cc")
+        stub.set_sh_handler("pwd", function() return "/proj\n" end)
+        cc.compile("/proj/src/main.cpp", { target_name = "app" })
+        assert.equals("build/obj/app/src/main.cpp.o", stub.added_units()[1].output)
+    end)
+
+    it("still honours an explicit opts.output verbatim", function()
+        local cc = require("cook_cc.units.cc")
+        local obj = cc.compile("src/main.cpp", { target_name = "app", output = "custom/x.o" })
+        assert.equals("custom/x.o", obj)
+        assert.equals("custom/x.o", stub.added_units()[1].output)
     end)
 
     it("seals the resolved toolchain probe as an auditable determinant (§12.7.5)", function()

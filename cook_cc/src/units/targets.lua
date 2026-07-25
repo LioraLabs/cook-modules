@@ -51,21 +51,28 @@ end
 -- it, and the import forces. Unknown-recipe validation rides along on the same
 -- call. The module contributes nothing but the walk.
 
-local function gather_sources(opts)
-    local sources = opts.sources or {}
-    if (#sources == 0) and opts.dir then
-        for _, ext in ipairs({ "*.cpp", "*.c", "*.cc", "*.cxx" }) do
-            for _, m in ipairs(fs.glob(opts.dir .. "**/" .. ext)) do
-                sources[#sources + 1] = m
-            end
-        end
-    end
-    return sources
+-- §28.3.1.1: literals + globs + `!`-exclusions, deduped, sorted.
+local function gather_sources(opts, target)
+    return require("cook_cc.units.sources").resolve(opts, target)
 end
 
 local function join_flags(a, b)
     if a and b then return a .. " " .. b end
     return a or b
+end
+
+-- join_flags treats "" as present; codegen helpers return "" for "nothing
+-- requested", so normalise before joining.
+local function nonempty(s)
+    if s == nil or s == "" then return nil end
+    return s
+end
+
+-- nil means "not specified, take the default". An `and`/`or` ternary silently
+-- collapses an explicit `false` into the default, so it cannot be used here.
+local function resolve_bool(value, default)
+    if value == nil then return default end
+    return value
 end
 
 local function build_opts(opts, kind)
@@ -101,7 +108,16 @@ local function build_opts(opts, kind)
         export_frameworks    = opts.export_frameworks,
         export_extra_ldflags = opts.export_extra_ldflags,
         links         = opts.links or {},
-        fpic          = (kind == "shared"),
+        -- CS-0168: explicit opt-in, defaulting to the historic shared-only
+        -- behaviour. A static archive destined for a shared library needs
+        -- -fPIC and previously could not ask for it. Not an `and`/`or`
+        -- ternary: that form cannot carry an explicit `false` through.
+        fpic          = resolve_bool(opts.fpic, kind == "shared"),
+        -- CS-0168 codegen vocabulary. Resolved here so a target-level value
+        -- overrides the toolchain-wide one, as standard/warnings already do.
+        optimize      = opts.optimize,
+        debug_symbols = opts.debug_symbols,
+        gc_sections   = opts.gc_sections,
     }
 end
 
@@ -137,6 +153,10 @@ end
 -- nothing under cc.compile may open one.
 local function compile_all(name, sources, b)
     local objs = {}
+    -- CS-0168: codegen presets resolve to flags here, ahead of the caller's
+    -- own extra_cflags so an explicit raw flag still wins by coming later.
+    local codegen = toolchain.codegen_cflags(b)
+    local cflags = join_flags(codegen ~= "" and codegen or nil, b.extra_cflags)
     cook.step_group(function()
         for _, src in ipairs(sources) do
             objs[#objs + 1] = cc.compile(src, {
@@ -145,7 +165,7 @@ local function compile_all(name, sources, b)
                 defines           = b.defines,
                 standard          = b.standard,
                 warnings          = b.warnings,
-                extra_cflags      = b.extra_cflags,
+                extra_cflags      = cflags,
                 fpic              = b.fpic,
                 needs             = b.needs,
                 generated_headers = b.generated_headers,
@@ -265,7 +285,7 @@ function M.bin(opts)
     local b = build_opts(opts, "bin")
     b.needs = opts.needs or {}
     apply_config_headers(b)
-    local sources = gather_sources(opts)
+    local sources = gather_sources(opts, name)
     if #sources == 0 then
         error("[cc.bin] no sources found for target '" .. name .. "'", 2)
     end
@@ -278,7 +298,10 @@ function M.bin(opts)
     cc.link(objs, "build/bin/" .. name, {
         system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
         frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
-        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
+        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags,
+            -- CS-0168: gc_sections' link half. The compile half alone is
+            -- silent and strictly costly, so one option emits both.
+            join_flags(nonempty(toolchain.codegen_ldflags(b)), b.extra_ldflags)),
         link_inputs   = merged.lib_paths,   -- fold dep archive paths into the link unit's inputs (cache-key fold)
         dep_recipes   = merged.link_dep_recipes,   -- CS-0161: ordering half
         needs         = b.needs,
@@ -298,7 +321,7 @@ function M.lib(opts)
     local b = build_opts(opts, "lib")
     b.needs = opts.needs or {}
     apply_config_headers(b)
-    local sources = gather_sources(opts)
+    local sources = gather_sources(opts, name)
     if #sources == 0 then
         error("[cc.lib] no sources found for target '" .. name .. "'", 2)
     end
@@ -325,7 +348,7 @@ function M.shared(opts)
     local b = build_opts(opts, "shared")
     b.needs = opts.needs or {}
     apply_config_headers(b)
-    local sources = gather_sources(opts)
+    local sources = gather_sources(opts, name)
     if #sources == 0 then
         error("[cc.shared] no sources found for target '" .. name .. "'", 2)
     end
@@ -340,7 +363,10 @@ function M.shared(opts)
     cc.link(objs, so_path, {
         system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
         frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
-        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
+        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags,
+            -- CS-0168: gc_sections' link half. The compile half alone is
+            -- silent and strictly costly, so one option emits both.
+            join_flags(nonempty(toolchain.codegen_ldflags(b)), b.extra_ldflags)),
         link_inputs   = merged.lib_paths,   -- fold dep archive paths into the link unit's inputs (cache-key fold)
         dep_recipes   = merged.link_dep_recipes,   -- CS-0161: ordering half
         shared        = true,
