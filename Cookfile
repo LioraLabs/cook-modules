@@ -145,7 +145,12 @@ chore rockspec bump="minor" module="" version=""
             -- New layout keeps sources under <m>/src/; the src/ segment is a
             -- disk convention only and never part of the module name.
             local rel = f:sub(#m + 2):gsub("^src/", "")
-            local name = (rel == "init.lua") and m or (m .. "." .. rel:gsub("%.lua$", ""):gsub("/", "."))
+            -- A folder's init.lua IS that folder's module: src/toolchain/init.lua
+            -- is cook_cc.toolchain, not cook_cc.toolchain.init — which is the
+            -- name the code actually requires. Declaring the .init form happened
+            -- to work only because Lua's default package.path carries ?/init.lua.
+            local name = (rel == "init.lua") and m
+                or (m .. "." .. rel:gsub("%.lua$", ""):gsub("/init$", ""):gsub("/", "."))
             expected[name] = f
             names[#names + 1] = name
         end
