@@ -1,3 +1,8 @@
+-- cook_pnpm.discovery.probes.pnpm_install — the pnpm:install:<lockfile-hash> side-effecting probe
+-- domain:  discovery — registers probes (workspace facts, tool finders); facts in, no work units
+-- effects: cook.probe, cook.sh (register-time lockfile hash — see hash_file)
+-- std:     §12.7.5
+--
 -- pnpm:install:<lockfile-hash> probe.
 --
 -- Side-effecting probe: runs `pnpm install --frozen-lockfile` once per

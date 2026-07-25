@@ -1,3 +1,7 @@
+-- cook_pnpm.discovery.probes.package_json — package.json parsing (cjson, with a pattern-scan fallback)
+-- domain:  discovery — registers probes (workspace facts, tool finders); facts in, no work units
+-- effects: fs.read / fs.exists
+--
 -- package.json reader.
 --
 -- Uses lua-cjson (declared in the rockspec deps) as the primary parser

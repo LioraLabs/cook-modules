@@ -1,4 +1,8 @@
--- Minimal semver helper, mirrors cook_cc/version.lua surface but trimmed
+-- cook_pnpm.toolchain.version — semver parsing and range matching for package.json engines fields
+-- domain:  toolchain — pure resolution: which node, which pnpm, probe identity
+-- effects: pure
+--
+-- Minimal semver helper, mirrors cook_cc.toolchain.version's surface but trimmed
 -- for the operators pnpm-style ranges actually use in package.json /
 -- pnpm-workspace.yaml engines fields: `^X.Y.Z`, `~X.Y.Z`, `>=X.Y.Z`, `X`, `X.Y`.
 

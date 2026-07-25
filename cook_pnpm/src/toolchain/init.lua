@@ -1,3 +1,8 @@
+-- cook_pnpm.toolchain — node/pnpm selection: registers the pnpm:toolchain:<pin> probe, holds the pin state
+-- domain:  toolchain — pure resolution: which node, which pnpm, probe identity
+-- effects: cook.probe
+-- std:     §12.7
+--
 -- pnpm + node toolchain probe.
 --
 -- Registers `pnpm:toolchain:<pin>` where <pin> is the pm= string (e.g.

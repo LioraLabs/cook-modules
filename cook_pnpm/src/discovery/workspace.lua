@@ -1,3 +1,7 @@
+-- cook_pnpm.discovery.workspace — parses the pnpm workspace into a package graph and registers the install probe
+-- domain:  discovery — registers probes (workspace facts, tool finders); facts in, no work units
+-- effects: cook.probe (via discovery.probes.pnpm_install), fs.read / fs.glob / fs.exists
+--
 -- Workspace bootstrap.
 --
 -- Parses pnpm-workspace.yaml, then per-package package.json files,
@@ -8,8 +12,8 @@
 -- pnpm.task / pnpm.run calls can read the graph without re-parsing.
 
 local toolchain    = require("cook_pnpm.toolchain")
-local pkg_json     = require("cook_pnpm.probes.package_json")
-local install_prb  = require("cook_pnpm.probes.pnpm_install")
+local pkg_json     = require("cook_pnpm.discovery.probes.package_json")
+local install_prb  = require("cook_pnpm.discovery.probes.pnpm_install")
 
 local M = {}
 

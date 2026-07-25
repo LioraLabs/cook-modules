@@ -22,7 +22,7 @@ local function bootstrap_two_pkg_workspace()
     })
 end
 
-describe("cook_pnpm.tasks 0.2.1 requires passthrough", function()
+describe("cook_pnpm.units.tasks 0.2.1 requires passthrough", function()
     local workspace, tasks
     before_each(function()
         stub.reset()
@@ -32,8 +32,8 @@ describe("cook_pnpm.tasks 0.2.1 requires passthrough", function()
                 package.loaded[k] = nil
             end
         end
-        workspace = require("cook_pnpm.workspace")
-        tasks     = require("cook_pnpm.tasks")
+        workspace = require("cook_pnpm.discovery.workspace")
+        tasks     = require("cook_pnpm.units.tasks")
     end)
 
     it("appends opts.requires verbatim to every minted recipe", function()

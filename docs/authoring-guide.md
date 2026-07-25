@@ -349,7 +349,7 @@ register-time-parsed data, carrying `origin` metadata so `cook list` can
 still attribute the minted recipes to the module. `cook_pnpm.task` is
 this case: a pnpm workspace's `package.json` files are parsed at register
 time, and the maker mints one recipe per workspace member, not one recipe
-per Cookfile-authored `recipe` block. Reduced from `cook_pnpm/tasks.lua`'s
+per Cookfile-authored `recipe` block. Reduced from `cook_pnpm/src/units/tasks.lua`'s
 `M.task`:
 
 ```lua
@@ -485,7 +485,7 @@ A target maker may be called many times in one Cookfile, but a probe
 should only be registered once per key. `cook_cc` and `cook_pnpm` both
 solve this the same way: a per-VM `registered` table, and an
 `ensure_probe_registered()` that returns immediately if the key is
-already in it. Reduced from `cook_pnpm/toolchain.lua`:
+already in it. Reduced from `cook_pnpm/src/toolchain/init.lua`:
 
 ```lua
 local function probe_key() return "pnpm:toolchain:" .. sanitize(state.pin_pm or "auto") end
@@ -538,7 +538,7 @@ consuming unit's cache key:
 - a file → `inputs.files`;
 - an upstream probe → `inputs.requires`.
 
-### A side-effecting probe: `cook_pnpm/probes/pnpm_install.lua`
+### A side-effecting probe: `cook_pnpm/src/discovery/probes/pnpm_install.lua`
 
 Not every probe just detects something — one can run a real command as
 its side effect. The install probe is keyed on the lockfile's content
@@ -594,7 +594,7 @@ consume a probe either textually, inside a `command` string, or
 programmatically, inside a `>{ … }` body. Pick whichever shape the unit
 already needs; the underlying read is the same.
 
-`cook_pnpm/tasks.lua`'s `command_for` is the textual form. It builds a
+`cook_pnpm/src/units/tasks.lua`'s `command_for` is the textual form. It builds a
 command against a `.pnpm` field selector rather than a hardcoded path:
 
 ```lua
@@ -786,7 +786,7 @@ key.
 
 "Arbitrary text" is doing real work in that sentence: a package name or
 version pin comes from outside your module's control, and it can contain
-characters `PROBE_SEG` doesn't allow. `cook_pnpm/toolchain.lua`'s
+characters `PROBE_SEG` doesn't allow. `cook_pnpm/src/toolchain/init.lua`'s
 `sanitize()` exists for exactly this reason — a pin like `"pnpm@9"`
 contains `@`, which isn't in the allowed alphabet, so it collapses
 anything outside `[A-Za-z0-9_+-]` to `-` before the pin becomes part of a

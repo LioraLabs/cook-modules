@@ -1,6 +1,21 @@
 -- Minimal cook-engine stub for cook_pnpm specs. Mirrors cook_cc/spec/cook_stub.lua
 -- pared down to the surface cook_pnpm actually uses.
 
+-- src/ searcher: production installs map module names to paths via the
+-- rockspec's build.modules, but no single-? package.path pattern can map
+-- cook_pnpm.units.tasks -> src/units/tasks.lua, so resolve the prefix
+-- here. Test-only; busted runs with cwd = cook_pnpm/.
+table.insert(package.searchers or package.loaders, 2, function(name)
+    local rest = name:match("^cook_pnpm%.(.+)$")
+    if not rest then return nil end
+    local rel = rest:gsub("%.", "/")
+    for _, p in ipairs({ "./src/" .. rel .. ".lua", "./src/" .. rel .. "/init.lua" }) do
+        local f = io.open(p, "r")
+        if f then f:close(); return assert(loadfile(p)), p end
+    end
+    return "\n\tno file './src/" .. rel .. "[.lua|/init.lua]' (cook_pnpm src searcher)"
+end)
+
 local M = {}
 
 local probe_registrations = {}      -- key -> opts

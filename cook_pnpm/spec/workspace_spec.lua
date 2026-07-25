@@ -4,7 +4,7 @@
 
 local stub = require("cook_stub")
 
-describe("cook_pnpm.workspace", function()
+describe("cook_pnpm.discovery.workspace", function()
     local workspace, tasks
     before_each(function()
         stub.reset()
@@ -15,8 +15,8 @@ describe("cook_pnpm.workspace", function()
                 package.loaded[k] = nil
             end
         end
-        workspace = require("cook_pnpm.workspace")
-        tasks     = require("cook_pnpm.tasks")
+        workspace = require("cook_pnpm.discovery.workspace")
+        tasks     = require("cook_pnpm.units.tasks")
     end)
 
     it("parses pnpm-workspace.yaml + package.json files and builds topo order", function()

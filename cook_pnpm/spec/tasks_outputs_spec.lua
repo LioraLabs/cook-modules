@@ -37,7 +37,7 @@ local function test_for(pkg_name)
     return nil
 end
 
-describe("cook_pnpm.tasks 0.3 shape inference", function()
+describe("cook_pnpm.units.tasks 0.3 shape inference", function()
     local workspace, tasks
     before_each(function()
         stub.reset()
@@ -47,8 +47,8 @@ describe("cook_pnpm.tasks 0.3 shape inference", function()
                 package.loaded[k] = nil
             end
         end
-        workspace = require("cook_pnpm.workspace")
-        tasks     = require("cook_pnpm.tasks")
+        workspace = require("cook_pnpm.discovery.workspace")
+        tasks     = require("cook_pnpm.units.tasks")
     end)
 
     it("forwards `.next/**` as workspace-anchored `apps/web/.next/**`, never pre-expanded", function()

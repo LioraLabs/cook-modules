@@ -53,8 +53,8 @@ describe("cook_pnpm 0.5 exclude_inputs", function()
                 package.loaded[k] = nil
             end
         end
-        workspace = require("cook_pnpm.workspace")
-        tasks     = require("cook_pnpm.tasks")
+        workspace = require("cook_pnpm.discovery.workspace")
+        tasks     = require("cook_pnpm.units.tasks")
     end)
 
     it("task-level exclude subtracts a nested tool-written file from BUILD inputs", function()

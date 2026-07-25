@@ -63,8 +63,8 @@ describe("cook_pnpm 0.4 dependency-output folding + env", function()
                 package.loaded[k] = nil
             end
         end
-        workspace = require("cook_pnpm.workspace")
-        tasks     = require("cook_pnpm.tasks")
+        workspace = require("cook_pnpm.discovery.workspace")
+        tasks     = require("cook_pnpm.units.tasks")
     end)
 
     it("folds dep outputs into a consumer build via a discovered-inputs depfile", function()

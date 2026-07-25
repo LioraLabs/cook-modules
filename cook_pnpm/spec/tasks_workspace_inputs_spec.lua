@@ -37,8 +37,8 @@ describe("cook_pnpm 0.4 workspace-level inputs", function()
                 package.loaded[k] = nil
             end
         end
-        workspace = require("cook_pnpm.workspace")
-        tasks     = require("cook_pnpm.tasks")
+        workspace = require("cook_pnpm.discovery.workspace")
+        tasks     = require("cook_pnpm.units.tasks")
     end)
 
     it("appends root-relative literals to BUILD and CHECK inputs, un-prefixed", function()

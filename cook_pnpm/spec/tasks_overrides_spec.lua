@@ -54,8 +54,8 @@ describe("cook_pnpm 0.4 per-package task overrides", function()
                 package.loaded[k] = nil
             end
         end
-        workspace = require("cook_pnpm.workspace")
-        tasks     = require("cook_pnpm.tasks")
+        workspace = require("cook_pnpm.discovery.workspace")
+        tasks     = require("cook_pnpm.units.tasks")
     end)
 
     it("override cfg REPLACES the base cfg for that package; others keep base", function()

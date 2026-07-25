@@ -1,9 +1,14 @@
+-- cook_pnpm.units.pnpm_cli — low-level pnpm invocation recipes (install, run)
+-- domain:  units — builds commands and registers work on the engine
+-- effects: cook.recipe, cook.add_unit
+-- std:     §12.7.4, §12.7.5
+--
 -- Low-level pnpm CLI primitives. These let callers drop one level
 -- below `pnpm.task` when they need to invoke pnpm directly (e.g., a
 -- one-off `pnpm dlx` step or a custom orchestration script).
 
 local toolchain = require("cook_pnpm.toolchain")
-local workspace = require("cook_pnpm.workspace")
+local workspace = require("cook_pnpm.discovery.workspace")
 
 local M = {}
 

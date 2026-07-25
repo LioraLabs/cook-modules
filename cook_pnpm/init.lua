@@ -1,4 +1,8 @@
--- cook_pnpm — blessed Cook module for pnpm-driven JS/TS monorepos.
+-- cook_pnpm — public entry point wiring the workspace bootstrap, task minting, pnpm CLI, toolchain, and finders into the exported api
+-- domain:  public surface — re-exports the module API
+-- effects: pure
+--
+-- Blessed Cook module for pnpm-driven JS/TS monorepos.
 --
 -- Public surface (v0.4). The one-call form:
 --
@@ -37,13 +41,14 @@
 -- inputs on checks; checks with no depends_on default to {"^build"}) —
 -- a dep that rebuilds to byte-identical output never re-runs its
 -- consumers. Negated output globs ("!...") are rejected — no engine
--- support (CS-0085). See tasks.lua for the full contract.
+-- support (CS-0085). See src/units/tasks.lua for the full contract, and
+-- the sibling units/ files for the input, exclusion, and dep-fold rules.
 
-local workspace = require("cook_pnpm.workspace")
-local tasks     = require("cook_pnpm.tasks")
-local pnpm_cli  = require("cook_pnpm.pnpm_cli")
+local workspace = require("cook_pnpm.discovery.workspace")
+local tasks     = require("cook_pnpm.units.tasks")
+local pnpm_cli  = require("cook_pnpm.units.pnpm_cli")
 local toolchain = require("cook_pnpm.toolchain")
-local finder    = require("cook_pnpm.finder")
+local finder    = require("cook_pnpm.discovery.finder")
 
 local M = {}
 

@@ -1,6 +1,6 @@
-local version = require("cook_pnpm.version")
+local version = require("cook_pnpm.toolchain.version")
 
-describe("cook_pnpm.version", function()
+describe("cook_pnpm.toolchain.version", function()
     it("parses simple semver", function()
         local v = version.parse("20.11.1")
         assert.equals(20, v.major)

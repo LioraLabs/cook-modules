@@ -1,3 +1,8 @@
+-- cook_pnpm.discovery.finder — registers pnpm:find:<tool> probes and returns sigil records
+-- domain:  discovery — registers probes (workspace facts, tool finders); facts in, no work units
+-- effects: cook.probe
+-- std:     §12.7
+--
 -- pnpm.find — cc.find-style locator for JS dev tools.
 --
 -- Strategies, in order: project-registered finder, `node_modules/.bin/<tool>`,

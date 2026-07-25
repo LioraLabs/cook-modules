@@ -50,8 +50,8 @@ describe("cook_pnpm 0.3 default inputs + workspace minting", function()
                 package.loaded[k] = nil
             end
         end
-        workspace = require("cook_pnpm.workspace")
-        tasks     = require("cook_pnpm.tasks")
+        workspace = require("cook_pnpm.discovery.workspace")
+        tasks     = require("cook_pnpm.units.tasks")
     end)
 
     it("defaults a check's inputs to the package tree minus batch-declared outputs", function()
@@ -141,9 +141,9 @@ describe("cook_pnpm 0.3 default inputs + workspace minting", function()
         tasks.mint_from_workspace({ tasks = { build = { outputs = { "dist/**" } } } })
         tasks.task("typecheck", { inputs = { "src/**" } })
 
-        assert.equals("cook_pnpm.workspace",
+        assert.equals("cook_pnpm.discovery.workspace",
             stub.recipes()["@scope/web:build"].opts.origin)
-        assert.equals("cook_pnpm.workspace",
+        assert.equals("cook_pnpm.discovery.workspace",
             stub.recipes()["@scope/web:test"].opts.origin)
         assert.equals("cook_pnpm.task",
             stub.recipes()["@scope/web:typecheck"].opts.origin)
