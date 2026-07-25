@@ -4,6 +4,20 @@
 --
 -- Workspace bootstrap.
 --
+-- `packages:` entries may be positive globs or `!`-prefixed EXCLUSIONS, and
+-- both forms are honoured (0.7). pnpm applies exclusions to the fully
+-- expanded directory set, so list order carries no meaning — `!examples/blog-*`
+-- subtracts whether it appears before or after `examples/*`. Exclusions match
+-- the root-relative package DIRECTORY, never the glob strings.
+--
+-- Getting this wrong was silent: entries were previously anchored as positive
+-- patterns ("./!examples/blog-*/package.json"), which matches nothing, so the
+-- exclusion never fired and cook minted `<pkg>:<task>` recipes for packages
+-- pnpm does not consider part of the workspace — 40 of them on
+-- refinedev/refine. The same `!`-corrupted-by-anchoring shape the 0.5 inputs
+-- surface was hardened against; the difference is that here `!` is valid pnpm
+-- syntax to honour, not to reject.
+--
 -- Parses pnpm-workspace.yaml, then per-package package.json files,
 -- builds an in-memory graph keyed on package name, and registers the
 -- toolchain + install probes.
@@ -14,6 +28,11 @@
 local toolchain    = require("cook_pnpm.toolchain")
 local pkg_json     = require("cook_pnpm.discovery.probes.package_json")
 local install_prb  = require("cook_pnpm.discovery.probes.pnpm_install")
+-- Cross-domain require: units.globs is pure path/glob infrastructure with no
+-- domain allegiance (it registers nothing), and duplicating a glob matcher
+-- here would be worse than the layering wrinkle. No cycle — globs requires
+-- nothing.
+local globs        = require("cook_pnpm.units.globs")
 
 local M = {}
 
@@ -56,17 +75,54 @@ local function read_workspace_yaml(path)
     return packages
 end
 
-local function expand_globs(globs, root)
-    local dirs = {}
-    for _, g in ipairs(globs) do
+-- Split a pnpm `packages:` list into positive globs and `!` exclusions.
+-- pnpm applies exclusions to the whole expanded set regardless of where they
+-- appear in the list, so order carries no meaning here.
+local function partition(entries)
+    local includes, excludes = {}, {}
+    for _, g in ipairs(entries) do
+        if g:sub(1, 1) == "!" then
+            excludes[#excludes + 1] = g:sub(2)
+        else
+            includes[#includes + 1] = g
+        end
+    end
+    return includes, excludes
+end
+
+-- Expand the positive globs to package directories, then SUBTRACT anything
+-- matching an exclusion. Exclusions are directory patterns relative to the
+-- workspace root (`examples/blog-*`, `documentation`), matched against the
+-- root-relative form of each matched dir — not against the glob strings.
+-- Returns the surviving dirs plus how many matched BEFORE subtraction, so
+-- the caller can tell "globs matched nothing" from "exclusions ate
+-- everything".
+local function expand_globs(includes, excludes, root)
+    local pats = {}
+    for _, g in ipairs(excludes) do
+        pats[#pats + 1] = globs.glob_to_pattern(g)
+    end
+    local function excluded(dir)
+        local rel = globs.workdir_rel(dir, root)
+        for _, p in ipairs(pats) do
+            if rel:match(p) then return true end
+        end
+        return false
+    end
+
+    local dirs, matched = {}, 0
+    for _, g in ipairs(includes) do
         local pattern = root .. "/" .. g .. "/package.json"
         for _, m in ipairs(fs.glob(pattern)) do
             local dir = m:match("^(.+)/package.json$")
-            if dir then dirs[#dirs + 1] = dir end
+            if dir then
+                matched = matched + 1
+                if not excluded(dir) then dirs[#dirs + 1] = dir end
+            end
         end
     end
     table.sort(dirs)
-    return dirs
+    return dirs, matched
 end
 
 local function topo_sort(packages, by_name)
@@ -113,17 +169,29 @@ function M.bootstrap(opts)
     if opts.node then toolchain.set({ node = opts.node }) end
     if opts.pm   then toolchain.set({ pm   = opts.pm   }) end
 
-    local globs
+    local entries
     if type(opts.packages) == "table" then
-        globs = opts.packages
+        entries = opts.packages
     else
-        globs = read_workspace_yaml(root .. "/pnpm-workspace.yaml")
+        entries = read_workspace_yaml(root .. "/pnpm-workspace.yaml")
+    end
+    -- `!` exclusions are honoured on both sources: pnpm-workspace.yaml and
+    -- an explicit workspace{packages={...}} list.
+    local includes, excludes = partition(entries)
+    if #includes == 0 then
+        error("[pnpm.workspace] the package list declares only `!` exclusions "
+              .. "and no positive globs: " .. table.concat(entries, ", "), 2)
     end
 
-    local dirs = expand_globs(globs, root)
+    local dirs, matched = expand_globs(includes, excludes, root)
     if #dirs == 0 then
+        if matched > 0 then
+            error("[pnpm.workspace] all " .. matched .. " matched package(s) "
+                  .. "were removed by `!` exclusions ("
+                  .. table.concat(excludes, ", ") .. ")", 2)
+        end
         error("[pnpm.workspace] no packages matched globs: "
-              .. table.concat(globs, ", "), 2)
+              .. table.concat(includes, ", "), 2)
     end
 
     local packages = {}
