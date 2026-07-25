@@ -168,4 +168,60 @@ describe("cc.compile_commands (top-level finalizer, CS-0149)", function()
         stub.run_register_complete()
         assert.equals(0, #fs_writes())
     end)
+
+    -- §28.3.11: the database and the compiler must agree BY CONSTRUCTION.
+    -- This module used to re-derive the object stem itself, so the two copies
+    -- disagreed about every source whose basename repeated and the emitted
+    -- database pointed at objects the build never produced. Assert agreement
+    -- against cc.compile's ACTUAL unit output, not against a literal — a
+    -- literal here would just be a third copy of the derivation.
+    it("names the same object path cc.compile actually emits", function()
+        local sources = {
+            "src/common/bignum.cpp",
+            "src/parser/bignum.cpp",
+            "src/storage/dictionary_compression.cpp",
+            "src/storage/dictionary/compression.cpp",
+            "src/foo.c",
+            "src/foo.cpp",
+        }
+
+        stub.set_sh_handler("__exists", function() return true end)
+        local cc = require("cook_cc.units.cc")
+        local from_compile = {}
+        for _, src in ipairs(sources) do
+            from_compile[src] = cc.compile(src, { target_name = "app" })
+        end
+
+        -- Every compile produced a distinct object (injectivity).
+        local seen = {}
+        for src, obj in pairs(from_compile) do
+            assert.is_nil(seen[obj], "object path collision on " .. src)
+            seen[obj] = src
+        end
+
+        stub.reset(); stub.install()
+        stub.set_sh_handler("pwd", function() return "/proj\n" end)
+        package.loaded["cook_cc.units.targets"] = nil
+        package.loaded["cook_cc.codegen.compile_db"] = nil
+
+        local tg = require("cook_cc.units.targets")
+        tg._known_list[#tg._known_list + 1] = "app"
+        cook.export("app", { compile_info = { sources = sources, compiler = "g++" } })
+
+        local cjson = require("cjson")
+        local db = require("cook_cc.codegen.compile_db")
+        db.write()
+        local entries
+        for _, u in ipairs(stub.added_units()) do
+            if u.kind == "fs.write" and u.path == "compile_commands.json" then
+                entries = cjson.decode(u.content)
+            end
+        end
+        assert.equals(#sources, #entries)
+        for _, e in ipairs(entries) do
+            local obj = e.command:match(" %-o (%S+) ")
+            assert.equals(from_compile[e.file], obj,
+                "compile_db disagrees with cc.compile on " .. e.file)
+        end
+    end)
 end)
