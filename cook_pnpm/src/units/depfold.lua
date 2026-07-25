@@ -29,6 +29,26 @@
 -- never go stale. Checks with no explicit depends_on default to
 -- {"^build"}: a typecheck reads dep artifacts (tsc -b loads dep .d.ts),
 -- so running it unordered against its producers is a race.
+--
+-- Artifact-class filtering (0.7): "over-invalidation is safe"
+-- holds for correctness but not for the VALUE of the fold. tsup/esbuild
+-- inline `sourcesContent`, so a comment-only edit upstream rewrites
+-- `dist/index.mjs.map` while leaving `dist/index.mjs` byte-identical —
+-- and a whole-directory fold re-keys every consumer on a sidecar none
+-- of them read. That silently cancels the content cutoff this module's
+-- headline advantage rests on. So the fold is filtered by artifact
+-- class: DEFAULT_NOT_CONSUMED subtracts sourcemaps, and a task's
+-- `consumes` replaces the filter outright when its layout is unusual.
+-- The filter narrows a FINGERPRINT, never the dep's declared outputs —
+-- the map is still built, still stored, still restored on a cache hit.
+--
+-- BUILD units only. A test unit's key folds every immediate-predecessor
+-- output unconditionally, engine-side (run.rs
+-- compute_ready_test_fingerprint step 1, from the predecessor's
+-- cache_meta.output_paths) — a surface no module input declaration can
+-- subtract from. So a check downstream of a sourcemap-emitting build
+-- still re-keys on the map; `consumes` on a check is a register-time
+-- error rather than a silent no-op, and the gap is tracked engine-side.
 
 local globs = require("cook_pnpm.units.globs")
 
@@ -103,16 +123,87 @@ function M.dep_output_dirs(dep_units, ctx)
     return dirs
 end
 
+-- Artifact classes never folded when a task states no `consumes` (see
+-- header). A sourcemap is by construction a debugging sidecar: no build
+-- step reads one, and every esbuild-family tool rewrites it on a
+-- comment-only edit. Basename globs, matched at any depth.
+M.DEFAULT_NOT_CONSUMED = { "*.map" }
+
+-- One `consumes` entry to a `find -name` operand. The accepted shape is
+-- a BASENAME glob, optionally written with a leading `**/` for people
+-- who think in path globs: "*.mjs", "**/*.d.ts", "index.js". Anything
+-- with an interior `/` is rejected rather than silently mis-anchored —
+-- `find -name` matches basenames, so a path-shaped entry would match
+-- nothing, which is the failure mode this whole issue exists to kill.
+local function basename_glob(g, label)
+    if type(g) ~= "string" then
+        error("[pnpm.task] consumes entry (" .. label .. ") must be a string, "
+              .. "got " .. type(g), 5)
+    end
+    if g:sub(1, 1) == "!" then
+        error("[pnpm.task] consumes entry '" .. g .. "' (" .. label .. ") is "
+              .. "negated — `consumes` is an allowlist of what the task READS, "
+              .. "not a subtraction; list the positive basename globs", 5)
+    end
+    local pat = g:match("^%*%*/(.+)$") or g
+    -- Braces are shell alternation, not glob: `find -name '*.{mjs,cjs}'`
+    -- matches the literal string and quietly folds NOTHING, which
+    -- under-keys the consumer — a stale-cache bug, strictly worse than
+    -- the over-invalidation this surface exists to fix. Loud, because a
+    -- filter that silently matches nothing is unobservable.
+    if pat:find("[{}]") then
+        error("[pnpm.task] consumes entry '" .. g .. "' (" .. label .. ") uses "
+              .. "brace alternation, which is shell expansion and not glob — "
+              .. "it would match nothing and silently fold no dependency "
+              .. "content. Write one entry per extension: "
+              .. "consumes = { \"*.mjs\", \"*.cjs\" }", 5)
+    end
+    if pat == "" or pat:find("/", 1, true) then
+        error("[pnpm.task] consumes entry '" .. g .. "' (" .. label .. ") is "
+              .. "path-shaped — this surface filters dependency artifacts by "
+              .. "BASENAME glob (\"*.mjs\", \"**/*.d.ts\"), matched at any "
+              .. "depth under the dep's output dirs. Brace alternation is not "
+              .. "glob: write one entry per extension.", 5)
+    end
+    if pat:find("'", 1, true) then
+        error("[pnpm.task] consumes entry '" .. g .. "' (" .. label .. ") "
+              .. "contains a single quote, which cannot be carried into the "
+              .. "depfile command safely", 5)
+    end
+    return pat
+end
+
+-- The `find` predicate selecting which dependency artifacts land in the
+-- depfile. An explicit `consumes` REPLACES the default (turbo-style: an
+-- explicit statement of what a task reads is the whole truth about it,
+-- not a delta on module policy), so a task that consumes maps can name
+-- them back in.
+function M.consumes_predicate(consumes, label)
+    if consumes and #consumes > 0 then
+        local ors = {}
+        for _, g in ipairs(consumes) do
+            ors[#ors + 1] = "-name '" .. basename_glob(g, label) .. "'"
+        end
+        return " \\( " .. table.concat(ors, " -o ") .. " \\)"
+    end
+    local nots = {}
+    for _, g in ipairs(M.DEFAULT_NOT_CONSUMED) do
+        nots[#nots + 1] = "! -name '" .. g .. "'"
+    end
+    return (#nots > 0) and (" " .. table.concat(nots, " ")) or ""
+end
+
 -- Shell fragment appended to a build command: one make-format rule
--- enumerating every file currently under the dep output dirs. `sort`
--- pins the line's byte content for a given file set; a missing dir (dep
+-- enumerating every file currently under the dep output dirs, filtered
+-- by `predicate` to the artifact classes the task consumes. `sort` pins
+-- the line's byte content for a given file set; a missing dir (dep
 -- produced nothing yet) contributes nothing rather than failing.
-function M.depfile_command(dirs, dpath)
+function M.depfile_command(dirs, dpath, predicate)
     local q = {}
     for i, d in ipairs(dirs) do q[i] = "'" .. d .. "'" end
     return "{ printf 'cook-pnpm-deps: '; find " .. table.concat(q, " ")
-        .. " -type f 2>/dev/null | LC_ALL=C sort | tr '\\n' ' '; echo; } > '"
-        .. dpath .. "'"
+        .. " -type f" .. (predicate or "") .. " 2>/dev/null | LC_ALL=C sort "
+        .. "| tr '\\n' ' '; echo; } > '" .. dpath .. "'"
 end
 
 return M

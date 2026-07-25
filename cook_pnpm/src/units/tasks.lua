@@ -56,6 +56,13 @@
 -- consulted-env surface (CS-0127), so `env` on a check is a
 -- register-time error and workspace-level env skips checks.
 --
+-- `consumes` (0.7, BUILD tasks only): basename globs naming the
+-- dependency artifact classes this task actually reads, filtering the
+-- dep-output content fold. Defaults to "everything but sourcemaps" —
+-- see units.depfold for why a whole-directory fold silently cancels the
+-- content cutoff. A check task declaring `consumes` is a register-time
+-- error: its predecessor outputs fold engine-side, out of module reach.
+--
 -- The input-set rules live in units.inputs, the subtraction rules in
 -- units.excludes, and the depends_on / output-folding rules in
 -- units.depfold.
@@ -146,6 +153,14 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
               .. "consulted-env surface; make it a build (declare outputs) or "
               .. "drop env", 3)
     end
+    if kind == "check" and cfg.consumes then
+        error("[pnpm.task] task '" .. task_name .. "' declares consumes but is "
+              .. "a check — a test unit's key folds every immediate-predecessor "
+              .. "output engine-side (§17.4 ready-time fingerprint), a surface "
+              .. "no module-declared input can subtract from, so the filter "
+              .. "would not bite. It applies to build tasks (declare outputs).",
+              3)
+    end
 
     -- Checks read dependency artifacts (tsc -b loads dep .d.ts), so an
     -- unordered check is a race; default the edge Turbo leaves implicit.
@@ -229,7 +244,14 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
                 for i, d in ipairs(dep_dirs) do
                     rel_dirs[i] = globs.workdir_rel(d, ctx.root)
                 end
-                command = command .. "&& " .. depfold.depfile_command(rel_dirs, dpath)
+                -- Fold only the artifact classes this task reads: a
+                -- sourcemap rewritten by a comment-only upstream edit
+                -- must not re-key a consumer that imports the (identical)
+                -- bundle — see units.depfold.
+                local predicate = depfold.consumes_predicate(
+                    cfg.consumes, "task '" .. task_name .. "'")
+                command = command .. "&& "
+                          .. depfold.depfile_command(rel_dirs, dpath, predicate)
                 discovered = { from = dpath, format = "make" }
             end
             -- Consulted env: workspace-level keys + per-task keys, in that

@@ -6,15 +6,18 @@ remote caching, cached test/lint results, watcher-driven incremental
 rebuilds, and a unified build graph with the rest of your stack (a wasm
 step, codegen, a Rust backend).
 
-**Status: v0.5 — input exclusions.** One `workspace()` call
-parses the workspace, mints every configured task (with Turbo-spelled
+**Status: v0.7 — workspace exclusions + dependency-fold filtering.** One
+`workspace()` call parses the workspace (honouring `pnpm-workspace.yaml`
+`!` exclusions), mints every configured task (with Turbo-spelled
 `"<pkg>#<task>"` per-package overrides), auto-mints conventional checks,
 defaults inputs safely, folds dependency-output CONTENT into every
-consumer's key (discovered-inputs depfiles on builds, ready-time glob
-inputs on checks), and lowers declared `env` keys to consulted-env
-folds. Shaped by the Cap port (Turborepo replaced on a 25-project
-workspace). Surface may still shift before the Standard chapter §29
-lands. Tracked in cliban under project `COOK`, milestone `cook_pnpm`.
+consumer's key — filtered to the artifact classes a task actually reads
+(discovered-inputs depfiles on builds, ready-time glob inputs on
+checks) — and lowers declared `env` keys to consulted-env folds. Shaped
+by the Cap port (Turborepo replaced on a 25-project workspace) and by
+refinedev/refine. Surface may still shift before the Standard chapter
+§29 lands. Tracked in cliban under project `COOK`, milestone
+`cook_pnpm parity`.
 
 ## Install
 
@@ -177,6 +180,69 @@ This generalises the module's own hardcoded exclusions (`*.tsbuildinfo`,
 the depfile): tool state is never an input; it self-invalidates
 otherwise.
 
+## What folds from a dependency: `consumes`
+
+A build task's key folds the **content** of the artifacts its workspace
+dependencies produced — that is the mechanism behind cook's headline
+advantage over Turborepo, which cascades on the upstream task's *input*
+hash instead. Rebuild a dependency to byte-identical output and every
+consumer stays cached.
+
+That only pays off if the folded set is the set the consumer actually
+reads. It usually isn't: **tsup and esbuild inline `sourcesContent` into
+sourcemaps**, so a comment-only edit upstream leaves `dist/index.mjs`
+byte-identical but rewrites `dist/index.mjs.map`. Folding the whole
+output directory re-keys every consumer on a sidecar none of them
+import, and the cutoff never fires.
+
+So sourcemaps are **never folded by default**. Nothing to configure:
+
+```
+tasks = {
+    build = { outputs = { "dist/**" }, depends_on = { "^build" } },
+}
+```
+
+`*.map` is excluded from the fold; every other artifact class still
+folds, so an unanticipated file type can never go stale. The filter
+narrows a *fingerprint* only — the map is still built, still stored,
+still restored on a cache hit.
+
+Declare `consumes` to state the classes a task reads outright. It
+**replaces** the default (turbo semantics — an explicit statement is the
+whole truth, not a delta on module policy), so a task that genuinely
+reads maps can name them back in:
+
+```
+tasks = {
+    build = {
+        outputs  = { "dist/**" },
+        depends_on = { "^build" },
+        consumes = { "*.mjs", "*.cjs", "**/*.d.ts" },
+    },
+}
+```
+
+Entries are **basename globs**, matched at any depth under the
+dependency's output dirs; a leading `**/` is accepted for people who
+think in path globs. Three shapes are register-time errors rather than
+silent no-ops, because a filter that matches nothing *under*-keys the
+consumer — a stale-cache bug, strictly worse than the over-invalidation
+this surface exists to fix:
+
+| Rejected | Why |
+|---|---|
+| `"*.{mjs,cjs}"` | brace alternation is shell expansion, not glob — `find -name` would match the literal string |
+| `"dist/esm/*.mjs"` | path-shaped; this surface matches basenames |
+| `"!*.map"` | `consumes` is an allowlist of what the task reads, not a subtraction |
+
+**Checks are not covered.** A test unit's key folds every
+immediate-predecessor output engine-side (§17.4 ready-time fingerprint,
+from the predecessor's declared outputs) — a surface no module-declared
+input can subtract from. A check downstream of a sourcemap-emitting
+build still re-keys on the map. `consumes` on a check is therefore a
+register-time error rather than a silent no-op.
+
 ## Negated input globs: rejected loudly
 
 A `!`-prefixed entry on any *inputs* surface (workspace `inputs`, task
@@ -264,8 +330,9 @@ descendants.
 | `cook_pnpm.find(tool)` / `find_or_error` / `register_finder` | JS dev-tool locators |
 
 Per-task opts: `inputs`, `outputs`, `depends_on`, `requires`,
-`kind = "build" | "check"`. Task keys: `"<task>"` (every declaring
-package) or `"<pkg>#<task>"` (that package only; replaces the base cfg).
+`exclude_inputs`, `env`, `consumes`, `kind = "build" | "check"`. Task
+keys: `"<task>"` (every declaring package) or `"<pkg>#<task>"` (that
+package only; replaces the base cfg).
 
 ## Migrating from 0.2
 
