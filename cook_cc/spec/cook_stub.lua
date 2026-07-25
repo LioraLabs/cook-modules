@@ -28,6 +28,7 @@ local pkg_responses = {}    -- name -> { cflags, libs, version, exists }
 local tool_responses = {}   -- "tool args" -> output
 local file_exists_set = {}  -- path -> bool
 local platform_os = "linux"
+local glob_results = {}       -- pattern -> array of absolute paths
 
 local current_recipe        = nil    -- name of the recipe body currently executing
 local known_recipe_names    = {}     -- name -> true, for cook.require_recipe validation
@@ -46,6 +47,7 @@ function M.reset()
     pkg_responses = {}
     tool_responses = {}
     file_exists_set = {}
+    glob_results = {}
     platform_os = "linux"
     probe_registrations = {}
     probe_values        = {}
@@ -89,6 +91,13 @@ end
 
 function M.set_tool_config_response(cmd, output)
     tool_responses[cmd] = output
+end
+
+-- Declare what a glob pattern matches. Values are stored as the engine
+-- delivers them: ABSOLUTE paths (see fs.glob's contract), so specs exercise
+-- the same normalisation a real run does.
+function M.set_glob(pattern, paths)
+    glob_results[pattern] = paths
 end
 
 function M.set_file_exists(path, exists)
@@ -304,7 +313,7 @@ function M.install()
             added_units[#added_units + 1] = { kind = "fs.write", path = p, content = content }
         end,
         mkdir_p = function() end,
-        glob    = function(_) return {} end,
+        glob    = function(pattern) return glob_results[pattern] or {} end,
     }
 
     _G.path = {
