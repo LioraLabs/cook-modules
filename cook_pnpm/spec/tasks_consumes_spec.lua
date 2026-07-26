@@ -125,18 +125,54 @@ describe("cook_pnpm 0.7 dependency-output fold filter", function()
         assert.error_matches(function() mint({ "!*.map" }) end, "negated")
     end)
 
-    it("rejects consumes on a check, where the fold is engine-side", function()
-        -- A test unit's key folds every immediate-predecessor output
-        -- engine-side (§17.4 ready-time fingerprint) — no module-declared
-        -- input can subtract from it, so accepting the filter here would
-        -- be a silent no-op.
+    -- Checks take the other half of the surface: `consumes` lowers to
+    -- cook.add_test{consumes}, which narrows the engine's
+    -- predecessor-output fold (§17.4 rule 1, CS-0175). Until an engine
+    -- carried that field the module rejected it outright, since accepting
+    -- it would have been a silent no-op.
+
+    local function mint_check(consumes)
         bootstrap_two_pkg_workspace()
         require("cook_pnpm.discovery.workspace").bootstrap({})
-        assert.error_matches(function()
-            tasks.mint_from_workspace({
-                tasks  = { typecheck = { kind = "check", consumes = { "*.d.ts" } } },
-                checks = false,
-            })
-        end, "would not bite")
+        require("cook_pnpm.units.tasks").mint_from_workspace({
+            tasks = {
+                build = { outputs = { "dist/**" }, depends_on = { "^build" } },
+                ["@scope/app#typecheck"] = { kind = "check", consumes = consumes },
+            },
+            checks = false,
+        })
+        for _, t in ipairs(stub.added_tests()) do
+            if t.command:find("run typecheck", 1, true) then return t end
+        end
+        return nil
+    end
+
+    it("lowers a check's consumes onto the test unit", function()
+        local t = mint_check({ "*.d.ts" })
+        assert.is_not_nil(t)
+        assert.same({ "*.d.ts" }, t.consumes)
+    end)
+
+    it("leaves consumes absent on a check that declares none", function()
+        -- Absent means "fold every predecessor output" engine-side, which
+        -- is the pre-CS-0175 behaviour and the safe default.
+        local t = mint_check(nil)
+        assert.is_not_nil(t)
+        assert.is_nil(t.consumes)
+    end)
+
+    it("still declares dep output dirs as check ingredients", function()
+        -- Mostly redundant since CS-0175 (the engine folds predecessor
+        -- outputs and skips already-counted declared inputs), but
+        -- dep_dirs spans the dep package's whole claimed-output union,
+        -- which can include a dir produced by a sibling task this check
+        -- does not require. Those files are not predecessor outputs, so
+        -- dropping the glob would stop keying on them entirely.
+        local t = mint_check(nil)
+        local found = false
+        for _, i in ipairs(t.inputs or {}) do
+            if i == "./pkgs/lib/dist/**/*" then found = true end
+        end
+        assert.is_true(found)
     end)
 end)

@@ -56,12 +56,23 @@
 -- consulted-env surface (CS-0127), so `env` on a check is a
 -- register-time error and workspace-level env skips checks.
 --
--- `consumes` (0.7, BUILD tasks only): basename globs naming the
--- dependency artifact classes this task actually reads, filtering the
--- dep-output content fold. Defaults to "everything but sourcemaps" —
--- see units.depfold for why a whole-directory fold silently cancels the
--- content cutoff. A check task declaring `consumes` is a register-time
--- error: its predecessor outputs fold engine-side, out of module reach.
+-- `consumes` (0.7): basename globs naming the dependency artifact
+-- classes this task actually reads, filtering the dep-output content
+-- fold — see units.depfold for why a whole-directory fold silently
+-- cancels the content cutoff. Both unit shapes honour it, by different
+-- machinery and with different defaults:
+--
+--   BUILD  filters the depfile `find` the module writes. Defaults to
+--          "everything but sourcemaps": a DENYLIST the module seeds.
+--   CHECK  lowers to `cook.add_test{consumes}` (§17.4 rule 1, CS-0175),
+--          which narrows the engine's predecessor-output fold. That
+--          surface is an ALLOWLIST, so the build side's default is not
+--          expressible on it — absent `consumes`, a check still folds
+--          every predecessor output, sourcemaps included.
+--
+-- The asymmetry is a gap, not a design: a check benefits only when its
+-- cfg names what it reads. Closing it needs an exclusion spelling on the
+-- engine surface.
 --
 -- The input-set rules live in units.inputs, the subtraction rules in
 -- units.excludes, and the depends_on / output-folding rules in
@@ -153,14 +164,12 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
               .. "consulted-env surface; make it a build (declare outputs) or "
               .. "drop env", 3)
     end
-    if kind == "check" and cfg.consumes then
-        error("[pnpm.task] task '" .. task_name .. "' declares consumes but is "
-              .. "a check — a test unit's key folds every immediate-predecessor "
-              .. "output engine-side (§17.4 ready-time fingerprint), a surface "
-              .. "no module-declared input can subtract from, so the filter "
-              .. "would not bite. It applies to build tasks (declare outputs).",
-              3)
-    end
+    -- `consumes` on a check lowers to cook.add_test{consumes} (§17.4 rule
+    -- 1, CS-0175). It was a register-time error while no engine could
+    -- honour it; the engine surface exists now, so it passes through. The
+    -- two spellings differ, and deliberately: a build's filter is a
+    -- DENYLIST the module seeds with sourcemaps, a check's is an ALLOWLIST
+    -- the engine matches positively. See the note in units.depfold.
 
     -- Checks read dependency artifacts (tsc -b loads dep .d.ts), so an
     -- unordered check is a race; default the edge Turbo leaves implicit.
@@ -282,6 +291,16 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
             unit_inputs[#unit_inputs + 1] = ctx.lockfile
             -- Dep artifacts as ready-time glob inputs (units.depfold): the
             -- ^build edge above guarantees they exist before resolution.
+            --
+            -- These are MOSTLY redundant since CS-0175 — the engine folds
+            -- predecessor outputs itself and skips any declared input
+            -- already in that set, so a `dist/**` producer's files arrive
+            -- either way. Kept because `dep_dirs` is the dep package's
+            -- whole claimed-output union, which can include a dir produced
+            -- by a sibling task this check does NOT require: those files
+            -- are not predecessor outputs, and dropping the glob would
+            -- silently stop keying on them. Over-folding is the safe
+            -- direction; under-keying replays a stale pass.
             for _, d in ipairs(dep_dirs) do
                 unit_inputs[#unit_inputs + 1] = d .. "/**/*"
             end
@@ -289,6 +308,13 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
                 command = "pnpm --filter " .. pkg.name .. " run " .. task_name,
                 suite   = pkg.name,
                 inputs  = unit_inputs,
+                -- Narrows which PREDECESSOR OUTPUTS fold (CS-0175). Absent
+                -- folds all of them. Note this cannot carry the build
+                -- side's default sourcemap exclusion: the engine surface is
+                -- an allowlist, and "everything except *.map" is not
+                -- expressible as one. A check only stops re-keying on
+                -- sourcemaps if its cfg names what it reads.
+                consumes = cfg.consumes,
                 line    = 0,
             })
         end

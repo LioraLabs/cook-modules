@@ -236,12 +236,40 @@ this surface exists to fix:
 | `"dist/esm/*.mjs"` | path-shaped; this surface matches basenames |
 | `"!*.map"` | `consumes` is an allowlist of what the task reads, not a subtraction |
 
-**Checks are not covered.** A test unit's key folds every
-immediate-predecessor output engine-side (§17.4 ready-time fingerprint,
-from the predecessor's declared outputs) — a surface no module-declared
-input can subtract from. A check downstream of a sourcemap-emitting
-build still re-keys on the map. `consumes` on a check is therefore a
-register-time error rather than a silent no-op.
+## `consumes` on checks
+
+Checks honour `consumes` too, but through different machinery and with a
+different default — worth knowing, because the difference is visible.
+
+A check is a test unit, and a test unit's key folds its predecessors'
+outputs engine-side. `consumes` on a check lowers to the engine's
+`cook.add_test{consumes}` (§17.4 rule 1, CS-0175), which narrows that
+fold. **This requires a cook engine carrying CS-0175**; on older engines
+the field is ignored.
+
+The catch is that the engine surface is an **allowlist** — it folds what
+you name — while the build-side default is a **denylist**, folding
+everything except sourcemaps. "Everything except `*.map`" cannot be
+spelled as an allowlist, so it is not the default for checks:
+
+| | build task | check task |
+|---|---|---|
+| no `consumes` | sourcemaps excluded | **everything folds**, sourcemaps included |
+| `consumes` declared | folds only what you name | folds only what you name |
+
+So an unconfigured check still re-keys when an upstream sourcemap
+changes, where an unconfigured build does not. Name what the check reads
+to close it:
+
+```
+tasks = {
+    typecheck = { consumes = { "*.d.ts" } },   -- tsc -b reads declarations
+}
+```
+
+The asymmetry is deliberate on the engine's side: narrowing a *test* key
+errs toward replaying a stale pass, so the engine narrows only to what a
+caller explicitly names rather than applying a default of its own.
 
 ## Negated input globs: rejected loudly
 
@@ -330,8 +358,8 @@ descendants.
 | `cook_pnpm.find(tool)` / `find_or_error` / `register_finder` | JS dev-tool locators |
 
 Per-task opts: `inputs`, `outputs`, `depends_on`, `requires`,
-`exclude_inputs`, `env`, `consumes`, `kind = "build" | "check"`. Task
-keys: `"<task>"` (every declaring package) or `"<pkg>#<task>"` (that
+`exclude_inputs`, `env`, `consumes` (builds and checks — see above),
+`kind = "build" | "check"`. Task keys: `"<task>"` (every declaring package) or `"<pkg>#<task>"` (that
 package only; replaces the base cfg).
 
 ## Migrating from 0.2

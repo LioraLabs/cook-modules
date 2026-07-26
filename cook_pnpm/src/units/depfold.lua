@@ -42,13 +42,22 @@
 -- The filter narrows a FINGERPRINT, never the dep's declared outputs —
 -- the map is still built, still stored, still restored on a cache hit.
 --
--- BUILD units only. A test unit's key folds every immediate-predecessor
--- output unconditionally, engine-side (run.rs
--- compute_ready_test_fingerprint step 1, from the predecessor's
--- cache_meta.output_paths) — a surface no module input declaration can
--- subtract from. So a check downstream of a sourcemap-emitting build
--- still re-keys on the map; `consumes` on a check is a register-time
--- error rather than a silent no-op, and the gap is tracked engine-side.
+-- The filter below is the BUILD-unit half, applied to the depfile `find`
+-- this module writes. A test unit's key folds predecessor outputs
+-- engine-side (run.rs compute_ready_test_fingerprint step 1), which no
+-- module input declaration can subtract from; CS-0175 added
+-- `cook.add_test{consumes}` for it, and units.tasks passes a check's cfg
+-- straight through.
+--
+-- The two halves are not symmetric. This one is a DENYLIST — everything
+-- folds except the classes named here — because a default must never
+-- drop an artifact class nobody anticipated. The engine's is an
+-- ALLOWLIST, matched positively, for the opposite reason: narrowing a
+-- test key errs toward replaying a stale pass, so the engine only
+-- narrows to what a caller explicitly names. Consequence worth knowing:
+-- "everything but sourcemaps" cannot be spelled on the engine surface,
+-- so an unconfigured check still re-keys on a dependency's maps while an
+-- unconfigured build does not.
 
 local globs = require("cook_pnpm.units.globs")
 
