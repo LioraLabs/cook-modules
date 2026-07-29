@@ -46,8 +46,8 @@
 -- this module writes. A test unit's key folds predecessor outputs
 -- engine-side (run.rs compute_ready_test_fingerprint step 1), which no
 -- module input declaration can subtract from; CS-0175 added
--- `cook.add_test{consumes}` for it, and units.tasks passes a check's cfg
--- straight through.
+-- `consumes` on the test unit (cook.add_unit, step_kind = "test" since
+-- CS-0185) for it, and units.tasks passes a check's cfg straight through.
 --
 -- The two halves are not symmetric. This one is a DENYLIST — everything
 -- folds except the classes named here — because a default must never

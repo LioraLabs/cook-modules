@@ -63,7 +63,7 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
             "outputs must be the literal workspace-anchored glob, NOT fs.glob-expanded")
     end)
 
-    it("mints a CHECK (cook.add_test) when outputs are absent", function()
+    it("mints a CHECK (step_kind test) when outputs are absent", function()
         bootstrap_two_pkg_workspace()
         workspace.bootstrap({})
         tasks.task("build", {})
@@ -74,7 +74,11 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
         assert.is_not_nil(web)
         assert.equals("pnpm --filter @scope/web run build", web.command,
             "check commands use plain pnpm — test commands get no probe substitution (CS-0127)")
-        assert.equals("@scope/web", web.suite)
+        assert.equals("test", web.step_kind)
+        assert.is_nil(web.suite,
+            "suite was removed with cook.add_test (CS-0185)")
+        assert.equals("@scope/web:build", web._recipe,
+            "the enclosing recipe names the test unit (CS-0185)")
     end)
 
     it("mints a CHECK when outputs = {}", function()

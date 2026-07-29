@@ -22,7 +22,8 @@ local probe_registrations = {}      -- key -> opts
 local cache_store         = {}      -- key -> any
 local export_store        = {}      -- name -> info
 local added_units         = {}
-local added_tests         = {}      -- cook.add_test captures (0.3 check units)
+local added_tests         = {}      -- add_unit(step_kind = "test") captures (CS-0185)
+local current_recipe      = nil     -- recipe body currently executing
 local recipes             = {}      -- name -> { opts, body_executed }
 local sh_handlers         = {}
 local pkg_responses       = {}
@@ -46,6 +47,7 @@ function M.reset()
     file_contents       = {}
     glob_table          = {}
     platform_os         = "linux"
+    current_recipe      = nil
 end
 
 function M.probe_keys()
@@ -83,11 +85,40 @@ function M.install()
         end,
         export = function(name, info) export_store[name] = info end,
         import = function(name) return export_store[name] end,
-        add_unit = function(u) added_units[#added_units + 1] = u end,
-        add_test = function(t) added_tests[#added_tests + 1] = t end,
+        -- Mirrors the engine's CS-0185 surface: a test unit registers
+        -- through add_unit with step_kind = "test"; suite and outputs are
+        -- register-time errors there, so they are errors here too.
+        add_unit = function(u)
+            if u.step_kind == "test" then
+                if u.suite ~= nil then
+                    error("[cook_stub] `suite` was removed with cook.add_test "
+                        .. "(CS-0185); the enclosing recipe names a test unit")
+                end
+                if u.outputs ~= nil and #u.outputs > 0 then
+                    error("[cook_stub] a step_kind = \"test\" unit declares no "
+                        .. "outputs (CS-0185)")
+                end
+                local has_cmd = u.command ~= nil and u.command ~= ""
+                local has_lua = u.lua_code ~= nil and u.lua_code ~= ""
+                if has_cmd == has_lua then
+                    error("[cook_stub] a step_kind = \"test\" unit requires "
+                        .. "exactly one of `command` or `lua_code` (CS-0185)")
+                end
+                u._recipe = current_recipe   -- attribution, spec-side only
+                added_tests[#added_tests + 1] = u
+            else
+                added_units[#added_units + 1] = u
+            end
+        end,
+        add_test = function()
+            error("[cook_stub] cook.add_test was removed (CS-0185); register "
+                .. "a test unit via cook.add_unit({ step_kind = \"test\" })")
+        end,
         recipe = function(name, opts, body_fn)
             recipes[name] = { opts = opts, body_executed = false }
+            current_recipe = name
             body_fn()
+            current_recipe = nil
             recipes[name].body_executed = true
         end,
         sh = function(cmd)

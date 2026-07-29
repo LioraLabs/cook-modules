@@ -1,6 +1,6 @@
 -- cook_pnpm.units.tasks — pnpm task minting: recipes, build units, check units
 -- domain:  units — builds commands and registers work on the engine
--- effects: cook.recipe, cook.add_unit, cook.add_test, fs.glob
+-- effects: cook.recipe, cook.add_unit, fs.glob
 -- std:     §8.6, §17.4, §17.1.2.1
 --
 -- Two unit shapes, inferred from declared outputs (override with
@@ -12,7 +12,8 @@
 --          outputs as package-anchored globs resolved post-execute
 --          (CS-0085), and restores them from the store on a hit.
 --
---   CHECK  (no outputs) — a test unit (`cook.add_test`). This is the
+--   CHECK  (no outputs) — a test unit (`cook.add_unit` with
+--          `step_kind = "test"`, CS-0185). This is the
 --          engine's sanctioned shape for pass/fail work (Standard §8.6,
 --          §17.4): the unit is fingerprinted over the CONTENT of its
 --          inputs + consumed predecessor outputs, a pass result is
@@ -64,7 +65,7 @@
 --
 --   BUILD  filters the depfile `find` the module writes. Defaults to
 --          "everything but sourcemaps": a DENYLIST the module seeds.
---   CHECK  lowers to `cook.add_test{consumes}` (§17.4 rule 1, CS-0175),
+--   CHECK  lowers `consumes` onto the test unit (§17.4 rule 1, CS-0175),
 --          which narrows the engine's predecessor-output fold. That
 --          surface is an ALLOWLIST, so the build side's default is not
 --          expressible on it — absent `consumes`, a check still folds
@@ -160,11 +161,12 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
     end
     if kind == "check" and cfg.env then
         error("[pnpm.task] task '" .. task_name .. "' declares env but is a "
-              .. "check — engine test units (cook.add_test, CS-0127) have no "
+              .. "check — engine test units (step_kind = \"test\", CS-0127/"
+              .. "CS-0185) have no "
               .. "consulted-env surface; make it a build (declare outputs) or "
               .. "drop env", 3)
     end
-    -- `consumes` on a check lowers to cook.add_test{consumes} (§17.4 rule
+    -- `consumes` on a check lowers onto the test unit (§17.4 rule
     -- 1, CS-0175). It was a register-time error while no engine could
     -- honour it; the engine surface exists now, so it passes through. The
     -- two spellings differ, and deliberately: a build's filter is a
@@ -304,9 +306,14 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
             for _, d in ipairs(dep_dirs) do
                 unit_inputs[#unit_inputs + 1] = d .. "/**/*"
             end
-            cook.add_test({
+            -- CS-0185: cook.add_test is gone; a test unit is an ordinary
+            -- work unit with step_kind = "test" and no outputs. `suite`
+            -- went with it — the ENCLOSING recipe (r_name, minted above)
+            -- names and groups the unit, which is strictly better than the
+            -- old free-floating suite string.
+            cook.add_unit({
+                step_kind = "test",
                 command = "pnpm --filter " .. pkg.name .. " run " .. task_name,
-                suite   = pkg.name,
                 inputs  = unit_inputs,
                 -- Narrows which PREDECESSOR OUTPUTS fold (CS-0175). Absent
                 -- folds all of them. Note this cannot carry the build
