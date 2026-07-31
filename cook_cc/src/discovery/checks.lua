@@ -41,7 +41,11 @@ local function opts_to_lua_literal(opts)
 end
 
 -- Build the produce body string for a given kind/name/opts.
-local function produce_body(kind, name, opts, extra_flag)
+-- `name` is the RAW name (the header path, function name, C type…) — it is
+-- what h.probe_c compiles. `san`/`fp` are the sanitised/fingerprint segments
+-- of the probe key; they double as the scratch-file stem so two checks of
+-- the same kind never race on one .c path (raw names may contain '/').
+local function produce_body(kind, name, opts, extra_flag, san, fp)
     local opts_lua    = opts_to_lua_literal(opts)
     local extra_lit   = extra_flag and string.format("%q", extra_flag) or "nil"
     local cc_key      = toolchain.get_probe_key()
@@ -52,13 +56,13 @@ local function produce_body(kind, name, opts, extra_flag)
         local NAME  = %q
         local OPTS  = %s
         local EXTRA = %s
+        local STEM  = %q
         local cc    = cook.probes.get(%s)
         if not cc then error("[cc.check] compiler probe not resolved: " .. %s) end
 
         local probe_dir = ".cook/probes/cc-check"
-        local fp        = h.fingerprint(OPTS)
-        local probe_c   = probe_dir .. "/" .. KIND .. "-" .. fp .. ".c"
-        local probe_out = probe_dir .. "/" .. KIND .. "-" .. fp .. ".out"
+        local probe_c   = probe_dir .. "/" .. STEM .. ".c"
+        local probe_out = probe_dir .. "/" .. STEM .. ".out"
         fs.mkdir_p(probe_dir)
         fs.write(probe_c, h.probe_c(KIND, NAME, OPTS))
 
@@ -71,13 +75,30 @@ local function produce_body(kind, name, opts, extra_flag)
             if run_ok then captured = out or "" else compile_ok = false end
         end
         return h.evaluate(KIND, compile_ok, captured)
-    ]], kind, name, opts_lua, extra_lit, cc_key_lit, cc_key_lit)
+    ]], kind, name, opts_lua, extra_lit, kind .. "-" .. san .. "-" .. fp,
+        cc_key_lit, cc_key_lit)
+end
+
+-- Strict probe-key <name> sanitiser. The sigil resolver in
+-- cli/crates/cook-luagen/src/resolver.rs splits "$<key.field>" at the
+-- first '.' after the colon section, so '.' MUST NOT appear in the
+-- <name> segment of a probe key. Allowed charset: [A-Za-z0-9_+-].
+-- KEY hygiene only — the raw name is what the probe body compiles.
+-- (Pre-0.18 the sanitised form leaked into the generated C, so
+-- has_header("stdint.h") probed `#include <stdint_h>` and every dotted
+-- header came back false.)
+local function sanitise_name(s)
+    return (s:gsub("[^%w%+%-_]", "_"))
 end
 
 local function register_check(kind, name, opts, extra_flag)
     toolchain.ensure_probe_registered()
-    local fp  = helpers.fingerprint(opts)
-    local key = "cc:check:" .. kind .. ":" .. name .. ":" .. fp
+    local san = sanitise_name(name)
+    -- The raw name folds into the fingerprint: the sanitised key segment is
+    -- lossy ("sys/stat.h" and "sys_stat.h" both sanitise to "sys_stat_h"),
+    -- so without it two distinct checks would collide on one probe key.
+    local fp  = helpers.fingerprint(opts, name)
+    local key = "cc:check:" .. kind .. ":" .. san .. ":" .. fp
     if M._registered[key] then
         return key
     end
@@ -86,37 +107,32 @@ local function register_check(kind, name, opts, extra_flag)
             requires = { toolchain.get_probe_key() },
             env      = { "PATH" },
         },
-        produce = produce_body(kind, name, opts, extra_flag),
+        produce = produce_body(kind, name, opts, extra_flag, san, fp),
     })
     M._registered[key] = true
     return key
 end
 
--- Strict probe-key <name> sanitiser. The sigil resolver in
--- cli/crates/cook-luagen/src/resolver.rs splits "$<key.field>" at the
--- first '.' after the colon section, so '.' MUST NOT appear in the
--- <name> segment of a probe key. Allowed charset: [A-Za-z0-9_+-].
-local function sanitise_name(s)
-    return (s:gsub("[^%w%+%-_]", "_"))
-end
+-- Every maker passes the RAW name through; register_check owns key hygiene
+-- (sanitise + fingerprint) and hands the raw name to the probe body intact.
 
 function M.has_header(name, opts)
-    local key = register_check("has-header", sanitise_name(name), opts or {})
+    local key = register_check("has-header", name, opts or {})
     return "$<" .. key .. ">"
 end
 
 function M.has_function(name, opts)
-    local key = register_check("has-function", sanitise_name(name), opts or {})
+    local key = register_check("has-function", name, opts or {})
     return "$<" .. key .. ">"
 end
 
 function M.has_define(name, opts)
-    local key = register_check("has-define", sanitise_name(name), opts or {})
+    local key = register_check("has-define", name, opts or {})
     return "$<" .. key .. ">"
 end
 
 function M.sizeof(type_name, opts)
-    local key = register_check("sizeof", sanitise_name(type_name), opts or {})
+    local key = register_check("sizeof", type_name, opts or {})
     return "$<" .. key .. ">"
 end
 
@@ -126,14 +142,12 @@ function M.endian()
 end
 
 function M.has_compile_flag(flag)
-    local name = sanitise_name(flag)
-    local key  = register_check("has-compile-flag", name, {}, flag)
+    local key = register_check("has-compile-flag", flag, {}, flag)
     return "$<" .. key .. ">"
 end
 
 function M.has_link_flag(flag)
-    local name = sanitise_name(flag)
-    local key  = register_check("has-link-flag", name, {}, flag)
+    local key = register_check("has-link-flag", flag, {}, flag)
     return "$<" .. key .. ">"
 end
 

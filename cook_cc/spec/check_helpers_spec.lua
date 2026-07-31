@@ -39,6 +39,19 @@ describe("cook_cc.discovery._check_helpers.fingerprint", function()
         local b = h.fingerprint({ system_libs = { "m", "pthread" } })
         assert.is_not.equals(a, b)
     end)
+
+    it("folds the raw check name in when given", function()
+        local h = reload()
+        local a = h.fingerprint({}, "sys/stat.h")
+        local b = h.fingerprint({}, "sys_stat.h")
+        assert.is_not.equals(a, b)
+    end)
+
+    it("omitting the name keeps the historical opts-only fingerprint", function()
+        local h = reload()
+        assert.equals(h.fingerprint({ standard = "c11" }),
+                      h.fingerprint({ standard = "c11" }, nil))
+    end)
 end)
 
 describe("cook_cc.discovery._check_helpers.probe_c", function()
@@ -56,6 +69,13 @@ describe("cook_cc.discovery._check_helpers.probe_c", function()
         local src = h.probe_c("has-function", "strdup", { includes = { "string.h" } })
         assert.matches("#include <string%.h>", src)
         assert.matches("strdup", src)
+    end)
+
+    it("has-function DEFINES __probe_ref — an extern declaration makes the link fail unconditionally", function()
+        local h = reload()
+        local src = h.probe_c("has-function", "strdup", { includes = { "string.h" } })
+        assert.is_nil(src:match("extern"))
+        assert.matches("void %(%*__probe_ref%)%(void%);", src)
     end)
 
     it("has-define emits an #ifndef … #error guard", function()

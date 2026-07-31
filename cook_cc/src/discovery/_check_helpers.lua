@@ -24,7 +24,11 @@ local function list_to_str(t)
     return table.concat(parts, ",")
 end
 
-function M.fingerprint(opts)
+-- `name` (optional) is the raw check subject — header path, function name,
+-- C type, flag. It folds into the hash because the probe-key <name> segment
+-- is sanitised (lossy): "sys/stat.h" and "sys_stat.h" would otherwise share
+-- a key. Omitting it keeps the historical opts-only fingerprint.
+function M.fingerprint(opts, name)
     opts = opts or {}
     local parts = {
         "std=" .. (opts.standard or ""),
@@ -34,6 +38,9 @@ function M.fingerprint(opts)
         "in=" .. list_to_str(opts.includes),
         "sl=" .. list_to_str(opts.system_libs),
     }
+    if name ~= nil then
+        parts[#parts + 1] = "nm=" .. name
+    end
     return fnv1a(table.concat(parts, "|"))
 end
 
@@ -53,8 +60,13 @@ function M.probe_c(kind, name, opts)
             .. "#include <" .. name .. ">\n"
             .. "int main(void){return 0;}\n"
     elseif kind == "has-function" then
+        -- __probe_ref is a DEFINITION, not extern: has-function is a link
+        -- kind, and an extern declaration left the symbol undefined, so the
+        -- probe link ALWAYS failed and every has_function came back false.
+        -- Taking the function's address still forces the linker to resolve
+        -- `name` against the default libraries, which is the actual check.
         return include_block(opts)
-            .. "extern void (*__probe_ref)(void);\n"
+            .. "void (*__probe_ref)(void);\n"
             .. "int main(void){__probe_ref = (void(*)(void))(void*)" .. name .. "; return 0;}\n"
     elseif kind == "has-define" then
         return include_block(opts)

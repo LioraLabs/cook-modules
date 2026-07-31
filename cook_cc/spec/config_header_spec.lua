@@ -49,26 +49,35 @@ describe("cook_cc.codegen.config_header register-phase behaviour", function()
         assert.same({}, units[1].probes or {})
     end)
 
-    it("emits a command invoking the renderer with the vars-literal", function()
+    it("emits a lua_code body that require()s the renderer BY MODULE NAME (no absolute path, no host lua)", function()
         local config_header = reload()
         config_header({ from = "raylib.h.in", to = "build/raylib.h", vars = { VERSION = "5.0", B = true } })
-        local cmd = stub.added_units()[1].command
-        assert.matches("config_header_renderer%.lua", cmd)
-        -- The literal scalars are baked into the vars-literal arg.
-        assert.matches("VERSION%s*=%s*\"5%.0\"", cmd)
-        assert.matches("B%s*=%s*true", cmd)
+        local unit = stub.added_units()[1]
+        assert.is_nil(unit.command)
+        local body = unit.lua_code
+        assert.matches('require%("cook_cc%.codegen%.config_header_renderer"%)', body)
+        -- No filesystem path may appear: an absolute renderer path in the
+        -- unit is a cache-key determinant that re-keys when the workspace
+        -- directory moves (CS-0196 portable identity).
+        assert.is_nil(body:match("config_header_renderer%.lua"))
+        -- The literal scalars are baked into the vars table, typed.
+        assert.matches("VERSION%s*=%s*\"5%.0\"", body)
+        assert.matches("B%s*=%s*true", body)
     end)
 
-    it("emits sigils verbatim inside the vars-literal arg (sigil expansion happens at execute)", function()
+    it("emits typed cook.probes.get reads for check sigils (values never round-trip through text)", function()
         local config_header = reload()
         local checks = require("cook_cc.discovery.checks")
         local sig = checks.has_header("stdint.h")
         config_header({ from = "raylib.h.in", to = "build/raylib.h", vars = { HAVE_STDINT_H = sig } })
-        local cmd = stub.added_units()[1].command
+        local body = stub.added_units()[1].lua_code
         local probe_key = sig:match("^%$<(.+)>$")
-        assert.is_true(cmd:find(sig, 1, true) ~= nil,
-                       "expected sigil " .. sig .. " in command, got: " .. cmd)
         assert.is_truthy(probe_key)
+        assert.is_true(body:find('cook.probes.get("' .. probe_key .. '")', 1, true) ~= nil,
+                       "expected typed probes.get read for " .. probe_key .. " in body, got: " .. body)
+        -- The raw $<...> sigil must NOT appear: this body is Lua, not a
+        -- command string, and the sigil pipeline does not run over it.
+        assert.is_nil(body:find(sig, 1, true))
     end)
 
     it("mints the support recipe with origin = cook_cc.codegen.config_header metadata", function()

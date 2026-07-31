@@ -63,6 +63,40 @@ describe("cook_cc.discovery.checks.has_header", function()
         local s = checks.has_header("stdint.h", { standard = "c11" })
         assert.equals(s, checks.has_header("stdint.h", { standard = "c11" }))
     end)
+
+    it("the produce body compiles the RAW header name, not the sanitised key segment", function()
+        local checks = reload()
+        checks.has_header("stdint.h")
+        local key
+        for _, k in ipairs(stub.probe_keys()) do
+            if k:match("^cc:check:has%-header:stdint_h:") then key = k end
+        end
+        local produce = stub.probe_opts(key).produce
+        -- The probe body must carry NAME = "stdint.h" — with the dot. The
+        -- pre-0.18 regression handed it "stdint_h" and generated
+        -- `#include <stdint_h>`, so every dotted header probed false.
+        assert.matches('NAME%s+=%s+"stdint%.h"', produce)
+        assert.is_nil(produce:match('NAME%s+=%s+"stdint_h"'))
+    end)
+
+    it("scratch-file stem is the sanitised name (raw names may contain '/')", function()
+        local checks = reload()
+        checks.has_header("sys/stat.h")
+        local key
+        for _, k in ipairs(stub.probe_keys()) do
+            if k:match("^cc:check:has%-header:sys_stat_h:") then key = k end
+        end
+        assert.is_not_nil(key)
+        local produce = stub.probe_opts(key).produce
+        assert.matches('STEM%s+=%s+"has%-header%-sys_stat_h%-[0-9a-f]+"', produce)
+    end)
+
+    it("two raw names that sanitise identically get DIFFERENT probe keys", function()
+        local checks = reload()
+        local a = checks.has_header("sys/stat.h")
+        local b = checks.has_header("sys_stat.h")
+        assert.is_not.equals(a, b)
+    end)
 end)
 
 describe("cook_cc.discovery.checks.has_function", function()

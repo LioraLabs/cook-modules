@@ -14,33 +14,20 @@ local state = { headers = {}, target_registered = false }
 function M.mark_target_registered() state.target_registered = true end
 function M.get_headers()            return state.headers            end
 
-local function renderer_path()
-    local p = package.searchpath("cook_cc.codegen.config_header_renderer", package.path)
-    if p then return p end
-    -- The renderer ships next to this file; derive from our own source
-    -- location when package.path can't map the module name (source-tree
-    -- layouts, e.g. under busted).
-    local self = debug.getinfo(1, "S").source:match("^@(.*)$")
-    if self then
-        local sibling = self:gsub("config_header%.lua$", "config_header_renderer.lua")
-        local f = io.open(sibling, "r")
-        if f then f:close(); return sibling end
-    end
-    error("[cc.config_header] cannot locate cook_cc.codegen.config_header_renderer on package.path", 2)
-end
-
-local function shell_quote(s)
-    -- Single-quote and escape any embedded single quotes.
-    return "'" .. (s:gsub("'", "'\\''")) .. "'"
-end
-
 local function value_to_lua_literal(v)
     local t = type(v)
     if t == "string" then
         local probe = v:match("^%$<(cc:check:.+)>$")
         if probe then
-            -- Sigil — emit verbatim so the sigil pipeline expands it.
-            return v, probe
+            -- Check sigil — emit a typed cook.probes.get read for the
+            -- execute-phase body. The probe key ALSO goes on the unit's
+            -- `probes` list (the DAG edge + fingerprint fold); reading the
+            -- value in Lua keeps its type: a boolean stays a boolean, a
+            -- sizeof stays a number, and a string check (endian) stays a
+            -- string. The old shell path rendered the value as bare text
+            -- inside a Lua table literal, where any string value produced
+            -- an invalid literal.
+            return 'cook.probes.get("' .. probe .. '")', probe
         end
         return string.format("%q", v), nil
     elseif t == "boolean" or t == "number" then
@@ -104,17 +91,25 @@ function M.config_header(opts)
     local output   = opts.to
     local vars      = opts.vars or {}
     local vars_literal, probes = build_vars_literal(vars)
-    local cmd = "lua " .. renderer_path()
-        .. " " .. template
-        .. " " .. output
-        .. " " .. shell_quote(vars_literal)
+    -- The unit is a Lua-code unit (§22.1): the body require()s the renderer
+    -- by MODULE NAME on the worker VM, exactly as the cc:check produce
+    -- bodies require _check_helpers. The previous shape shelled out to
+    -- `lua <package.searchpath(...)>`, which baked the renderer's ABSOLUTE
+    -- path into the command string — a cache-key determinant — so the unit
+    -- re-keyed whenever the workspace directory moved (CS-0196 made every
+    -- other cook_cc unit portable) and it silently required a host `lua`
+    -- on PATH.
+    local body = "local r = require(\"cook_cc.codegen.config_header_renderer\")\n"
+        .. "r.render(" .. string.format("%q", template)
+        .. ", " .. string.format("%q", output)
+        .. ", " .. vars_literal .. ")"
     local recipe = recipe_name_for(output)
     cook.recipe(recipe, { origin = "cook_cc.codegen.config_header" }, function()
         cook.add_unit({
-            inputs  = { template },
-            output  = output,
-            command = cmd,
-            probes  = probes,
+            inputs   = { template },
+            output   = output,
+            lua_code = body,
+            probes   = probes,
         })
     end)
     local outdir = path.dir(output)
