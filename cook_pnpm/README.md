@@ -242,10 +242,11 @@ Checks honour `consumes` too, but through different machinery and with a
 different default — worth knowing, because the difference is visible.
 
 A check is a test unit, and a test unit's key folds its predecessors'
-outputs engine-side. `consumes` on a check lowers to the engine's
-`cook.add_test{consumes}` (§17.4 rule 1, CS-0175), which narrows that
-fold. **This requires a cook engine carrying CS-0175**; on older engines
-the field is ignored.
+outputs engine-side. `consumes` on a check lowers onto the test unit
+(`cook.add_unit{step_kind = "test", consumes}` — §17.4 rule 1, CS-0175,
+registration shape per CS-0185), which narrows that fold. **This
+requires a cook engine carrying CS-0175**; on older engines the field
+is ignored.
 
 The catch is that the engine surface is an **allowlist** — it folds what
 you name — while the build-side default is a **denylist**, folding
