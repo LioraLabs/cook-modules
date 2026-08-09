@@ -74,17 +74,25 @@ What it writes compiles and links as generated: `cook <name>` straight after
 `cook cc.add` builds the target.
 
 `cook cc.fmt` takes no arguments: it formats every `.c`, `.cc`, `.cpp`, `.cxx`,
-`.h`, `.hpp`, `.cppm` and `.ixx` under `src/`, `include/` and `tests/` in place,
-under the style the project's own `.clang-format` declares. A directory the
-project does not have is not an error; a sweep that finds nothing at all is.
+`.h`, `.hpp`, `.cppm` and `.ixx` under `src/`, `include/` and `tests/` in place.
+A directory the project does not have is not an error; a sweep that finds
+nothing at all is, and so is a project with no `.clang-format` of its own —
+`cc.fmt` formats to the style a project declares and will not pick one for it,
+which is why a first run in a project that never adopted clang-format refuses
+instead of reflowing every file to LLVM's defaults. A single line reading
+`BasedOnStyle: InheritParentConfig` is how a project inside a larger repository
+declares that it takes the repository's style. To keep a vendored tree under
+`src/` out of the sweep, list it in `.clang-format-ignore`, which excludes it
+from every clang-format the project runs and not just from this one.
 `CLANG_FORMAT` names the binary when the unsuffixed `clang-format` is not the
 one you want.
 
 These are module-registered chores (§22.12), so they appear in `cook menu`
 attributed to the module that offered them, and their bodies run only when
-invoked — never during an unrelated build (§7.6). The Cookfile is edited
-through the blessed structure-preserving editor (§22.13), so comments, spacing
-and field order elsewhere in the file are left byte-identical.
+invoked — never during an unrelated build (§7.6). Where a verb edits the
+Cookfile, as `cc.add` does, it goes through the blessed structure-preserving
+editor (§22.13), so comments, spacing and field order elsewhere in the file are
+left byte-identical; `cc.fmt` edits no Cookfile at all.
 
 Their source, and the contract for adding another, is `src/verbs/README.md`.
 
