@@ -30,6 +30,15 @@ local file_exists_set = {}  -- path -> bool
 local platform_os = "linux"
 local glob_results = {}       -- pattern -> array of absolute paths
 
+-- Verb surfaces (COOK-285). A cc.* chore reads and rewrites the project's
+-- own files, so the stub needs a filesystem with a memory rather than the
+-- write-only sink the maker specs were content with.
+local vfiles = {}                   -- path -> content; the virtual working tree
+local vdirs = {}                    -- path -> true, from fs.mkdir_p
+local module_calls = {}             -- recipe name -> { callee = , text = }
+local chore_registrations = {}      -- name -> { name, meta, body }, plus [n] order
+local splices = {}                  -- one entry per cook.cookfile.splice_field call
+
 local current_recipe        = nil    -- name of the recipe body currently executing
 local known_recipe_names    = {}     -- name -> true, for cook.require_recipe validation
 local recipe_names_list     = {}     -- array of registered recipe names, registration order
@@ -59,6 +68,100 @@ function M.reset()
     dep_order_edges_list      = {}
     register_complete_queue   = {}
     step_group_log            = {}
+    vfiles                    = {}
+    vdirs                     = {}
+    module_calls              = {}
+    chore_registrations       = {}
+    splices                   = {}
+end
+
+-- ---------------------------------------------------------------------------
+-- Virtual working tree
+-- ---------------------------------------------------------------------------
+
+-- Seed a file. `fs.exists`, `fs.read` and `cook.cookfile.*` all agree about it,
+-- which `set_file_exists` alone does not give: a verb that checks for a
+-- Cookfile and then reads it must see one story, not two.
+function M.set_file(path, content)
+    vfiles[path] = content
+end
+
+function M.file(path)
+    return vfiles[path]
+end
+
+function M.dirs()
+    local out = {}
+    for d in pairs(vdirs) do out[#out + 1] = d end
+    table.sort(out)
+    return out
+end
+
+-- Declare that `recipe` contains a module call, as cook.cookfile.find_call
+-- would report it. Absent recipes and recipes without one both answer nil,
+-- exactly as the engine's binding does (RecipeNotFound and NoModuleCall are
+-- both mapped to nil there).
+function M.set_module_call(recipe, call)
+    module_calls[recipe] = call
+end
+
+-- One record per cook.cookfile.splice_field call, in call order.
+function M.splices()
+    return splices
+end
+
+-- ---------------------------------------------------------------------------
+-- Module-registered chores (Standard §22.12)
+-- ---------------------------------------------------------------------------
+
+function M.chores()
+    return chore_registrations
+end
+
+function M.chore(name)
+    return chore_registrations[name]
+end
+
+-- Invoke a registered chore the way a `cook <name> <argv...>` dispatch does:
+-- bind argv against the declared `__params` and call the body with the single
+-- params table. Binding is modelled to the same strictness as the engine
+-- (§7.1.2) so a spec cannot pass against an invocation the engine rejects.
+function M.invoke_chore(name, argv)
+    local reg = chore_registrations[name]
+    if not reg then
+        error("[cook_stub] no chore registered as '" .. name .. "'")
+    end
+    argv = argv or {}
+    local params = {}
+    local i = 1
+    local absorbed = false
+    for _, p in ipairs((reg.meta or {}).__params or {}) do
+        if p.kind == "required" then
+            if argv[i] == nil then
+                error("[cook_stub] chore '" .. name .. "' requires parameter '" .. p.name .. "'")
+            end
+            params[p.name] = argv[i]; i = i + 1
+        elseif p.kind == "defaulted_string" then
+            if argv[i] ~= nil then params[p.name] = argv[i]; i = i + 1
+            else params[p.name] = p.default end
+        elseif p.kind == "variadic_plus" or p.kind == "variadic_star" then
+            local rest = {}
+            while argv[i] ~= nil do rest[#rest + 1] = argv[i]; i = i + 1 end
+            if p.kind == "variadic_plus" and #rest == 0 then
+                error("[cook_stub] chore '" .. name .. "' requires one or more values for '" .. p.name .. "'")
+            end
+            params[p.name] = rest
+            absorbed = true
+        else
+            error("[cook_stub] unsupported chore param kind '" .. tostring(p.kind) .. "'")
+        end
+    end
+    if not absorbed and argv[i] ~= nil then
+        error("[cook_stub] chore '" .. name .. "' takes "
+            .. #(((reg.meta or {}).__params) or {}) .. " parameter(s) but "
+            .. #argv .. " were supplied")
+    end
+    return reg.body(params)
 end
 
 function M.probe_keys()
@@ -268,6 +371,73 @@ function M.install()
                 error(err, 0)
             end
         end,
+        -- CS-0176 §22.12. The namespace rule is enforced here at the same
+        -- strictness as the engine, against cook_cc's identity (this stub is
+        -- cook_cc's, as its src searcher above already assumes): a spec must
+        -- not be able to green a chore name the engine would reject.
+        chore = function(name, meta, body)
+            if type(body) ~= "function" then
+                error("[cook_stub] cook.chore requires a body function", 2)
+            end
+            local prefix = name:match("^([^.]+)%.")
+            if not prefix or not name:find("%.") then
+                error("[cook_stub] cook.chore: '" .. name .. "' must be namespaced (try 'cc." .. name .. "')")
+            end
+            if prefix ~= "cc" and prefix ~= "cook_cc" then
+                error("[cook_stub] cook.chore: '" .. name .. "' claims namespace '" .. prefix
+                    .. "', but module 'cook_cc' may only register under 'cc' or 'cook_cc'")
+            end
+            if chore_registrations[name] then
+                error("[cook_stub] cook.chore: duplicate registration of '" .. name .. "'")
+            end
+            local reg = { name = name, meta = meta or {}, body = body }
+            chore_registrations[name] = reg
+            chore_registrations[#chore_registrations + 1] = reg
+        end,
+        -- CS-0179 §22.13. Failure is total: a request the engine could not
+        -- locate raises and leaves the file untouched, so the stub raises too
+        -- rather than answering nil and letting a verb spec pass on an edit
+        -- that would have aborted the real run.
+        cookfile = {
+            append = function(path, text)
+                local source = vfiles[path]
+                if source == nil then
+                    error("[cook_stub] cook.cookfile.append: " .. path .. ": no such file")
+                end
+                local trimmed = source:gsub("%s+$", "")
+                local body = text:gsub("%s+$", "")
+                vfiles[path] = (trimmed == "") and (body .. "\n") or (trimmed .. "\n\n" .. body .. "\n")
+                return true
+            end,
+            find_call = function(path, recipe)
+                if vfiles[path] == nil then
+                    error("[cook_stub] cook.cookfile.find_call: " .. path .. ": no such file")
+                end
+                return module_calls[recipe]
+            end,
+            -- Recorded, not simulated. The engine's splice is a byte-preserving
+            -- edit inside a located call span, and a Lua re-implementation of
+            -- that here would be a second opinion about the hard part rather
+            -- than a stand-in for it. What the stub CAN model faithfully is
+            -- when the call fails: no such file, no module call in that
+            -- recipe, no such field in its text.
+            splice_field = function(path, recipe, field, entry)
+                if vfiles[path] == nil then
+                    error("[cook_stub] cook.cookfile.splice_field: " .. path .. ": no such file")
+                end
+                local call = module_calls[recipe]
+                if not call then
+                    error("[cook_stub] cook.cookfile.splice_field: no module call in recipe '" .. recipe .. "'")
+                end
+                if not (call.text or ""):find(field .. "%s*=%s*{") then
+                    error("[cook_stub] cook.cookfile.splice_field: no field '" .. field
+                        .. "' in the module call in recipe '" .. recipe .. "'")
+                end
+                splices[#splices + 1] =
+                    { path = path, recipe = recipe, field = field, entry = entry }
+                return true
+            end,
+        },
         sh = function(cmd)
             local pkg = pkg_dispatch(cmd)
             if pkg ~= nil then return pkg end
@@ -300,19 +470,36 @@ function M.install()
 
     _G.fs = {
         exists = function(p)
+            if vfiles[p] ~= nil or vdirs[p] then return true end
+            -- A directory exists once something is in it, as it does on a real
+            -- filesystem — `fs.exists` is `Path::exists`, which is true for a
+            -- directory. Without this a verb's "is this path already taken?"
+            -- guard would be untestable.
+            local prefix = p:gsub("/$", "") .. "/"
+            for f in pairs(vfiles) do
+                if f:sub(1, #prefix) == prefix then return true end
+            end
+            for d in pairs(vdirs) do
+                if d:sub(1, #prefix) == prefix then return true end
+            end
             if file_exists_set[p] ~= nil then return file_exists_set[p] end
             local h = sh_handlers["__exists"]
             if h then return h(p) end
             return false
         end,
         read = function(p)
+            if vfiles[p] ~= nil then return vfiles[p] end
             local h = sh_handlers["__read"]
             return h and h(p) or ""
         end,
+        -- Still logged to added_units, which the codegen specs assert against,
+        -- and now also landed in the virtual tree so a later exists/read sees
+        -- what was written.
         write   = function(p, content)
             added_units[#added_units + 1] = { kind = "fs.write", path = p, content = content }
+            vfiles[p] = content
         end,
-        mkdir_p = function() end,
+        mkdir_p = function(p) vdirs[p] = true end,
         glob    = function(pattern) return glob_results[pattern] or {} end,
     }
 

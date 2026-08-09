@@ -54,6 +54,32 @@ set rather than walking a dependency graph, the database is complete by
 construction, including a target in no `links` closure at all (a
 dlopen'd plugin, say).
 
+## Project-management verbs
+
+`cook_cc` also registers chores you invoke directly, so a target can be added
+without hand-editing anything:
+
+```
+cook cc.add lib math    # src/math/math.cpp + include/math/math.hpp,
+                        # and a `recipe math` appended to the Cookfile
+cook cc.add bin game    # src/game/main.cpp, and a `recipe game`
+```
+
+`cook cc.add <kind> <name>` takes two positional arguments; there are no flags,
+because chore parameters are positional only (§7.1.1). It refuses — writing
+nothing — on an unknown kind, on a name the Cookfile grammar would reject, on a
+name some declaration already owns, and on a `src/<name>/` that already exists.
+What it writes compiles and links as generated: `cook <name>` straight after
+`cook cc.add` builds the target.
+
+These are module-registered chores (§22.12), so they appear in `cook menu`
+attributed to the module that offered them, and their bodies run only when
+invoked — never during an unrelated build (§7.6). The Cookfile is edited
+through the blessed structure-preserving editor (§22.13), so comments, spacing
+and field order elsewhere in the file are left byte-identical.
+
+Their source, and the contract for adding another, is `src/verbs/README.md`.
+
 ## Development
 
 ```sh
