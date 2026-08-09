@@ -11,6 +11,7 @@ verbs/
   init.lua      the registry: VERBS list + the phase guard
   _project.lua  shared, read-only: where the Cookfile is, what it declares, which target is which kind
   _report.lua   shared: the one shape every verb's errors and success lines take
+  new.lua       cc.new
   add.lua       cc.add
 ```
 

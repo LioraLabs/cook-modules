@@ -12,6 +12,7 @@ local M = {}
 -- Registration order is the order `cook menu` will tend to show them in;
 -- keep it the order a user meets them in, not alphabetical.
 local VERBS = {
+    "cook_cc.verbs.new",
     "cook_cc.verbs.add",
 }
 
