@@ -137,8 +137,8 @@ attributed to the module that offered them, and their bodies run only when
 invoked — never during an unrelated build (§7.6). Where a verb edits the
 Cookfile, as `cc.add` does, it goes through the blessed structure-preserving
 editor (§22.13), so comments, spacing and field order elsewhere in the file are
-left byte-identical; `cc.fmt` edits no Cookfile at all. Every verb that refuses
-refuses before its first write, so a refused command leaves the project exactly
+left byte-identical; `cc.fmt` edits no Cookfile at all. `cc.link` and `cc.need`
+refuse before their first write, so a refused edit leaves the Cookfile exactly
 as it found it.
 
 Their source, and the contract for adding another, is `src/verbs/README.md`.

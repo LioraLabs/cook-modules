@@ -329,6 +329,36 @@ describe("cc.need", function()
             assert.is_falsy(err:find("cc.link game game", 1, true))
         end)
 
+        -- The cases where the refusal comes from the ENGINE, mid-command,
+        -- rather than from a check this verb made first. `create_if_absent`
+        -- relaxes the absent field and nothing else (CS-0221), so each of
+        -- these still refuses — and each is one hand-written Cookfile away.
+        --
+        -- They are the reason the splice goes before the append: with the
+        -- writes the other way round, every one of these left a
+        -- `cook_cc.uses("sdl2")` behind in a command that failed.
+        it("writes no declaration when the engine refuses a bracketed needs key", function()
+            stub.set_module_call("game",
+                bin('cook_cc.bin({ sources = { "a.cpp" }, ["needs"] = { "gl" } })'))
+            local err = untouched("sdl2", "game")
+            assert.is_truthy(err:find("could not add 'sdl2'", 1, true))
+        end)
+
+        it("writes no declaration when the call has no argument table to add to", function()
+            stub.set_module_call("game", { callee = "cook_cc.bin", text = "cook_cc.bin(opts)" })
+            local err = untouched("sdl2", "game")
+            assert.is_truthy(err:find("could not add 'sdl2'", 1, true))
+        end)
+
+        it("writes no declaration when needs is there and is not a list", function()
+            -- This one refuses one step earlier than the other two: reading the
+            -- field is what raises, so the verb never reaches either write.
+            stub.set_module_call("game",
+                bin('cook_cc.bin({ sources = { "a.cpp" }, needs = deps })'))
+            local err = untouched("sdl2", "game")
+            assert.is_truthy(err:find("could not read needs in game", 1, true))
+        end)
+
         it("refuses before it probes, so a refusal registers nothing", function()
             pcall(run, "sdl2", "ghost")
             assert.same({}, stub.probe_keys())
@@ -414,6 +444,23 @@ describe("cc.need", function()
             assert.is_truthy(tostring(err):find("cc.need: could not resolve the cc:find:sdl2 probe", 1, true))
             assert.is_truthy(tostring(err):find("produce raised", 1, true))
             assert.is_falsy(tostring(err):find("runtime error:", 1, true))
+        end)
+
+        it("still hints at installing when a find_or_error project's probe raises on the miss", function()
+            -- A project that declared the dep with `find_or_error` asked for a
+            -- miss to be fatal, so it arrives as a raise rather than as a
+            -- `found = false` and never reaches the reporting path below. The
+            -- strategies come through inside the engine's own message; the
+            -- hint would not, so it is put back.
+            require("cook_cc.discovery.finder").find_or_error("ghostlib")
+            cook.probes.get = function()
+                error("[cc.find_or_error] could not locate 'ghostlib':\n"
+                    .. "  - pkg-config: miss (no such package)", 0)
+            end
+            local ok, err = pcall(run, "ghostlib", "game")
+            assert.is_false(ok)
+            assert.is_truthy(tostring(err):find("pkg-config: miss", 1, true))
+            assert.is_truthy(tostring(err):find("install ghostlib", 1, true))
         end)
 
         it("says so plainly when the probe resolves to nothing at all", function()

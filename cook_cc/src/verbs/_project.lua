@@ -252,6 +252,31 @@ function M.entries(verb, name, field)
         cook.cookfile.field_entries, path, name, field)
 end
 
+-- The target `name` names, or a refusal that names the ones that exist.
+--
+-- Two verbs edit a field inside an existing target's call and both have to
+-- decide the same thing about the same name, which is the case this module's
+-- preamble is about: answering it once is what keeps them from acquiring two
+-- subtly different ideas of what counts as an existing target.
+--
+-- A recipe that exists and is not a cook_cc target gets its own sentence. It is
+-- the one case where "no target named 'web'" reads as a contradiction — the
+-- user is looking at `recipe web` in the file they were just told does not have
+-- it — and the real answer is that these verbs only edit calls whose fields
+-- they understand.
+function M.require_target(verb, targets, name)
+    if targets[name] then return targets[name] end
+    local names = {}
+    for known in pairs(targets) do names[#names + 1] = known end
+    local hint = "known targets: " .. report.list(names)
+    local decl = M.declared(verb, name)
+    if decl then
+        report.fail(verb, "'" .. name .. "' is a " .. decl.keyword
+            .. ", but it does not build a cook_cc target", hint)
+    end
+    report.fail(verb, "no target named '" .. tostring(name) .. "' in this project", hint)
+end
+
 -- The name a list entry spells, or nil when it does not spell one.
 --
 -- Entries come back verbatim, so `"math"` and `'math'` both name math and both

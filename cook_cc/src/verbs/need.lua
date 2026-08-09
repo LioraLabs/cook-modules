@@ -28,9 +28,17 @@ local M = {}
 -- use the same word the Cookfile does.
 local FIELD = "needs"
 
--- App. A / the probe-key grammar's `PROBE_SEG`, which is what a dependency name
+-- `PROBE_SEG` as the ENGINE spells it — `cook_contracts::probe_key`,
+-- `[A-Za-z_][A-Za-z0-9_-]*` (CS-0201) — which is what a dependency name
 -- becomes: `sdl2` is the key `cc:find:sdl2` and the sigils
 -- `$<cc:find:sdl2.cflags>` the maker renders from a `needs` entry.
+--
+-- Narrower than what `cook.probe`'s string argument accepts, which is any
+-- non-empty string, and the narrowing is the point: a key outside this class
+-- can be declared and cannot then be named by a bare sigil, and a bare sigil is
+-- exactly what a `needs` entry turns into. `docs/authoring-guide.md` still
+-- gives the class as `[A-Za-z0-9_+-]`, from before COOK-408 unified five
+-- disagreeing spellings of it; the Rust grammar is the one that is applied.
 --
 -- It coincides with the declaration-name rule `_project.check_name` enforces,
 -- and it is not that rule. That one is a policy about names this layer will
@@ -38,34 +46,20 @@ local FIELD = "needs"
 -- are free to diverge.
 local DEP_PATTERN = "^[A-Za-z_][A-Za-z0-9_%-]*$"
 
-local function known(targets)
-    local names = {}
-    for name in pairs(targets) do names[#names + 1] = name end
-    return report.list(names)
+-- What to say when the machine does not have it. No package manager is named:
+-- which one is right depends on the machine, and this module's whole position
+-- on external dependencies is that it finds what is installed rather than
+-- installing anything (COOK-281). One function because both the reported miss
+-- and the raised one end with it.
+local function INSTALL_HINT(dep)
+    return "install " .. dep .. " and its development headers, then re-run to confirm"
 end
 
--- Refuse a name that is not a target of this project's, naming the ones that
--- are. Shaped as `cc.link`'s is, including the separate sentence for a recipe
--- that exists and builds something else: "no target named 'web'" reads as a
--- contradiction to someone looking at `recipe web` in the file they were just
--- told does not have it, and the real answer is that this verb only edits calls
--- whose fields it understands.
---
--- Unlike `cc.link` there is no kind check after it. All four makers accept
+-- Unlike `cc.link` there is no kind check on the target. All four makers accept
 -- `needs` (`units/targets.lua`: bin, lib, shared and headers each call
 -- `check_needs_declared`), because a header-only target's headers can include a
--- dependency's headers just as a program's sources can.
-local function require_target(targets, name)
-    if targets[name] then return targets[name] end
-    local declared = project.declared(VERB, name)
-    if declared then
-        report.fail(VERB, "'" .. name .. "' is a " .. declared.keyword
-            .. ", but it does not build a cook_cc target",
-            "known targets: " .. known(targets))
-    end
-    report.fail(VERB, "no target named '" .. tostring(name) .. "' in this project",
-        "known targets: " .. known(targets))
-end
+-- dependency's headers just as a program's sources can. So the whole of this
+-- verb's target question is `_project`'s, with nothing added on top.
 
 local function check_dep(dep)
     if type(dep) == "string" and dep:match(DEP_PATTERN) then return end
@@ -132,7 +126,19 @@ local function ask(dep, declared)
         -- for `error(msg, 0)`: the user's position is the command they typed.
         local detail = tostring(value):gsub("^runtime error: ", "")
         detail = detail:gsub("^[^%s:]*%.lua:%d+: ", "")
-        report.fail(VERB, "could not resolve the " .. key .. " probe: " .. detail)
+        -- One of these failures is not a broken probe: a project that declared
+        -- the dependency with `find_or_error` asked for a miss to be FATAL, so
+        -- its miss arrives here as a raise rather than below as a `found =
+        -- false`. The message it carries is already the list of strategies
+        -- tried; what it cannot carry is this verb's hint, so that is added
+        -- back and the exit stays non-zero, which is what the project asked
+        -- for.
+        local hint
+        if detail:find("could not locate", 1, true) then
+            hint = INSTALL_HINT(dep) .. "; this project declares " .. dep
+                .. " with find_or_error, so a miss is an error rather than a report"
+        end
+        report.fail(VERB, "could not resolve the " .. key .. " probe: " .. detail, hint)
     end
     return value
 end
@@ -155,7 +161,7 @@ function M.run(dep, target)
         report.fail(VERB, "this project declares no cook_cc targets",
             "add one with: cook cc.add bin game")
     end
-    require_target(targets, target)
+    project.require_target(VERB, targets, target)
 
     -- A name this project BUILDS is not an external dependency, and the verb
     -- for it is `cc.link`. Refusing beats probing: `needs` and `links` are
@@ -181,29 +187,37 @@ function M.run(dep, target)
     end
     -- Is a `cc:find:<dep>` probe already declared for this project?
     --
-    -- The authoritative question, not a text scan of the Cookfile, and it is
-    -- authoritative because `units/targets.lua`'s `check_needs_declared` — the
-    -- check that decides whether the edit this verb is about to make BUILDS —
-    -- asks this exact function. A scan would have to recognise `uses`, `find`
-    -- and `find_or_error`, in any spelling, across lines, possibly through a
+    -- Asked of the finder's registry rather than of the Cookfile's text,
+    -- because `units/targets.lua`'s `check_needs_declared` — the check that
+    -- decides whether the edit this verb is about to make BUILDS — asks this
+    -- exact function. A text scan would have to recognise `uses`, `find` and
+    -- `find_or_error`, in any spelling, across lines, possibly through a
     -- variable, and would be wrong in a different direction for each.
     --
-    -- It can answer this early because a chore body runs after the Cookfile's
-    -- top level has: the `uses` calls up there have already registered by the
-    -- time a dispatch reaches here.
+    -- What it assumes is that the declaration is at TOP LEVEL, which is the
+    -- documented shape (§28.2, and cook_cc's own README: "top-level calls made
+    -- before any recipe"). A chore body runs after the whole top-level chunk,
+    -- so a `uses` up there has certainly registered by now. A `find` written
+    -- INSIDE a recipe body is a different matter: bodies run in a topological
+    -- order this chore body is merely part of, so whether that registration
+    -- has happened yet depends on how the two names sort. Nothing here can fix
+    -- that from a chore, and the answer for a project in that shape is to hoist
+    -- the declaration, which is where it belongs anyway.
     local declared = finder.is_registered(dep)
 
-    -- The `uses` call goes in FIRST, and the order is the whole safety
-    -- argument. A `uses` line with no `needs` entry referring to it is inert:
-    -- it registers a probe nothing reads. A `needs` entry with no declaration
-    -- is `[cc.bin] needs "sdl2" is not declared`, which is a project that
-    -- stopped building. So if only one of the two writes lands, it must be
-    -- this one.
-    if not declared then
-        project.edit(VERB, "could not append to " .. cookfile,
-            cook.cookfile.append, cookfile, cc .. '.uses("' .. dep .. '")\n')
-    end
-
+    -- The splice goes FIRST, and the order is chosen on which failure is
+    -- reachable. `splice_field` still refuses four things `create_if_absent`
+    -- does not relax — a bracketed `["needs"]`, a field that is not a list, a
+    -- call with no `{ … }` argument table, a missing call — and every one of
+    -- them is a hand-written Cookfile away. `append`'s only failure is "no such
+    -- file", which `project.cookfile` excluded before any of this ran. Putting
+    -- the reachable refusal first is what keeps "a refusal leaves the Cookfile
+    -- byte-identical" true; the reverse order left a stray declaration behind
+    -- every time a splice was refused.
+    --
+    -- If the unreachable one does happen, the entry is in and its declaration
+    -- is not, so the diagnostic names both halves rather than reporting a
+    -- failed append and leaving the user to discover the rest.
     if not already then
         -- CS-0221: create the field where the target has none. Opt-in, because
         -- §22.13's default is that an absent field is a total failure — the
@@ -214,6 +228,20 @@ function M.run(dep, target)
         project.edit(VERB, "could not add '" .. dep .. "' to " .. target .. "'s " .. FIELD,
             cook.cookfile.splice_field, cookfile, target, FIELD,
             '"' .. dep .. '"', { create_if_absent = true })
+    end
+
+    if not declared then
+        -- Appended at the end of the file, after the recipes, which reads
+        -- oddly and is correct: the entire top-level chunk runs before any
+        -- recipe body does, so a declaration below a target still registers
+        -- before that target's body asks for it. `cc.new` relies on the same
+        -- fact for its `toolchain` call. There is no blessed way to insert
+        -- above a recipe, and inventing one would mean this verb re-rendering
+        -- a file §22.13 exists to stop it re-rendering.
+        project.edit(VERB, "'" .. dep .. "' is now in " .. target .. "'s " .. FIELD
+            .. ", but " .. cc .. '.uses("' .. dep .. '") could not be appended to '
+            .. cookfile .. ", without which the project will not load",
+            cook.cookfile.append, cookfile, cc .. '.uses("' .. dep .. '")\n')
     end
 
     if already then
@@ -264,16 +292,13 @@ function M.run(dep, target)
 
     report.state(dep .. " not found. tried:")
     for _, attempt in ipairs(result.tried or {}) do
-        local line = "  - " .. tostring(attempt.strategy) .. ": " .. tostring(attempt.outcome)
+        local line = "- " .. tostring(attempt.strategy) .. ": " .. tostring(attempt.outcome)
         if attempt.reason and attempt.reason ~= "" then
             line = line .. " (" .. attempt.reason .. ")"
         end
-        report.state(line)
+        report.detail(line)
     end
-    -- No package manager is named. Which one is right depends on the machine,
-    -- and this module's whole position on external dependencies is that it
-    -- finds what is installed rather than installing anything (COOK-281).
-    report.state("install " .. dep .. " and its development headers, then re-run to confirm")
+    report.state(INSTALL_HINT(dep))
     -- Not `try: cook <target>`: the target cannot link until the dependency is
     -- there, so the command worth offering is this one again.
     report.suggest(VERB .. " " .. dep .. " " .. target)

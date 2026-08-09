@@ -97,4 +97,15 @@ function M.state(text)
     M.emit("  " .. text)
 end
 
+-- One sub-line of a `state` line that has a list under it: the strategies a
+-- probe tried, and anything else shaped like it.
+--
+-- A row here rather than a caller writing `report.state("  - " .. …)`, for the
+-- reason `ACTIONS` is a closed list: an indent hand-rolled at a call site is
+-- how one verb's nested output ends up two spaces off another's, in the module
+-- whose whole job is that they match.
+function M.detail(text)
+    M.emit("    " .. text)
+end
+
 return M
