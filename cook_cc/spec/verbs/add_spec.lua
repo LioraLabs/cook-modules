@@ -106,6 +106,19 @@ describe("cc.add", function()
         end)
     end)
 
+    describe("a project that bound cook_cc under another name", function()
+        it("generates a call to the local that Cookfile actually binds", function()
+            -- §27.1.2's sanctioned way to patch a blessed module. Writing
+            -- `cook_cc.lib(...)` here would append a call to a global that
+            -- does not exist, and the next build would fail on a file this
+            -- verb had just written.
+            stub.set_file("Cookfile", "use cc ./vendor/cook_cc.lua\n")
+            run("lib", "math")
+            assert.is_truthy(stub.file("Cookfile"):find(
+                'recipe math\n    cc.lib({ dir = "src/math/"', 1, true))
+        end)
+    end)
+
     describe("output", function()
         it("names every file it created and the command to build it", function()
             local lines = {}
@@ -146,7 +159,7 @@ describe("cc.add", function()
 
         it("rejects a name the Cookfile grammar would reject", function()
             local err = refuse("lib", "2fast")
-            assert.is_truthy(err:find("cc.add: '2fast' is not a valid target name", 1, true))
+            assert.is_truthy(err:find("cc.add: '2fast' is not a name cc.add will create", 1, true))
         end)
 
         it("rejects a name that is already declared, naming the line", function()
@@ -175,10 +188,20 @@ describe("cc.add", function()
             assert.is_nil(stub.file("src/math/math.cpp"))
         end)
 
-        it("refuses when the scaffold directory is already there", function()
+        it("refuses when the source directory is already there", function()
             stub.set_file("src/math/other.cpp", "// mine\n")
             local err = refuse("lib", "math")
-            assert.is_truthy(err:find("cc.add: 'src/math/' already exists", 1, true))
+            assert.is_truthy(err:find("cc.add: 'src/math' already exists", 1, true))
+        end)
+
+        it("refuses when only the include directory is already there", function()
+            -- The refusal says it "will not write over anything it did not
+            -- make", and a lib writes two trees. Guarding one of them would
+            -- silently clobber somebody's header.
+            stub.set_file("include/math/math.hpp", "// mine\n")
+            local err = refuse("lib", "math")
+            assert.is_truthy(err:find("cc.add: 'include/math' already exists", 1, true))
+            assert.is_nil(stub.file("src/math/math.cpp"))
         end)
     end)
 end)

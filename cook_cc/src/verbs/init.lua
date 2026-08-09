@@ -1,6 +1,6 @@
--- cook_cc.verbs — the registry: every project-management chore cook_cc offers,
--- registered in one place
+-- cook_cc.verbs — the registry: every project-management chore cook_cc offers, registered in one place
 -- domain:  verbs — project-management commands the module registers
+-- phase:   register (chores can only be registered on the register-phase VM)
 -- effects: cook.chore
 -- std:     §22.12
 --

@@ -34,11 +34,8 @@ M.compile_commands = db.compile_commands
 M.checks           = checks
 M.config_header    = config_header.config_header
 
--- Project-management verbs (§22.12). Registered here, inside cook_cc's own
--- chunk, because that is the only window in which the engine can check a
--- module-registered chore's namespace against the module registering it —
--- a call made later, from a function this table returns, is rejected.
--- No-ops on a VM without `cook.chore`, which is every execute-phase VM.
+-- Project-management verbs (§22.12). The call belongs HERE, in cook_cc's own
+-- chunk, and the reasons are in `src/verbs/init.lua`.
 require("cook_cc.verbs").register()
 
 return M

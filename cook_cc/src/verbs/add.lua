@@ -1,6 +1,6 @@
--- cook_cc.verbs.add — `cook cc.add <kind> <name>`: scaffold a target's files
--- and register it as a recipe
+-- cook_cc.verbs.add — `cook cc.add <kind> <name>`: scaffold a target's files and register it
 -- domain:  verbs — project-management commands the module registers
+-- phase:   register (a verb body is register-phase Lua)
 -- effects: cook.chore; writes source files; appends to the Cookfile
 -- std:     §22.12, §22.13
 --
@@ -27,39 +27,40 @@ local M = {}
 -- guessed at, because a recipe pointing at files nobody wrote is worse than a
 -- refusal.
 --
--- A row returns `files` (path -> content, written in order via `order`) and
--- the `recipe` text to append.
+-- A row takes the name and the alias cook_cc is bound as, and returns the
+-- ordered `files` to write (`{ path, content }`, written in that order) and the
+-- `recipe` text to append. One list rather than an order plus a map: two
+-- structures keyed on the same paths have to be kept in agreement by hand, and
+-- a path present in one and missing from the other fails silently.
 local SCAFFOLDS = {}
 
-SCAFFOLDS.lib = function(name)
-    local guard = name:gsub("[^%w]", "_")
+SCAFFOLDS.lib = function(name, cc)
+    local ns = name:gsub("[^%w]", "_")
     return {
-        order = { "src/" .. name .. "/" .. name .. ".cpp",
-                  "include/" .. name .. "/" .. name .. ".hpp" },
         files = {
-            ["include/" .. name .. "/" .. name .. ".hpp"] = table.concat({
-                "#pragma once",
-                "",
-                "namespace " .. guard .. " {",
-                "",
-                "// Returns the answer this library was created to give.",
-                "int answer();",
-                "",
-                "}  // namespace " .. guard,
-                "",
-            }, "\n"),
-            ["src/" .. name .. "/" .. name .. ".cpp"] = table.concat({
+            { path = "src/" .. name .. "/" .. name .. ".cpp", content = table.concat({
                 '#include "' .. name .. "/" .. name .. '.hpp"',
                 "",
-                "namespace " .. guard .. " {",
+                "namespace " .. ns .. " {",
                 "",
                 "int answer() {",
                 "    return 42;",
                 "}",
                 "",
-                "}  // namespace " .. guard,
+                "}  // namespace " .. ns,
                 "",
-            }, "\n"),
+            }, "\n") },
+            { path = "include/" .. name .. "/" .. name .. ".hpp", content = table.concat({
+                "#pragma once",
+                "",
+                "namespace " .. ns .. " {",
+                "",
+                "// Returns the answer this library was created to give.",
+                "int answer();",
+                "",
+                "}  // namespace " .. ns,
+                "",
+            }, "\n") },
         },
         -- `dir` globs the directory recursively (§28.3.1.1), so every later
         -- file the author adds under it is picked up without a Cookfile edit.
@@ -73,16 +74,15 @@ SCAFFOLDS.lib = function(name)
         -- `export_includes` back to `includes`, so whatever `cc.link` wires up
         -- later can include this library's header with no further edit.
         recipe = "recipe " .. name .. "\n"
-            .. '    cook_cc.lib({ dir = "src/' .. name .. '/", includes = { "include" } })\n',
+            .. "    " .. cc .. '.lib({ dir = "src/' .. name .. '/", includes = { "include" } })\n',
     }
 end
 
-SCAFFOLDS.bin = function(name)
+SCAFFOLDS.bin = function(name, cc)
     local main = "src/" .. name .. "/main.cpp"
     return {
-        order = { main },
         files = {
-            [main] = table.concat({
+            { path = main, content = table.concat({
                 "#include <cstdio>",
                 "",
                 "int main() {",
@@ -90,20 +90,19 @@ SCAFFOLDS.bin = function(name)
                 "    return 0;",
                 "}",
                 "",
-            }, "\n"),
+            }, "\n") },
         },
         -- Named explicitly rather than globbed: a program is one entry point
         -- plus whatever it links, and `cc.link` is the verb that grows it.
         recipe = "recipe " .. name .. "\n"
-            .. '    cook_cc.bin({ sources = { "' .. main .. '" } })\n',
+            .. "    " .. cc .. '.bin({ sources = { "' .. main .. '" } })\n',
     }
 end
 
 local function accepted_kinds()
     local kinds = {}
-    for k in pairs(SCAFFOLDS) do kinds[#kinds + 1] = k end
-    table.sort(kinds)
-    return table.concat(kinds, ", ")
+    for kind in pairs(SCAFFOLDS) do kinds[#kinds + 1] = kind end
+    return report.list(kinds)
 end
 
 -- The body. Separated from `register` so it is reachable from a spec without
@@ -111,7 +110,9 @@ end
 --
 -- Every refusal happens before the first write. A verb that scaffolded two
 -- files and then discovered the name was taken would leave the project in a
--- state the user did not ask for and this verb cannot undo.
+-- state the user did not ask for and this verb cannot undo. That is why the
+-- existence check below covers every path the scaffold will write, not just
+-- the source directory: `include/<name>/<name>.hpp` is somebody's header too.
 function M.run(kind, name)
     local scaffold = SCAFFOLDS[kind]
     if not scaffold then
@@ -128,24 +129,29 @@ function M.run(kind, name)
             "pick another name, or edit that declaration yourself")
     end
 
-    local plan = scaffold(name)
-    local root = "src/" .. name
-    if fs.exists(root) then
-        report.fail(VERB, "'" .. root .. "/' already exists",
-            "cc.add creates a target's files; it will not write into a directory it did not make")
+    local plan = scaffold(name, project.alias(VERB))
+    for _, file in ipairs(plan.files) do
+        local dir = file.path:match("^(.*)/[^/]+$")
+        for _, taken in ipairs({ dir, file.path }) do
+            if fs.exists(taken) then
+                report.fail(VERB, "'" .. taken .. "' already exists",
+                    "cc.add creates a target's files; it will not write over anything it did not make")
+            end
+        end
     end
 
-    for _, path in ipairs(plan.order) do
-        fs.mkdir_p(path:match("^(.*)/[^/]+$"))
-        fs.write(path, plan.files[path])
-        report.did("created", path)
+    for _, file in ipairs(plan.files) do
+        fs.mkdir_p(file.path:match("^(.*)/[^/]+$"))
+        fs.write(file.path, file.content)
+        report.did("created", file.path)
     end
 
     -- §22.13: the blessed editor, which guarantees one blank line before the
     -- appended block and leaves every other byte of the file alone. Appending
     -- at end of file rather than splicing into a `register` block is
     -- deliberate for now — it cannot mangle what is already there.
-    cook.cookfile.append(cookfile, plan.recipe)
+    project.edit(VERB, "could not append to " .. cookfile,
+        cook.cookfile.append, cookfile, plan.recipe)
     report.did("updated", cookfile)
     report.suggest(name)
 end

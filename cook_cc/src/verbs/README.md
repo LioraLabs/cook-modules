@@ -49,6 +49,10 @@ end
   calls `require("cook_cc.verbs").register()` before its `return`. A chore
   registered later — from a function the module returned — is rejected, because
   the identity the prefix is checked against is only exact while the chunk runs.
+  That identity is a single value the loader sets on entry and clears on exit,
+  not a stack, so a plain `require` of a sibling file (what this directory does)
+  keeps it and a `cook.load_module` of another cook module from inside one of
+  these files would silently lose it. Do not load cook modules from `verbs/`.
 - **The body takes ONE table**, not one argument per parameter. Param kinds are
   `required`, `defaulted_string`, `defaulted_lua`, `variadic_plus`,
   `variadic_star` (§7.1.1); required ones must precede defaulted ones and a
@@ -69,7 +73,19 @@ diagnostic can say who refused:
 | `project.declared(verb, name)` | the declaration that already owns `name`, or nil |
 | `project.targets(verb)` | `name -> { kind, callee }` for recipes calling a cook_cc maker |
 | `project.check_name(verb, name)` | fails unless `name` is a legal undotted declaration name |
+| `project.alias(verb)` | the local this Cookfile binds cook_cc as — what a GENERATED call must say |
+| `project.edit(verb, what, fn, …)` | runs a `cook.cookfile.*` call, re-raising its failure in the verb's voice |
 | `project.KINDS` | the set of target-maker kinds: `bin`, `lib`, `shared`, `headers` |
+
+`alias` is the one that is easy to skip and wrong to skip. Reading the Cookfile
+tolerantly and then writing `cook_cc.lib(...)` into it regardless is the worst
+of the two: a project that patched the module with the path form (§27.1.2) gets
+an appended call to a global it never bound.
+
+`edit` exists because `cook.cookfile.*` raises on its own terms — an
+unparseable Cookfile arrives as `cook.cookfile.find_call: /abs/path/…`, which is
+a fine message from the engine and the wrong shape from a verb. It is the one
+way a verb bypasses `_report` without meaning to.
 
 `declared` is the duplicate-name check and `cook.cookfile.find_call` cannot
 replace it: find_call answers nil both for a recipe that does not exist and for
@@ -83,11 +99,16 @@ second `recipe math` and leave the author with a Cookfile that no longer parses.
 | `report.fail(verb, message, hint?)` | raises `cc.add: message` with the hint on an indented second line |
 | `report.did(action, subject)` | `  created  src/math/math.cpp` |
 | `report.suggest(command)` | a blank line, then `  try: cook math` |
+| `report.list(items)` | a set as a diagnostic renders it: sorted, comma-separated |
 | `report.emit` | the sink; `print` in production, replaced by specs |
 
 Say what happened in `did` lines and end with one `suggest`. Refuse through
 `fail` and never through a bare `error`, so that no verb invents a second
-diagnostic shape.
+diagnostic shape — `registry_spec` fails the suite if a verb calls `print`.
+
+`did`'s action must be one of `report.ACTIONS`; an unlisted one raises rather
+than sitting a character out of column. Adding an action is adding a row there,
+which is also how the column width stays correct.
 
 ## Rules a verb follows
 
@@ -105,7 +126,14 @@ diagnostic shape.
   `cook_cc.lib({ … })`, not `>> cook_cc.lib(…)`; CS-0134 reinstated bare
   module-call dispatch and removed `>>` from the language.
 - **What you scaffold must build unedited.** That is the milestone's whole
-  claim. Prove it end to end, not with specs alone.
+  claim. Prove it end to end, not with specs alone. `cc.add` shipped with an
+  `includes = { "include" }` its ticket did not ask for, because without it the
+  first `cook math` after `cook cc.add lib math` failed to compile — and only
+  the end-to-end run said so.
+- **`declared` sees the Cookfile's text, not the register pass.** A name minted
+  by a `register` block or another module is invisible to it. That gap is the
+  engine's to catch (it raises a collision), and it is the reason these verbs
+  refuse rather than merge when they find a name taken.
 
 ## Two things found the hard way
 

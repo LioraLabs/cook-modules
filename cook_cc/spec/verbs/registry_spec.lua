@@ -35,6 +35,27 @@ describe("verb registry", function()
         assert.has_no.errors(function() fresh().register() end)
     end)
 
+    it("keeps every verb's output going through _report", function()
+        -- `print` is available on the register VM, so nothing stops a verb
+        -- reaching past the shared sink and inventing its own output shape.
+        -- This is the guard that catches it, since a rule stated only in prose
+        -- is one four agents each discover the hard way.
+        local offenders = {}
+        for file in io.popen("ls src/verbs"):lines() do
+            if file:match("%.lua$") and file ~= "_report.lua" then
+                local handle = io.open("src/verbs/" .. file, "r")
+                local source = handle:read("a"); handle:close()
+                -- Strip comments before looking, so prose about print is fine.
+                for line in source:gmatch("[^\n]+") do
+                    if not line:match("^%s*%-%-") and line:find("print%s*%(") then
+                        offenders[#offenders + 1] = file .. ": " .. line
+                    end
+                end
+            end
+        end
+        assert.same({}, offenders)
+    end)
+
     it("does nothing when there is no cook table at all", function()
         local saved = _G.cook
         _G.cook = nil

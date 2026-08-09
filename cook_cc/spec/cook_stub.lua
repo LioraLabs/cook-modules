@@ -90,11 +90,65 @@ function M.file(path)
     return vfiles[path]
 end
 
-function M.dirs()
-    local out = {}
-    for d in pairs(vdirs) do out[#out + 1] = d end
-    table.sort(out)
-    return out
+-- Does `source` carry a top-level declaration of `recipe`? The engine locates
+-- one before it will answer anything about a recipe, so the stub does too.
+local function declares(source, recipe)
+    for text in ((source or "") .. "\n"):gmatch("([^\n]*)\n") do
+        for _, keyword in ipairs({ "recipe", "chore" }) do
+            local rest = text:match("^" .. keyword .. "[ \t\"](.*)$")
+            if rest then
+                if text:sub(#keyword + 1, #keyword + 1) == '"' then rest = '"' .. rest end
+                local name = rest:match('^%s*"([^"]*)"') or rest:match("^%s*([^%s:]+)")
+                if name == recipe then return true end
+            end
+        end
+    end
+    return false
+end
+
+-- Is `field` a key at the TOP LEVEL of the call's table argument, and is its
+-- value a `{ ... }` list? Returns `found, is_list`.
+--
+-- §22.13 makes three specific misses normative — a `field =` inside a comment,
+-- inside a string, or as the key of a NESTED table must not match — and calls
+-- out the nested case as the one whose result still parses and still looks
+-- like the file the author wrote. A plain `text:find(field .. "%s*=%s*{")`
+-- accepts all three, which would green a `cc.link` or `cc.need` the engine
+-- rejects. This tracks string state and brace depth so it does not.
+--
+-- It is a locator, not an editor: where the entry would land is the engine's
+-- business (`splice_field` is recorded, not simulated) and no Lua here tries
+-- to reproduce it.
+local function top_level_field(text, field)
+    local i, n = 1, #text
+    local depth, quote, in_comment = 0, nil, false
+    while i <= n do
+        local c = text:sub(i, i)
+        if in_comment then
+            if c == "\n" then in_comment = false end
+        elseif quote then
+            if c == "\\" then i = i + 1
+            elseif c == quote then quote = nil end
+        elseif c == '"' or c == "'" then
+            quote = c
+        elseif c == "-" and text:sub(i, i + 1) == "--" then
+            in_comment = true; i = i + 1
+        elseif c == "{" then
+            depth = depth + 1
+        elseif c == "}" then
+            depth = depth - 1
+        elseif depth == 1 then
+            -- Brace depth only, so `f({ … })` and `f{ … }` both put the
+            -- maker's own options at depth 1 and a nested table's keys at 2.
+            local before = i == 1 and "" or text:sub(i - 1, i - 1)
+            if not before:match("[%w_.]") then
+                local rest = text:match("^" .. field .. "%s*=%s*(.)", i)
+                if rest then return true, rest == "{" end
+            end
+        end
+        i = i + 1
+    end
+    return false, false
 end
 
 -- Declare that `recipe` contains a module call, as cook.cookfile.find_call
@@ -376,6 +430,13 @@ function M.install()
         -- cook_cc's, as its src searcher above already assumes): a spec must
         -- not be able to green a chore name the engine would reject.
         chore = function(name, meta, body)
+            -- The engine's signature is (String, LuaTable, LuaFunction). A nil
+            -- meta is not "no metadata", it is a load-time type error — and a
+            -- module that raises at load breaks every build of every project
+            -- that uses it, not just that one verb.
+            if type(meta) ~= "table" then
+                error("[cook_stub] cook.chore: metadata must be a table, got " .. type(meta))
+            end
             if type(body) ~= "function" then
                 error("[cook_stub] cook.chore requires a body function", 2)
             end
@@ -390,7 +451,7 @@ function M.install()
             if chore_registrations[name] then
                 error("[cook_stub] cook.chore: duplicate registration of '" .. name .. "'")
             end
-            local reg = { name = name, meta = meta or {}, body = body }
+            local reg = { name = name, meta = meta, body = body }
             chore_registrations[name] = reg
             chore_registrations[#chore_registrations + 1] = reg
         end,
@@ -410,9 +471,15 @@ function M.install()
                 return true
             end,
             find_call = function(path, recipe)
-                if vfiles[path] == nil then
+                local source = vfiles[path]
+                if source == nil then
                     error("[cook_stub] cook.cookfile.find_call: " .. path .. ": no such file")
                 end
+                -- The engine locates the recipe's declaration first and maps
+                -- RecipeNotFound to nil, so a declared module call for an
+                -- undeclared recipe is not a thing a spec should be able to
+                -- arrange.
+                if not declares(source, recipe) then return nil end
                 return module_calls[recipe]
             end,
             -- Recorded, not simulated. The engine's splice is a byte-preserving
@@ -429,9 +496,14 @@ function M.install()
                 if not call then
                     error("[cook_stub] cook.cookfile.splice_field: no module call in recipe '" .. recipe .. "'")
                 end
-                if not (call.text or ""):find(field .. "%s*=%s*{") then
+                local found, is_list = top_level_field(call.text or "", field)
+                if not found then
                     error("[cook_stub] cook.cookfile.splice_field: no field '" .. field
                         .. "' in the module call in recipe '" .. recipe .. "'")
+                end
+                if not is_list then
+                    error("[cook_stub] cook.cookfile.splice_field: field '" .. field
+                        .. "' in recipe '" .. recipe .. "' is not a { ... } list")
                 end
                 splices[#splices + 1] =
                     { path = path, recipe = recipe, field = field, entry = entry }
