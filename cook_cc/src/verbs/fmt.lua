@@ -74,6 +74,16 @@ local function binary()
     return found
 end
 
+-- The swept directories as a diagnostic names them, in the order they are
+-- searched. `report.list` sorts, which is right for a set of accepted values
+-- and wrong here: this is an itinerary, and reading it back in DIRS order is
+-- what lets someone check it against their own layout.
+local function dirs_phrase()
+    local out = {}
+    for _, dir in ipairs(DIRS) do out[#out + 1] = dir .. "/" end
+    return table.concat(out, ", ")
+end
+
 -- Every source the sweep covers, workspace-absolute and sorted.
 --
 -- One `fs.glob` call over every pattern (CS-0079), not one per directory: the
@@ -85,16 +95,6 @@ end
 -- Sorted because the command string is composed from this order, and an
 -- unsorted set makes the same project's run differ between machines that
 -- differ only in filesystem layout.
--- The swept directories as a diagnostic names them, in the order they are
--- searched. `report.list` sorts, which is right for a set of accepted values
--- and wrong here: this is an itinerary, and reading it back in DIRS order is
--- what lets someone check it against their own layout.
-local function dirs_phrase()
-    local out = {}
-    for _, dir in ipairs(DIRS) do out[#out + 1] = dir .. "/" end
-    return table.concat(out, ", ")
-end
-
 local function sources()
     local patterns = {}
     for _, dir in ipairs(DIRS) do
@@ -122,13 +122,16 @@ function M.run()
     end
 
     local prefix = quoted(clang_format) .. " -style=file -i"
-    local batch, size = {}, #prefix
+    local suffix = " 2>&1 || echo " .. FAILED
+    -- Both ends of the composed command count against the budget, so the
+    -- accounting starts at what a batch costs before its first path.
+    local overhead = #prefix + #suffix
+    local batch, size = {}, overhead
     local function flush()
         if #batch == 0 then return end
-        local ok, out = pcall(cook.sh,
-            prefix .. " " .. table.concat(batch, " ") .. " 2>&1 || echo " .. FAILED)
+        local ok, out = pcall(cook.sh, prefix .. " " .. table.concat(batch, " ") .. suffix)
         if ok and not out:find(FAILED, 1, true) then
-            batch, size = {}, #prefix
+            batch, size = {}, overhead
             return
         end
         -- A raise here is the engine's or the shell's rather than the
@@ -147,6 +150,9 @@ function M.run()
     end
     for _, file in ipairs(files) do
         local argument = quoted(file)
+        -- A batch of one is sent whatever it costs: a single path longer than
+        -- the budget cannot be split, and refusing it here would be this verb
+        -- declining to format a file for a reason of its own.
         if #batch > 0 and size + 1 + #argument > BATCH_BYTES then flush() end
         batch[#batch + 1] = argument
         size = size + 1 + #argument
@@ -163,11 +169,13 @@ end
 
 -- §22.12: called during cook_cc's own chunk evaluation, never later.
 --
--- No parameters, which §7.6 (CS-0218) is what makes safe: a chore body is
--- invoked only when the chore is the register pass's dispatch target or is
--- reachable from one, so a paramless formatter cannot run during a build of
--- something else. Before that rule this verb was the motivating example of why
--- it had to exist.
+-- It takes no parameters, and §7.6 (CS-0218) is what makes that safe: a chore
+-- body is invoked only when the chore is the register pass's dispatch target or
+-- is reachable from one, so a formatter that takes no arguments still cannot run
+-- during a build of something else. This verb was that rule's motivating
+-- example. An optional trailing path could be added later without breaking a
+-- single existing invocation, which is the reason it is not here now: the
+-- reversible choice is the smaller one.
 function M.register()
     cook.chore(VERB, {
         origin = "cook_cc.verbs.fmt",
