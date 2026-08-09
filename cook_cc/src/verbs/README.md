@@ -12,6 +12,7 @@ verbs/
   _project.lua  shared, read-only: where the Cookfile is, what it declares, which target is which kind
   _report.lua   shared: the one shape every verb's errors and success lines take
   add.lua       cc.add
+  link.lua      cc.link
 ```
 
 One file per verb, named for the verb. Shared helpers are underscore-prefixed
@@ -75,6 +76,8 @@ diagnostic can say who refused:
 | `project.check_name(verb, name)` | fails unless `name` is a legal undotted declaration name |
 | `project.alias(verb)` | the local this Cookfile binds cook_cc as — what a GENERATED call must say |
 | `project.edit(verb, what, fn, …)` | runs a `cook.cookfile.*` call, re-raising its failure in the verb's voice |
+| `project.entries(verb, name, field)` | the entries of a field's list, as written, or nil when there is no such field |
+| `project.entry_name(entry)` | the name an entry spells (`"math"` and `'math'` both spell math), or nil |
 | `project.KINDS` | the set of target-maker kinds: `bin`, `lib`, `shared`, `headers` |
 
 `alias` is the one that is easy to skip and wrong to skip. Reading the Cookfile
@@ -100,6 +103,7 @@ second `recipe math` and leave the author with a Cookfile that no longer parses.
 | `report.did(action, subject)` | `  created  src/math/math.cpp` |
 | `report.suggest(command)` | a blank line, then `  try: cook math` |
 | `report.list(items)` | a set as a diagnostic renders it: sorted, comma-separated |
+| `report.state(text)` | one uncolumned line of what the project now says: `  game links += math` |
 | `report.emit` | the sink; `print` in production, replaced by specs |
 
 Say what happened in `did` lines and end with one `suggest`. Refuse through
@@ -110,11 +114,33 @@ diagnostic shape — `registry_spec` fails the suite if a verb calls `print`.
 than sitting a character out of column. Adding an action is adding a row there,
 which is also how the column width stays correct.
 
+`state` is for a verb whose edit is INSIDE a module call, where `updated
+Cookfile` is the only `did` line available and says nothing about what changed
+in there. `cc.link` ends with `game links += math, sound` for that reason, and
+prints no `updated` line at all when it wrote nothing — a verb that says it
+updated a file it did not touch is worse than one that says less. When it wrote
+nothing it says `game links = math, sound` instead, because "is math linked" is
+the question that was being asked and the answer is yes.
+
+`entries` is idempotence, and it exists so no verb hand-rolls it. The obvious
+Lua answer to "is `math` already in `links`" is to search `find_call`'s text
+for `"math"`, and that matches inside `sources = { "src/math/main.cpp" }` — a
+skip that silently drops the edge the user asked for. `entry_name` answers nil
+for an entry that is not a string literal, so a comparison against a variable
+reference never matches and the verb adds a possibly-redundant entry rather
+than skipping a wanted one.
+
 ## Rules a verb follows
 
 - **Check everything before writing anything.** A verb that scaffolds two files
   and then finds the name is taken leaves a mess it cannot undo. Ordering is:
   validate arguments, locate the Cookfile, check for collisions, then write.
+  Order the checks among themselves too, so each diagnostic rests on a fact the
+  checks before it established: `cc.link` verifies that every name exists
+  before it decides which of them is a bin, because the swapped-order
+  suggestion copies the rest of the batch into a command the user is invited to
+  run, and a suggestion carrying an unchecked typo sends them round the loop
+  again.
 - **Never hand-roll a Cookfile edit.** `cook.cookfile.append` and
   `cook.cookfile.splice_field` (§22.13) preserve every byte outside the
   inserted range and fail totally when they cannot find what they were asked
@@ -145,20 +171,35 @@ why these verbs work at all. It is also why `verbs/init.lua` guards on
 `type(cook.chore) == "function"`: `cook_cc` is loaded on the execute VM too,
 and an unguarded registration kills every build.
 
-**`splice_field` needs the field to already be there.** Verified against a
-`cc.add`-generated recipe:
+**`splice_field` refuses an absent field unless you ask it not to.** By default
+it is §22.13's total failure:
 
 ```
 cook.cookfile.splice_field: … couldn't find 'links' in the cook_cc.bin call
 in recipe 'game' — add "math" to it manually
 ```
 
-That is §22.13 behaving correctly — failure is total and it will not insert a
-field speculatively. But it means `cc.link` (COOK-287) cannot splice into a
-target `cc.add` created, because `cc.add` emits no `links` field. The choice is
-COOK-287's to make and was deliberately left open here: either `cc.add` starts
-emitting `links = { }` on a `bin`, or `cc.link` handles the absent-field case
-itself. Do not discover this at the end.
+CS-0221 settled how a verb gets past that, and it was settled in the engine
+rather than by having `cc.add` emit an empty `links = { }`: a hand-written
+Cookfile has no such field either, so a verb that could only edit generated
+recipes would be close to useless. Pass the options table:
+
+```lua
+cook.cookfile.splice_field(cookfile, target, "links", '"math"',
+    { create_if_absent = true })
+```
+
+It relaxes exactly one case. A field that IS there and is not a list, a
+bracketed `["links"]` of the same name, a call with no `{ … }` argument table,
+a name that cannot be written as a table key, a missing recipe and a missing
+call are all still refused, and an unrecognised option key is an error rather
+than a silent "refuse". `cc.need` (COOK-289) is meant to make the same call
+with `"needs"`; nothing else about the primitive is `links`-specific.
+
+`spec/cook_stub.lua` models every one of those refusals, which it has to: a
+stub that reported "created" for a bracketed key would green a verb the engine
+stops, and for two of them the engine's refusal is the only thing between the
+author and a Cookfile that no longer loads.
 
 ## Testing
 

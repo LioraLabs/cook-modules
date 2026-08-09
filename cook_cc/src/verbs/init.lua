@@ -13,6 +13,7 @@ local M = {}
 -- keep it the order a user meets them in, not alphabetical.
 local VERBS = {
     "cook_cc.verbs.add",
+    "cook_cc.verbs.link",
 }
 
 -- Register every verb, if this VM can hold chores.

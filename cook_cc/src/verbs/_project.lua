@@ -38,10 +38,21 @@ local NAME_RULE =
 function M.edit(verb, what, fn, ...)
     local ok, result = pcall(fn, ...)
     if not ok then
-        -- The engine prefixes its own API name and an absolute path; keep the
+        -- The engine prefixes its own API name and an absolute path, and the
+        -- Lua host prefixes `runtime error: ` in front of both; keep the
         -- explanation, drop the lead-in that names a function the user never
-        -- called.
-        local detail = tostring(result):gsub("^[^:]*cook%.cookfile%.[%w_]+: ", "")
+        -- called and a path they are standing in.
+        --
+        -- Two patterns because the second is the fallback: an error raised
+        -- before the file was resolved carries no path to strip, and an
+        -- anchored pattern expecting one would leave the whole lead-in in
+        -- place. That is how the original single pattern failed — it anchored
+        -- `^[^:]*` at a string beginning `runtime error: `, whose colon it
+        -- could not cross, so it matched nothing and every engine message
+        -- reached the user raw.
+        local text = tostring(result)
+        local detail, hit = text:gsub("^.-cook%.cookfile%.[%w_]+: [^:]*: ", "", 1)
+        if hit == 0 then detail = text:gsub("^.-cook%.cookfile%.[%w_]+: ", "", 1) end
         report.fail(verb, what .. ": " .. detail)
     end
     return result
@@ -223,6 +234,35 @@ function M.check_name(verb, name)
         hint = "dotted names are not permitted at a declaration site; namespacing across Cookfiles uses `import`"
     end
     report.fail(verb, "'" .. tostring(name) .. "' is not a name " .. verb .. " will create", hint)
+end
+
+-- The entries of `field`'s list in `name`'s module call, as written, or nil
+-- when there is no such field (§22.13, CS-0221).
+--
+-- A verb asks this to be idempotent, and it asks the ENGINE rather than
+-- scanning `find_call`'s text itself. The obvious Lua answer to "is `math`
+-- already in `links`" is to search the call text for `"math"`, and that
+-- matches inside `sources = { "src/math/main.cpp" }` — a skip that silently
+-- drops the edge the user asked for. Locating a top-level key and splitting a
+-- list without tripping over a comma inside a nested table, a call, a string
+-- or a comment is the same work §22.13 already specifies for the write side.
+function M.entries(verb, name, field)
+    local path = M.cookfile(verb)
+    return M.edit(verb, "could not read " .. field .. " in " .. name,
+        cook.cookfile.field_entries, path, name, field)
+end
+
+-- The name a list entry spells, or nil when it does not spell one.
+--
+-- Entries come back verbatim, so `"math"` and `'math'` both name math and both
+-- have to be recognised — an author's Cookfile is not obliged to use the
+-- quoting these verbs generate. Anything else (an identifier, a table, a call)
+-- is a value this layer cannot resolve, and answering nil rather than guessing
+-- means a comparison against it never matches: the verb then adds an entry
+-- that may be redundant, which is a great deal better than silently skipping
+-- one the user asked for.
+function M.entry_name(entry)
+    return entry:match('^"([^"]*)"$') or entry:match("^'([^']*)'$")
 end
 
 return M

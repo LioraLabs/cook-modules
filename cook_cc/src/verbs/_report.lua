@@ -85,4 +85,16 @@ function M.list(items)
     return table.concat(sorted, ", ")
 end
 
+-- One line of "what the project now says", after the `did` lines and before
+-- the `suggest`: `  game links += math, sound, util`.
+--
+-- `did` cannot carry it. A verb that edits a field INSIDE a module call has
+-- only `updated  Cookfile` to point at, which is true and says nothing about
+-- what changed in there — and the whole reason to echo is so the user does not
+-- have to open the file to find out. Uncolumned on purpose: it is a sentence
+-- about the project, not another row in the actions table.
+function M.state(text)
+    M.emit("  " .. text)
+end
+
 return M
