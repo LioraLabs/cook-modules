@@ -14,6 +14,7 @@ verbs/
   new.lua       cc.new
   add.lua       cc.add
   link.lua      cc.link
+  need.lua      cc.need
   fmt.lua       cc.fmt
 ```
 
@@ -75,6 +76,7 @@ diagnostic can say who refused:
 | `project.declarations(verb)` | every top-level `recipe`/`chore`, as `{ name, keyword, line }`, in file order |
 | `project.declared(verb, name)` | the declaration that already owns `name`, or nil |
 | `project.targets(verb)` | `name -> { kind, callee }` for recipes calling a cook_cc maker |
+| `project.require_target(verb, targets, name)` | that target, or a refusal naming the ones that exist |
 | `project.check_name(verb, name)` | fails unless `name` is a legal undotted declaration name |
 | `project.alias(verb)` | the local this Cookfile binds cook_cc as — what a GENERATED call must say |
 | `project.edit(verb, what, fn, …)` | runs a `cook.cookfile.*` call, re-raising its failure in the verb's voice |
@@ -105,6 +107,7 @@ second `recipe math` and leave the author with a Cookfile that no longer parses.
 | `report.did(action, subject)` | `  created  src/math/math.cpp` |
 | `report.suggest(command)` | a blank line, then `  try: cook math` |
 | `report.list(items)` | a set as a diagnostic renders it: sorted, comma-separated |
+| `report.detail(text)` | one sub-line under a `state` line, indented a level further |
 | `report.state(text)` | one uncolumned line of what the project now says: `  game links += math` |
 | `report.emit` | the sink; `print` in production, replaced by specs |
 
@@ -157,13 +160,26 @@ than skipping a wanted one.
   claim. Prove it end to end, not with specs alone. `cc.add` shipped with an
   `includes = { "include" }` its ticket did not ask for, because without it the
   first `cook math` after `cook cc.add lib math` failed to compile — and only
-  the end-to-end run said so.
+  the end-to-end run said so. `cc.need` is the same lesson a second time: a
+  `needs` entry whose `cc:find` probe nothing declared is
+  `[cc.bin] needs "sdl2" is not declared`, so the verb writes the top-level
+  declaration as well, and writes it FIRST — a declaration nothing references
+  is inert, a reference nothing declared is a project that stopped building.
+- **Order two writes by which refusal is REACHABLE, not by which is worse.**
+  `cc.need` writes into a target's call and then appends a top-level
+  declaration, and reasoning only about consequences argued for the reverse.
+  `splice_field` still refuses four things `create_if_absent` does not relax,
+  every one of them a hand-written Cookfile away; `append`'s only failure is a
+  missing file, which `project.cookfile` has already excluded. With the append
+  first, each of those four refusals left a stray declaration in a command that
+  reported failure — and a refusal that edits the file is the one thing every
+  verb here promises not to do.
 - **`declared` sees the Cookfile's text, not the register pass.** A name minted
   by a `register` block or another module is invisible to it. That gap is the
   engine's to catch (it raises a collision), and it is the reason these verbs
   refuse rather than merge when they find a name taken.
 
-## Two things found the hard way
+## Found the hard way
 
 **`cook.cookfile` and `cook.chore` are register-phase only, and a surface chore
 cannot reach them.** A `chore` block's `>` and `>{ }` steps are execute-phase,
@@ -195,8 +211,19 @@ It relaxes exactly one case. A field that IS there and is not a list, a
 bracketed `["links"]` of the same name, a call with no `{ … }` argument table,
 a name that cannot be written as a table key, a missing recipe and a missing
 call are all still refused, and an unrecognised option key is an error rather
-than a silent "refuse". `cc.need` (COOK-289) is meant to make the same call
-with `"needs"`; nothing else about the primitive is `links`-specific.
+than a silent "refuse". `cc.need` makes the same call with `"needs"` and
+inherited it verbatim; nothing about the primitive is `links`-specific.
+
+**A verb CAN run a probe, and the read is what runs it.** CS-0219 made a
+register-phase `cook.probes.get` resolve a probe declared in this pass on
+demand — the same `cook_probe::eval` the executor runs, published to the same
+store — so `cc.need` declares `cc:find:<dep>` and then reads it, and the finder
+chain executes inside the chore body. Two things bound it. `io.popen` is
+blocked inside a `produce`, so a probe body reaches the system through
+`cook.sh`, which is what cook_cc's finders already do. And resolution is off on
+a discovery pass (`cook menu`, workspace member scans), where the read falls
+through to the module store and answers nil — a verb reading a probe should say
+what it found rather than index the result.
 
 `spec/cook_stub.lua` models every one of those refusals, which it has to: a
 stub that reported "created" for a bracketed key would green a verb the engine

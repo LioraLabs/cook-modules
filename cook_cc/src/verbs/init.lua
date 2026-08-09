@@ -15,6 +15,7 @@ local VERBS = {
     "cook_cc.verbs.new",
     "cook_cc.verbs.add",
     "cook_cc.verbs.link",
+    "cook_cc.verbs.need",
     "cook_cc.verbs.fmt",
 }
 

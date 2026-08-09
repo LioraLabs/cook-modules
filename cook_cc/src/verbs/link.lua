@@ -32,32 +32,13 @@ local FIELD = "links"
 local CAN_LINK  = { bin = true, lib = true, shared = true }
 local LINKABLE  = { lib = true, shared = true, headers = true }
 
-local function known(targets)
-    local names = {}
-    for name in pairs(targets) do names[#names + 1] = name end
-    return report.list(names)
-end
-
 -- Refuse a name that is not a target of this project's, naming the ones that
 -- are. Both positions ask it, and both want the same answer: a typo and a
 -- forgotten `cc.add` look identical from here, and the target list tells the
--- two apart better than either guess would.
---
--- A recipe that exists and is not a cook_cc target gets its own sentence. It
--- is the one case where "no target named 'web'" would be read as a
--- contradiction — the user is looking at `recipe web` in the file they were
--- told does not have it — and the real answer is that this verb only edits
--- calls whose fields it understands.
+-- two apart better than either guess would. `cc.need` asks the same question
+-- of the same table, which is why the answer lives in `_project`.
 local function require_target(targets, name)
-    if targets[name] then return targets[name] end
-    local declared = project.declared(VERB, name)
-    if declared then
-        report.fail(VERB, "'" .. name .. "' is a " .. declared.keyword
-            .. ", but it does not build a cook_cc target",
-            "known targets: " .. known(targets))
-    end
-    report.fail(VERB, "no target named '" .. tostring(name) .. "' in this project",
-        "known targets: " .. known(targets))
+    return project.require_target(VERB, targets, name)
 end
 
 -- The command the user probably meant, when they put the bin last.
