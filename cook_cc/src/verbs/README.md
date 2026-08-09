@@ -1,4 +1,4 @@
-Offers the project-management commands (`cook cc.add …`) that edit the user's own sources and Cookfile.
+Offers the project-management commands (`cook cc.new`, `cook cc.add …`, `cook cc.fmt`) that edit the user's own sources and Cookfile.
 
 Everything else in `cook_cc` runs because a Cookfile asked for a build. A verb
 runs because a person typed it, and it writes files they will read afterwards.
@@ -11,6 +11,7 @@ verbs/
   init.lua      the registry: VERBS list + the phase guard
   _project.lua  shared, read-only: where the Cookfile is, what it declares, which target is which kind
   _report.lua   shared: the one shape every verb's errors and success lines take
+  new.lua       cc.new
   add.lua       cc.add
   fmt.lua       cc.fmt
 ```

@@ -60,11 +60,32 @@ dlopen'd plugin, say).
 without hand-editing anything:
 
 ```
+cook cc.new             # scaffold a project around the Cookfile that is here
 cook cc.add lib math    # src/math/math.cpp + include/math/math.hpp,
                         # and a `recipe math` appended to the Cookfile
 cook cc.add bin game    # src/game/main.cpp, and a `recipe game`
 cook cc.fmt             # clang-format -i over src/, include/ and tests/
 ```
+
+`cook cc.new` is the first minute of a C++ project:
+
+```
+mkdir game && cd game
+cook modules install cook_cc     # writes the Cookfile and its `use cook_cc`
+cook cc.new                      # the toolchain call, build/run/test, sources
+cook build && cook run
+```
+
+It is in-place only — `cook modules install` is what creates a project, since
+the `cc.*` chores do not exist until something has loaded `cook_cc`. Around the
+Cookfile already there it writes `src/main.cpp`, `include/greet.hpp`, an
+assert-based `tests/main.cpp` with no framework to install, a `.clang-format`,
+and the managed `.gitignore` sections; into it, the `cook_cc.toolchain` call and
+the `build` recipe, `run` chore and `test` recipe. It refuses — writing nothing
+— when the Cookfile already declares `build`, `run` or `test`, when it already
+configures the toolchain, or when any of those sources exists. `.clang-format`
+is left alone rather than refused over: an existing one is the author's
+formatting policy.
 
 `cook cc.add <kind> <name>` takes two positional arguments; there are no flags,
 because chore parameters are positional only (§7.1.1). It refuses — writing
