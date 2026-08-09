@@ -12,6 +12,7 @@ verbs/
   _project.lua  shared, read-only: where the Cookfile is, what it declares, which target is which kind
   _report.lua   shared: the one shape every verb's errors and success lines take
   add.lua       cc.add
+  fmt.lua       cc.fmt
 ```
 
 One file per verb, named for the verb. Shared helpers are underscore-prefixed

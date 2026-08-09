@@ -572,7 +572,27 @@ function M.install()
             vfiles[p] = content
         end,
         mkdir_p = function(p) vdirs[p] = true end,
-        glob    = function(pattern) return glob_results[pattern] or {} end,
+        -- CS-0079 §25.8: the argument is a pattern or a sequence of patterns,
+        -- and the array form globs each in call order and concatenates the
+        -- per-pattern blocks in that order. Modelled rather than collapsed to
+        -- the single-string form because the order is observable — a caller
+        -- that hands the engine an array gets a result this stub must be able
+        -- to reproduce — and because a non-sequence argument is an error the
+        -- engine raises, not a miss it tolerates.
+        glob    = function(pattern)
+            if type(pattern) == "string" then return glob_results[pattern] or {} end
+            if type(pattern) ~= "table" then
+                error("fs.glob: pattern must be a string or an array of strings", 2)
+            end
+            local out = {}
+            for _, p in ipairs(pattern) do
+                if type(p) ~= "string" then
+                    error("fs.glob: pattern must be a string or an array of strings", 2)
+                end
+                for _, hit in ipairs(glob_results[p] or {}) do out[#out + 1] = hit end
+            end
+            return out
+        end,
     }
 
     _G.path = {
