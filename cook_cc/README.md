@@ -63,6 +63,7 @@ without hand-editing anything:
 cook cc.add lib math    # src/math/math.cpp + include/math/math.hpp,
                         # and a `recipe math` appended to the Cookfile
 cook cc.add bin game    # src/game/main.cpp, and a `recipe game`
+cook cc.fmt             # clang-format -i over src/, include/ and tests/
 ```
 
 `cook cc.add <kind> <name>` takes two positional arguments; there are no flags,
@@ -71,6 +72,13 @@ nothing — on an unknown kind, on a name the Cookfile grammar would reject, on 
 name some declaration already owns, and on a `src/<name>/` that already exists.
 What it writes compiles and links as generated: `cook <name>` straight after
 `cook cc.add` builds the target.
+
+`cook cc.fmt` takes no arguments: it formats every `.c`, `.cc`, `.cpp`, `.cxx`,
+`.h`, `.hpp`, `.cppm` and `.ixx` under `src/`, `include/` and `tests/` in place,
+under the style the project's own `.clang-format` declares. A directory the
+project does not have is not an error; a sweep that finds nothing at all is.
+`CLANG_FORMAT` names the binary when the unsuffixed `clang-format` is not the
+one you want.
 
 These are module-registered chores (§22.12), so they appear in `cook menu`
 attributed to the module that offered them, and their bodies run only when
