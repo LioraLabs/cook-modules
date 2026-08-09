@@ -4,8 +4,9 @@ local stub = require("cook_stub")
 local function fresh()
     for _, m in ipairs({
         "cook_cc.verbs", "cook_cc.verbs.add", "cook_cc.verbs.fmt",
-        "cook_cc.verbs.new", "cook_cc.verbs.link",
+        "cook_cc.verbs.new", "cook_cc.verbs.link", "cook_cc.verbs.need",
         "cook_cc.verbs._project", "cook_cc.verbs._report",
+        "cook_cc.discovery.finder",
     }) do package.loaded[m] = nil end
     return require("cook_cc.verbs")
 end
@@ -35,12 +36,17 @@ describe("verb registry", function()
         assert.is_truthy(stub.chore("cc.link"))
     end)
 
+    it("registers cc.need", function()
+        fresh().register()
+        assert.is_truthy(stub.chore("cc.need"))
+    end)
+
     it("registers every verb it knows about and nothing else", function()
         fresh().register()
         local names = {}
         for _, reg in ipairs(stub.chores()) do names[#names + 1] = reg.name end
         table.sort(names)
-        assert.same({ "cc.add", "cc.fmt", "cc.link", "cc.new" }, names)
+        assert.same({ "cc.add", "cc.fmt", "cc.link", "cc.need", "cc.new" }, names)
     end)
 
     it("does nothing on a VM with no cook.chore", function()

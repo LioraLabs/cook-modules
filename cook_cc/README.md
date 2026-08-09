@@ -64,6 +64,7 @@ cook cc.new             # scaffold a project around the Cookfile that is here
 cook cc.add lib math    # src/math/math.cpp + include/math/math.hpp,
                         # and a `recipe math` appended to the Cookfile
 cook cc.add bin game    # src/game/main.cpp, and a `recipe game`
+cook cc.need sdl2 game  # game's needs = { "sdl2" }, then probe for sdl2 now
 cook cc.fmt             # clang-format -i over src/, include/ and tests/
 ```
 
@@ -94,6 +95,29 @@ name some declaration already owns, and on a `src/<name>/` that already exists.
 What it writes compiles and links as generated: `cook <name>` straight after
 `cook cc.add` builds the target.
 
+`cook cc.need <dep> <target>` declares an external dependency and then goes and
+looks for it, so the answer to "do I have sdl2?" arrives before the first build
+rather than as a link error. It makes two edits: `"<dep>"` into the target's
+`needs` list — creating the field when the target has none — and, when nothing
+has declared that probe yet, a top-level `<cc>.uses("<dep>")`, without which
+`needs` is refused at register time. Then it resolves `cc:find:<dep>` on the
+spot and reports the version and the strategy that answered, or, on a miss,
+every strategy the probe recorded and a hint to install it. A miss is not a
+failure: declaring a dependency you have not installed yet is a legitimate
+thing to have done, so the edit stands and the command exits 0. Needing the
+same dependency twice writes nothing and re-runs the probe, which is the reason
+to type it twice.
+
+The target is required. The epic specified an optional trailing target meaning
+"the defaults level", and there is no defaults level to mean: `cc.defaults` has
+no `needs` key yet. The dependency still comes first, so the optional form can
+appear later without changing what any command written today does.
+
+Nothing is fetched and no package manager is involved. The finder chain —
+curated, then pkg-config, then cmake, then a bare link probe — resolves
+arbitrary names without a curated finder, which is why `cc.need` works for a
+dependency `cook_cc` has never heard of.
+
 `cook cc.fmt` takes no arguments: it formats every `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.cppm` and `.ixx` under `src/`, `include/` and `tests/` in place.
 A directory the project does not have is not an error; a sweep that finds
@@ -113,7 +137,9 @@ attributed to the module that offered them, and their bodies run only when
 invoked — never during an unrelated build (§7.6). Where a verb edits the
 Cookfile, as `cc.add` does, it goes through the blessed structure-preserving
 editor (§22.13), so comments, spacing and field order elsewhere in the file are
-left byte-identical; `cc.fmt` edits no Cookfile at all.
+left byte-identical; `cc.fmt` edits no Cookfile at all. Every verb that refuses
+refuses before its first write, so a refused command leaves the project exactly
+as it found it.
 
 Their source, and the contract for adding another, is `src/verbs/README.md`.
 
