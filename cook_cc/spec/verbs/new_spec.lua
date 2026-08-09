@@ -81,10 +81,33 @@ describe("cc.new", function()
             assert.same({ "cassert", "cstdio", "greet.hpp" }, includes)
         end)
 
-        it("writes a .clang-format for cc.fmt and for editors", function()
+        it("writes the .clang-format cc.fmt refuses to run without", function()
+            -- COOK-290: `clang-format -style=file` with no config anywhere
+            -- falls back to LLVM defaults and exits 0, so cc.fmt refuses
+            -- unless the project declares a style. Every one of these
+            -- settings is load-bearing for the fixpoint property — cc.add's
+            -- and cc.new's scaffolds must come out of cc.fmt unchanged, and
+            -- bare `BasedOnStyle: LLVM` reflows both.
             local fmt = stub.file(".clang-format")
-            assert.is_truthy(fmt:find("BasedOnStyle: LLVM", 1, true))
-            assert.is_truthy(fmt:find("IndentWidth: 4", 1, true))
+            for _, setting in ipairs({
+                "BasedOnStyle: LLVM",
+                "IndentWidth: 4",
+                "ColumnLimit: 100",
+                "AllowShortFunctionsOnASingleLine: None",
+                "SpacesBeforeTrailingComments: 2",
+            }) do
+                assert.is_truthy(fmt:find(setting, 1, true), "missing: " .. setting)
+            end
+        end)
+
+        it("keeps the assert live under a toolchain that defines NDEBUG", function()
+            -- `optimize = "speed"` on the toolchain call adds -DNDEBUG, which
+            -- compiles every assert away and leaves a test that passes
+            -- without checking anything. The undef must precede the include.
+            local tests = stub.file("tests/main.cpp")
+            local undef = tests:find("#undef NDEBUG", 1, true)
+            assert.is_truthy(undef)
+            assert.is_true(undef < tests:find("#include <cassert>", 1, true))
         end)
     end)
 
@@ -94,14 +117,36 @@ describe("cc.new", function()
         local function cookfile() return stub.file("Cookfile") end
 
         it("keeps everything that was already there", function()
-            assert.equals("use cook_cc\n", cookfile():sub(1, 12))
+            assert.equals("use cook_cc\n", cookfile():sub(1, #"use cook_cc\n"))
         end)
 
-        it("sets the toolchain up front, before any target reads it", function()
+        it("declares exactly the names it checks for", function()
+            -- The clash check walks a list; the block spells the same names
+            -- again in the text it appends. This reads the block back so the
+            -- two cannot drift apart in silence — a template that grew a
+            -- `bench` recipe without extending the check would append it over
+            -- whatever `bench` the project already had.
+            local declared = {}
+            for keyword, name in cookfile():gmatch("\n(%a+) ([%w_%-]+)") do
+                if keyword == "recipe" or keyword == "chore" then
+                    declared[#declared + 1] = name
+                end
+            end
+            table.sort(declared)
+            assert.same({ "build", "run", "test" }, declared)
+        end)
+
+        it("puts the toolchain call first in the block, where it reads", function()
             local toolchain = cookfile():find("cook_cc.toolchain(", 1, true)
             local first_target = cookfile():find("cook_cc.bin(", 1, true)
             assert.is_truthy(toolchain)
+            assert.is_truthy(first_target)
             assert.is_true(toolchain < first_target)
+        end)
+
+        it("writes exactly one toolchain call", function()
+            local count = select(2, cookfile():gsub("%.toolchain%s*%(", ""))
+            assert.equals(1, count)
         end)
 
         it("declares a build recipe over the program's sources", function()
@@ -137,8 +182,13 @@ describe("cc.new", function()
             -- rejects the recipe outright with "test step at line N requires a
             -- non-empty source". An `ingredients` glob would not save it —
             -- that resolves at register phase, before the binary exists.
-            assert.is_nil(cookfile():find("$<in>", 1, true))
-            assert.is_nil(cookfile():find("ingredients", 1, true))
+            --
+            -- Scoped to the appended block, since the assertion is about what
+            -- this verb wrote and not about the rest of somebody's Cookfile.
+            local block = cookfile():match("recipe test\n.*$")
+            assert.is_truthy(block:find("test { ./build/bin/test }", 1, true))
+            assert.is_nil(block:find("$<in>", 1, true))
+            assert.is_nil(block:find("ingredients", 1, true))
         end)
     end)
 
@@ -154,10 +204,60 @@ describe("cc.new", function()
     end)
 
     describe(".gitignore", function()
-        it("creates one carrying the Cook-managed section", function()
+        -- The managed section, byte for byte as cook-cli's
+        -- `COOK_GITIGNORE_SECTION` spells it (pipeline.rs). Restated here in
+        -- full and not just by its marker line, because the duplication across
+        -- two repos is the whole risk: dropping `!**/.cook/cloud.toml` from
+        -- the Lua copy would leave every other assertion in this file green.
+        local COOK_SECTION = table.concat({
+            "# Cook artifacts (added by cook)",
+            "# .cook/ holds caches, per-project state, and the luarocks tree that",
+            "# `cook modules install` populates (.cook/modules/). cloud.toml is the one",
+            "# tracked file. Everything cook generates is under here, so one rule covers it.",
+            "# Your own Lua is not: a module you wrote lives wherever you put it in the",
+            "# repo and is reached by path (`use ./lua/helpers.lua`).",
+            ".cook/**",
+            "**/.cook/**",
+            "!**/.cook/",
+            "!**/.cook/cloud.toml",
+            "",
+        }, "\n")
+
+        it("creates one carrying the Cook-managed section verbatim", function()
             run()
-            assert.is_truthy(stub.file(".gitignore"):find("# Cook artifacts (added by cook", 1, true))
-            assert.is_truthy(stub.file(".gitignore"):find(".cook/**", 1, true))
+            assert.is_truthy(stub.file(".gitignore"):find(COOK_SECTION, 1, true))
+        end)
+
+        it("also ignores the directory cook_cc builds into", function()
+            -- The managed section covers .cook/ only, on purpose: the engine
+            -- leaves toolchain ignores to the user. cc.new IS the toolchain
+            -- verb, and cook_cc's artifact root is not a matter of opinion —
+            -- without this the `git add -A` after the pitch commits a binary.
+            run()
+            local ignore = stub.file(".gitignore")
+            assert.is_truthy(ignore:find("# C++ build artifacts (added by cook cc.new)", 1, true))
+            assert.is_truthy(ignore:find("\nbuild/\n", 1, true))
+        end)
+
+        it("adds the C++ section below the Cook one, so neither is interleaved", function()
+            run()
+            local ignore = stub.file(".gitignore")
+            assert.is_true(ignore:find(COOK_SECTION, 1, true)
+                < ignore:find("# C++ build artifacts", 1, true))
+        end)
+
+        it("leaves build/ alone when the project already ignores it", function()
+            stub.set_file(".gitignore", "/build/\n")
+            run()
+            local ignore = stub.file(".gitignore")
+            assert.is_nil(ignore:find("# C++ build artifacts", 1, true))
+            assert.is_truthy(ignore:find(COOK_SECTION, 1, true))
+        end)
+
+        it("writes both sections into an empty file with no leading blank line", function()
+            stub.set_file(".gitignore", "")
+            run()
+            assert.equals("# Cook artifacts", stub.file(".gitignore"):sub(1, 16))
         end)
 
         -- One blank line between what was there and the section, in both
@@ -179,12 +279,20 @@ describe("cc.new", function()
             assert_starts_with("*.o\n\n# Cook artifacts", stub.file(".gitignore"))
         end)
 
-        it("leaves one that already has the section byte-identical", function()
-            -- `cook modules install` writes this section when it creates the
-            -- Cookfile, which is the blessed flow — so the common case is that
-            -- there is nothing to do, and doing it twice would be a duplicate
-            -- block in the user's file.
-            local before = "# Cook artifacts (added by cook init)\n.cook/**\n"
+        it("never writes the Cook section twice", function()
+            -- `cook modules install` writes it when it creates the Cookfile,
+            -- which is the blessed flow, and an older `cook init` wrote it
+            -- with different wording. Both must be recognised by the marker
+            -- PREFIX, or the user's file grows a second copy of the block.
+            stub.set_file(".gitignore", "# Cook artifacts (added by cook init)\n.cook/**\n")
+            run()
+            local ignore = stub.file(".gitignore")
+            assert.equals(1, select(2, ignore:gsub("# Cook artifacts %(added by cook", "")))
+            assert.is_truthy(ignore:find("(added by cook init)", 1, true))
+        end)
+
+        it("leaves a file that already carries both sections byte-identical", function()
+            local before = "# Cook artifacts (added by cook init)\n.cook/**\n\nbuild/\n"
             stub.set_file(".gitignore", before)
             run()
             assert.equals(before, stub.file(".gitignore"))
@@ -222,7 +330,7 @@ describe("cc.new", function()
 
         it("says what it skipped rather than staying silent about it", function()
             stub.set_file(".clang-format", "BasedOnStyle: Google\n")
-            stub.set_file(".gitignore", "# Cook artifacts (added by cook)\n")
+            stub.set_file(".gitignore", "# Cook artifacts (added by cook)\nbuild/\n")
             local lines = {}
             report.emit = function(l) lines[#lines + 1] = l end
             run()
@@ -276,6 +384,37 @@ describe("cc.new", function()
             stub.set_file("Cookfile", "use cook_cc\n\nrecipe test\n    echo hi\n")
             local err = refuse()
             assert.is_truthy(err:find("cc.new: 'test' is already declared in Cookfile:3", 1, true))
+        end)
+
+        it("refuses a Cookfile that already configures the toolchain", function()
+            -- The fourth thing the block writes, and the one with no name to
+            -- clash: toolchain.set is last-write-wins, so appending a second
+            -- call would move a project that asked for c++17 to c++20 without
+            -- saying so. Nothing else here would have caught it.
+            stub.set_file("Cookfile",
+                'use cook_cc\n\ncook_cc.toolchain({ standard = "c++17" })\n')
+            local err = refuse()
+            assert.equals("cc.new: Cookfile:3 already configures the toolchain\n"
+                .. "  cc.new writes its own cook_cc.toolchain call, and the later call wins;"
+                .. " add targets to a configured project with cook cc.add", err)
+        end)
+
+        it("recognises the toolchain call under the local this Cookfile binds", function()
+            stub.set_file("Cookfile",
+                'use cc ./vendor/cook_cc.lua\n\ncc.toolchain({ standard = "c++17" })\n')
+            local err = refuse()
+            assert.is_truthy(err:find("Cookfile:3 already configures the toolchain", 1, true))
+            assert.is_truthy(err:find("its own cc.toolchain call", 1, true))
+        end)
+
+        it("does not mistake an indented toolchain call for a top-level one", function()
+            -- Only a column-0 module call is top-level (§4.4). An indented one
+            -- is inside somebody's recipe body and is not the register-phase
+            -- state this verb would be overriding.
+            stub.set_file("Cookfile",
+                'use cook_cc\n\nregister\n    cook_cc.toolchain({ standard = "c++17" })\n')
+            run()
+            assert.is_truthy(stub.file("src/main.cpp"))
         end)
 
         it("refuses when the program's source is already there", function()

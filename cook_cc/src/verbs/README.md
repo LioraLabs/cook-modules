@@ -1,4 +1,4 @@
-Offers the project-management commands (`cook cc.add …`) that edit the user's own sources and Cookfile.
+Offers the project-management commands (`cook cc.new`, `cook cc.add …`) that edit the user's own sources and Cookfile.
 
 Everything else in `cook_cc` runs because a Cookfile asked for a build. A verb
 runs because a person typed it, and it writes files they will read afterwards.
