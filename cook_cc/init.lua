@@ -34,4 +34,8 @@ M.compile_commands = db.compile_commands
 M.checks           = checks
 M.config_header    = config_header.config_header
 
+-- Project-management verbs (§22.12). The call belongs HERE, in cook_cc's own
+-- chunk, and the reasons are in `src/verbs/init.lua`.
+require("cook_cc.verbs").register()
+
 return M
