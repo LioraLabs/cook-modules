@@ -7,7 +7,10 @@
 -- Public surface (v0.4). The one-call form:
 --
 --   cook_pnpm.workspace({
---       packages = "auto",            -- read pnpm-workspace.yaml; or {"apps/*", ...}
+--       packages = "auto",            -- read pnpm-workspace.yaml; or {"apps/*", ...};
+--                                     -- no workspace file + root package.json =
+--                                     -- solo mode (0.8): one package, unprefixed
+--                                     -- recipe names, no --filter
 --       node     = ">=18",
 --       pm       = "pnpm@10",
 --       requires = { "wasm" },        -- non-pnpm producer recipes, every minted task

@@ -172,6 +172,29 @@ function M.bootstrap(opts)
     local entries
     if type(opts.packages) == "table" then
         entries = opts.packages
+    elseif not fs.exists(root .. "/pnpm-workspace.yaml")
+           and fs.exists(root .. "/package.json") then
+        -- Single-package repo (0.8): pnpm without a pnpm-workspace.yaml is
+        -- a workspace of ONE — the root package.json. The `solo` flag on
+        -- the entry propagates to naming (unprefixed recipe names: `build`,
+        -- not `<pkg>:build`) and commands (no `--filter <pkg>`, which has
+        -- no workspace to filter).
+        local pkg = pkg_json.read(root .. "/package.json")
+        local entry = {
+            name = pkg.name,
+            dir  = root,
+            package = pkg,
+            workspace_deps = {},
+            solo = true,
+        }
+        state.root_dir    = root
+        state.packages    = { entry }
+        state.by_name     = { [entry.name] = entry }
+        state.install_key = install_prb.ensure_probe_registered(root .. "/pnpm-lock.yaml")
+        return {
+            packages    = state.packages,
+            install_key = state.install_key,
+        }
     else
         entries = read_workspace_yaml(root .. "/pnpm-workspace.yaml")
     end

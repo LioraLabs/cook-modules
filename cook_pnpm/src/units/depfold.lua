@@ -72,7 +72,13 @@ M.DEPFILE_NAME = ".cook-pnpm.d"
 
 -- Recipe name for a (pkg, task) pair. Lives here because resolving a
 -- depends_on edge IS producing these names; units.tasks re-exports it.
-function M.recipe_name(pkg, task) return pkg.name .. ":" .. task end
+-- Solo (single-package workspace, 0.8): the package prefix carries no
+-- information, so the minted name is the bare task — `build` lands as
+-- the engine's default recipe.
+function M.recipe_name(pkg, task)
+    if pkg.solo then return task end
+    return pkg.name .. ":" .. task
+end
 
 -- A `depends_on` edge fires if the referenced package declares the
 -- script (Turborepo's "no-op on missing script") — the recipe may be

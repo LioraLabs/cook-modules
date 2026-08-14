@@ -136,12 +136,19 @@ local function reject_negated_outputs(cfg, label)
     end
 end
 
+-- `--filter <pkg>` selects the package inside a workspace; in a solo
+-- (single-package) workspace there is nothing to filter and pnpm rejects
+-- the flag's premise — run at the root instead.
+local function filter_arg(pkg)
+    return pkg.solo and "" or ("--filter " .. pkg.name .. " ")
+end
+
 local function build_command_for(pkg, task_name)
     toolchain.ensure_probe_registered()
     local key = toolchain.get_probe_key()
     -- $<pnpm:toolchain:....pnpm> is replaced at execute time with the
     -- absolute pnpm binary path resolved by the toolchain probe.
-    return "$<" .. key .. ".pnpm> --filter " .. pkg.name .. " run " .. task_name
+    return "$<" .. key .. ".pnpm> " .. filter_arg(pkg) .. "run " .. task_name
 end
 
 -- Mint one (pkg, task) recipe. `cfg` is the per-task opts; `ctx` carries
@@ -313,7 +320,7 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
             -- old free-floating suite string.
             cook.add_unit({
                 step_kind = "test",
-                command = "pnpm --filter " .. pkg.name .. " run " .. task_name,
+                command = "pnpm " .. filter_arg(pkg) .. "run " .. task_name,
                 inputs  = unit_inputs,
                 -- Narrows which PREDECESSOR OUTPUTS fold (CS-0175). Absent
                 -- folds all of them. Note this cannot carry the build

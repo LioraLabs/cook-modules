@@ -9,6 +9,7 @@
 
 local toolchain = require("cook_pnpm.toolchain")
 local workspace = require("cook_pnpm.discovery.workspace")
+local depfold   = require("cook_pnpm.units.depfold")
 
 local M = {}
 
@@ -46,16 +47,18 @@ function M.run(pkg_name, script, opts)
     end
     toolchain.ensure_probe_registered()
     local snap = workspace.snapshot()
-    local r_name = opts.recipe_name or (pkg.name .. ":" .. script)
+    local r_name = opts.recipe_name or depfold.recipe_name(pkg, script)
     local inputs = opts.inputs or {}
     inputs[#inputs + 1] = pkg.dir .. "/package.json"
 
+    -- Solo workspace (0.8): no --filter — there is no workspace to filter.
+    local filter = pkg.solo and "" or ("--filter " .. pkg.name .. " ")
     cook.recipe(r_name, { requires = opts.requires or {} }, function()
         cook.add_unit({
             inputs  = inputs,
             outputs = opts.outputs or {},
-            command = "$<" .. toolchain.get_probe_key() .. ".pnpm> --filter "
-                      .. pkg.name .. " run " .. script .. " ",
+            command = "$<" .. toolchain.get_probe_key() .. ".pnpm> " .. filter
+                      .. "run " .. script .. " ",
             -- toolchain: data-consumed (§12.7.4); install: invalidate-only
             -- lockfile-hash determinant → seal (§12.7.5).
             probes  = { toolchain.get_probe_key() },

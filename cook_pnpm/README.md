@@ -6,9 +6,11 @@ remote caching, cached test/lint results, watcher-driven incremental
 rebuilds, and a unified build graph with the rest of your stack (a wasm
 step, codegen, a Rust backend).
 
-**Status: v0.7 — workspace exclusions + dependency-fold filtering.** One
+**Status: v0.8 — single-package repos.** One
 `workspace()` call parses the workspace (honouring `pnpm-workspace.yaml`
-`!` exclusions), mints every configured task (with Turbo-spelled
+`!` exclusions — or, new in 0.8, a lone root `package.json` with no
+workspace file at all, see "Single-package repos"), mints every
+configured task (with Turbo-spelled
 `"<pkg>#<task>"` per-package overrides), auto-mints conventional checks,
 defaults inputs safely, folds dependency-output CONTENT into every
 consumer's key — filtered to the artifact classes a task actually reads
@@ -25,7 +27,7 @@ In your project's `cook.toml`:
 
 ```toml
 [modules]
-cook_pnpm = "0.5.0-1"
+cook_pnpm = "0.8.0-1"
 ```
 
 Then `cook modules install`.
@@ -68,6 +70,23 @@ cook web:build           # one package (quoted in a Cookfile: "web:build")
 cook test                # run every check, cached — pass results replay
 cook why web:build       # audit every determinant of the key
 ```
+
+## Single-package repos (0.8)
+
+A repo with a root `package.json` and **no** `pnpm-workspace.yaml`
+bootstraps as a workspace of one (solo mode). Two visible differences,
+both because the package prefix would carry no information:
+
+- recipes mint **unprefixed** — `build`, `lint`, `test` — so the minted
+  `build` is the engine's default recipe and a bare `cook` builds the
+  project;
+- commands drop `--filter <pkg>` (there is no workspace to filter):
+  `pnpm run <task>` at the root, build and check units alike.
+
+Everything else is identical: same probes, same default inputs, same
+task cfg surface. `depends_on = { "^build" }` resolves to nothing (no
+workspace deps) and is harmless. An explicit `packages = {...}` list or
+an existing `pnpm-workspace.yaml` takes precedence over solo mode.
 
 ## Build tasks vs checks
 
