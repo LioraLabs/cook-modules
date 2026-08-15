@@ -161,7 +161,7 @@ describe("cook_pnpm 0.7 dependency-output fold filter", function()
         assert.is_nil(t.consumes)
     end)
 
-    it("still declares dep output dirs as check ingredients", function()
+    it("still declares dep output dirs as check inputs", function()
         -- Mostly redundant since CS-0175 (the engine folds predecessor
         -- outputs and skips already-counted declared inputs), but
         -- dep_dirs spans the dep package's whole claimed-output union,

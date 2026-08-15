@@ -5,7 +5,7 @@
 --
 -- Entries are literals, glob patterns, or `!`-prefixed exclusions, resolved as
 -- `(includes) \ (excludes)`. Item order does not affect the result — same
--- grammar and same semantics as the `ingredients` step (§8.2), deliberately,
+-- grammar and same semantics as the `gather` step (§8.2), deliberately,
 -- rather than a second spelling of exclusion.
 local object_path = require("cook_cc.units.object_path")
 

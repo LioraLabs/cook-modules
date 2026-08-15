@@ -178,9 +178,9 @@ describe("cc.new", function()
 
         it("names the test binary as a path, not as $<in>", function()
             -- `$<in>` needs a preceding surface `cook` step or an
-            -- `ingredients` declaration, and a module call is neither: codegen
+            -- `gather` declaration, and a module call is neither: codegen
             -- rejects the recipe outright with "test step at line N requires a
-            -- non-empty source". An `ingredients` glob would not save it —
+            -- non-empty source". A `gather` glob would not save it —
             -- that resolves at register phase, before the binary exists.
             --
             -- Scoped to the appended block, since the assertion is about what
@@ -188,7 +188,7 @@ describe("cc.new", function()
             local block = cookfile():match("recipe test\n.*$")
             assert.is_truthy(block:find("test { ./build/bin/test }", 1, true))
             assert.is_nil(block:find("$<in>", 1, true))
-            assert.is_nil(block:find("ingredients", 1, true))
+            assert.is_nil(block:find("gather", 1, true))
         end)
     end)
 

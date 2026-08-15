@@ -183,8 +183,8 @@ build/
 --    binary is current before it is executed (§7.5, §16.2.1).
 --  * `test { ./build/bin/test }` names the binary as a literal path. The
 --    obvious `test { ./$<in> }` is a codegen ERROR here: `$<in>` needs a
---    preceding surface `cook` step or an `ingredients` declaration, and a
---    module call is neither. `ingredients "build/bin/test"` would not rescue
+--    preceding surface `cook` step or a `gather` declaration, and a
+--    module call is neither. `gather "build/bin/test"` would not rescue
 --    it either — that is a register-phase glob (§16.1.2.2) and matches nothing
 --    on a cold tree. The literal path is fine: §15.1 puts the test step's
 --    group behind every unit the maker registered above it in the same body,

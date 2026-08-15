@@ -303,7 +303,7 @@ Anchoring used to corrupt such entries into mid-path literals
 Turbo's `outputs: [".next/**", "!.next/cache/**"]` shape is **rejected
 at register time**. The engine's `outputs[]` surface recognises only
 `*`, `?`, `[` as glob metacharacters (CS-0085); `!` exclusion exists for
-`ingredients`, not outputs — a `"!"` entry would resolve as a literal
+`gather`, not outputs — a `"!"` entry would resolve as a literal
 path and silently match nothing. Declare the positive globs only.
 
 ## Polyglot ordering: `requires`

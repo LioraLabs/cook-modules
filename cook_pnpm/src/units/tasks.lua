@@ -46,7 +46,7 @@
 --
 -- Negated output globs ("!.next/cache/**") are REJECTED at register
 -- time: the engine's outputs[] surface recognises only `*`, `?`, `[`
--- (CS-0085) — `!` exclusion exists for ingredients (§8.2), not outputs;
+-- (CS-0085) — `!` exclusion exists for gather (§8.2), not outputs;
 -- a "!" entry would resolve as a literal path and silently match
 -- nothing. The inputs-side counterpart lives in units.excludes.
 --
@@ -130,7 +130,7 @@ local function reject_negated_outputs(cfg, label)
             error("[pnpm.task] output '" .. g .. "' (" .. label .. ") is a "
                   .. "negated glob — the cook engine's outputs[] surface "
                   .. "(CS-0085) supports only *, ?, [ metacharacters; `!` "
-                  .. "exclusion exists for ingredients, not outputs. Declare "
+                  .. "exclusion exists for gather, not outputs. Declare "
                   .. "the positive globs only.", 4)
         end
     end
