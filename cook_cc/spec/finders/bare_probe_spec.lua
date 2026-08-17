@@ -52,13 +52,15 @@ describe("bare_probe linker-search-dirs probe", function()
         assert.same({ "cc" }, tools)
     end)
 
-    it("probe inputs include LIBRARY_PATH env", function()
+    -- CS-0244 removed `opts.inputs.env`, and cook rejects it at register
+    -- phase, so this asserts the absence where it used to assert presence.
+    -- LIBRARY_PATH still reaches the cache key, by the sharper route: it
+    -- moves what `cc -print-search-dirs` prints, so it lands in the value.
+    it("probe declares no env inputs (CS-0244)", function()
         local bare = reload()
         bare.ensure_probe_registered()
         local opts = stub.probe_opts("cc:linker-search-dirs")
-        local has_libpath = false
-        for _, e in ipairs(opts.inputs.env or {}) do if e == "LIBRARY_PATH" then has_libpath = true end end
-        assert.is_true(has_libpath, "expected LIBRARY_PATH in probe inputs.env")
+        assert.is_nil(opts.inputs.env)
     end)
 
     it("try() consults probe value store for search dirs", function()

@@ -112,6 +112,13 @@ local function register_find_probe(name, opts, raise_on_miss)
     require("cook_cc.discovery.finders.bare_probe").ensure_probe_registered()
     require("cook_cc.discovery.finders.cmake_compat").ensure_probe_registered()
 
+    -- No `env` input (CS-0244). The four variables that used to be declared
+    -- here — PATH, PKG_CONFIG_PATH, CMAKE_PREFIX_PATH, LIBRARY_PATH — all
+    -- act by changing what this probe RESOLVES, and the resolution is the
+    -- probe's value: cflags, libs, include and lib dirs. Keying on the value
+    -- is strictly sharper than keying on the variables, because a variable
+    -- that moves without changing the resolved payload should not, and now
+    -- does not, invalidate anything downstream.
     cook.probe("cc:find:" .. name, {
         inputs = {
             requires = {
@@ -119,7 +126,6 @@ local function register_find_probe(name, opts, raise_on_miss)
                 "cc:linker-search-dirs",
                 "cc:cmake-driver",
             },
-            env = { "PATH", "PKG_CONFIG_PATH", "CMAKE_PREFIX_PATH", "LIBRARY_PATH" },
             tools = { "pkg-config" },
         },
         produce = produce_body(name, opts, raise_on_miss),

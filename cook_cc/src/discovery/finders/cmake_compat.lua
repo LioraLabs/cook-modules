@@ -39,8 +39,13 @@ end
 -- the module's top-level free of register-only side effects.
 function M.ensure_probe_registered()
     if driver_probe_registered then return end
+    -- No `env` input (CS-0244). CMAKE_PREFIX_PATH was declared here but
+    -- never belonged: this probe's value is the cmake binary, its version
+    -- and whether legacy modules are supported, none of which the variable
+    -- moves. What it does move is what a later `cc:find:<name>` resolves,
+    -- and that probe's own value carries the answer.
     cook.probe(PROBE_KEY_DRIVER, {
-        inputs = { tools = { "cmake" }, env = { "CMAKE_PREFIX_PATH" } },
+        inputs = { tools = { "cmake" } },
         produce = produce_driver_body(),
     })
     driver_probe_registered = true

@@ -49,13 +49,15 @@ describe("cmake_compat driver probe", function()
         assert.same({ "cmake" }, opts.inputs.tools or {})
     end)
 
-    it("probe inputs include CMAKE_PREFIX_PATH env", function()
+    -- CS-0244 removed `opts.inputs.env`, and cook rejects it at register
+    -- phase, so this asserts the absence where it used to assert presence.
+    -- CMAKE_PREFIX_PATH does not move this probe's value anyway: the binary,
+    -- its version and legacy support are the same whatever the prefix path.
+    it("probe declares no env inputs (CS-0244)", function()
         local cm = reload()
         cm.ensure_probe_registered()
         local opts = stub.probe_opts("cc:cmake-driver")
-        local has_env = false
-        for _, e in ipairs(opts.inputs.env or {}) do if e == "CMAKE_PREFIX_PATH" then has_env = true end end
-        assert.is_true(has_env)
+        assert.is_nil(opts.inputs.env)
     end)
 
     it("driver() reads probe value store, returns nil when no cmake", function()

@@ -33,8 +33,13 @@ end
 -- explicitly from `cook_cc.discovery.finder.register_find_probe` during register.
 function M.ensure_probe_registered()
     if probe_registered then return end
+    -- No `env` input: CS-0244 removed it, and nothing is lost. LIBRARY_PATH
+    -- was declared here because it moves the linker search path, but the
+    -- produce body reads that path back out of `cc -print-search-dirs`,
+    -- which resolves LIBRARY_PATH into its own output. The variable already
+    -- reaches the probe's VALUE, which is the determinant consumers key on.
     cook.probe(PROBE_KEY, {
-        inputs = { tools = { "cc" }, env = { "LIBRARY_PATH" } },
+        inputs = { tools = { "cc" } },
         produce = produce_body(),
     })
     probe_registered = true

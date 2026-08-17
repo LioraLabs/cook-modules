@@ -69,9 +69,11 @@ end
 local function register_find_probe(name, opts, raise_on_miss)
     local key = "pnpm:find:" .. name
     if M._registered[key] then return end
+    -- No `env` input (CS-0244). PATH was declared to catch the tool moving,
+    -- but the produce body resolves the tool and returns its path and
+    -- version in the probe's value, and `tools` hashes the binary itself.
     cook.probe(key, {
         inputs = {
-            env   = { "PATH" },
             tools = { name },
         },
         produce = produce_body(name, raise_on_miss),

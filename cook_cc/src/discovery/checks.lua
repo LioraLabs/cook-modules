@@ -102,10 +102,12 @@ local function register_check(kind, name, opts, extra_flag)
     if M._registered[key] then
         return key
     end
+    -- No `env` input (CS-0244). PATH was declared to catch a compiler swap,
+    -- but the toolchain probe this one requires already hashes the resolved
+    -- compiler, so a swap moves that value and re-runs the check anyway.
     cook.probe(key, {
         inputs = {
             requires = { toolchain.get_probe_key() },
-            env      = { "PATH" },
         },
         produce = produce_body(kind, name, opts, extra_flag, san, fp),
     })
