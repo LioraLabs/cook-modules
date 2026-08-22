@@ -1,7 +1,7 @@
 -- Solo (single-package) workspace mode (0.8): a repo with a root
 -- package.json and NO pnpm-workspace.yaml is a workspace of one.
--- Recipes mint unprefixed (`build`, not `<pkg>:build` — so `build` lands
--- as the engine's default recipe) and commands drop `--filter <pkg>`,
+-- Recipes mint under `pnpm:` without a package segment (`pnpm:build`) and
+-- commands drop `--filter <pkg>`,
 -- which has no workspace to filter.
 
 local stub = require("cook_stub")
@@ -38,7 +38,7 @@ describe("cook_pnpm single-package mode", function()
         assert.is_not_nil(result.install_key:match("^pnpm:install:"))
     end)
 
-    it("mints unprefixed recipes and drops --filter", function()
+    it("mints pnpm-prefixed recipes and drops --filter", function()
         solo_repo()
         workspace.bootstrap({})
         tasks.mint_from_workspace({
@@ -47,9 +47,9 @@ describe("cook_pnpm single-package mode", function()
         })
 
         local recs = stub.recipes()
-        assert.is_not_nil(recs["build"], "solo build recipe must be named `build`")
-        assert.is_not_nil(recs["lint"], "solo check recipe must be named `lint`")
-        assert.is_nil(recs["git-canvas:build"], "no <pkg>: prefix in solo mode")
+        assert.is_not_nil(recs["pnpm:build"], "root build recipe needs only the pnpm prefix")
+        assert.is_not_nil(recs["pnpm:lint"], "root check recipe needs only the pnpm prefix")
+        assert.is_nil(recs["pnpm:git-canvas:build"], "no package segment in solo mode")
 
         local unit = stub.added_units()[1]
         assert.is_nil(unit.command:find("--filter", 1, true),

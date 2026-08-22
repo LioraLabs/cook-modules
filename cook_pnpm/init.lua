@@ -9,7 +9,7 @@
 --   cook_pnpm.workspace({
 --       packages = "auto",            -- read pnpm-workspace.yaml; or {"apps/*", ...};
 --                                     -- no workspace file + root package.json =
---                                     -- solo mode (0.8): one package, unprefixed
+--                                     -- solo mode: one package, `pnpm:` prefix only
 --                                     -- recipe names, no --filter
 --       node     = ">=18",
 --       pm       = "pnpm@10",

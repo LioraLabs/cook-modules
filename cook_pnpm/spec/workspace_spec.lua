@@ -68,20 +68,56 @@ packages:
         tasks.task("build", { depends_on = { "^build" } })
 
         local recs = stub.recipes()
-        assert.is_not_nil(recs["a:build"])
-        assert.is_not_nil(recs["b:build"])
-        -- b:build must require a:build.
-        local b_reqs = recs["b:build"].opts.requires
+        assert.is_not_nil(recs["pnpm:a:build"])
+        assert.is_not_nil(recs["pnpm:b:build"])
+        -- pnpm:b:build must require pnpm:a:build.
+        local b_reqs = recs["pnpm:b:build"].opts.requires
         local found = false
         for _, r in ipairs(b_reqs) do
-            if r == "a:build" then found = true end
+            if r == "pnpm:a:build" then found = true end
         end
-        assert.is_true(found, "b:build must `requires = { a:build, ... }`")
-        -- a has no workspace deps, so a:build's requires set is empty.
-        assert.equals(0, #recs["a:build"].opts.requires)
+        assert.is_true(found, "pnpm:b:build must `requires = { pnpm:a:build, ... }`")
+        -- a has no workspace deps, so pnpm:a:build's requires set is empty.
+        assert.equals(0, #recs["pnpm:a:build"].opts.requires)
         -- Data-driven fan-out carve-out: every minted recipe MUST carry origin
         -- metadata so `cook list` annotates it (explicit-recipes contract).
-        assert.equals("cook_pnpm.task", recs["a:build"].opts.origin)
-        assert.equals("cook_pnpm.task", recs["b:build"].opts.origin)
+        assert.equals("cook_pnpm.task", recs["pnpm:a:build"].opts.origin)
+        assert.equals("cook_pnpm.task", recs["pnpm:b:build"].opts.origin)
+    end)
+
+    it("rejects duplicate directory aliases", function()
+        stub.set_file_contents("./pnpm-workspace.yaml",
+            "packages:\n  - \"apps/*\"\n  - \"packages/*\"\n")
+        stub.set_glob("./apps/*/package.json", { "./apps/ui/package.json" })
+        stub.set_glob("./packages/*/package.json", { "./packages/ui/package.json" })
+        stub.set_file_contents("./apps/ui/package.json",
+            [[{"name":"app-ui","scripts":{"build":"vite build"}}]])
+        stub.set_file_contents("./packages/ui/package.json",
+            [[{"name":"shared-ui","scripts":{"build":"tsc"}}]])
+        stub.set_file_exists("./pnpm-lock.yaml", true)
+
+        workspace.bootstrap({})
+        assert.error_matches(function()
+            tasks.task("build", { outputs = { "dist/**" } })
+        end, "both map to recipe alias 'ui'")
+    end)
+
+    it("omits the package segment for an explicitly listed root", function()
+        stub.set_file_contents("./pnpm-workspace.yaml", "packages:\n  - \"packages/*\"\n")
+        stub.set_file_contents("././package.json",
+            [[{"name":"root","scripts":{"build":"vite build"}}]])
+        stub.set_glob("././package.json", { "././package.json" })
+        stub.set_file_exists("./pnpm-lock.yaml", true)
+
+        workspace.bootstrap({ packages = { "." } })
+        tasks.task("build", { outputs = { "dist/**" } })
+        assert.is_not_nil(stub.recipes()["pnpm:build"])
+    end)
+
+    it("omits the package segment for an absolute workspace root", function()
+        local depfold = require("cook_pnpm.units.depfold")
+        assert.equals("pnpm:build", depfold.recipe_name({
+            dir = "/work/project/./.",
+        }, "build"))
     end)
 end)

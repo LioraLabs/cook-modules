@@ -32,7 +32,7 @@
 -- produced by a non-pnpm recipe (a wasm-pack step, codegen, a Rust
 -- build), path equality alone creates no ordering edge in Cook — the
 -- engine rejects the read-after-write unless the producer is named.
--- depends_on cannot express it (it only resolves to <pkg>:<task> names
+-- depends_on cannot express it (it only resolves pnpm task names
 -- inside the workspace); requires names any recipe in the graph. Since
 -- 0.3 it is also accepted workspace-level (cook_pnpm.workspace{requires}
 -- — applied to every minted task).
@@ -344,6 +344,19 @@ local function mint_batch(tasks_map, workspace_requires, workspace_inputs, works
     local snap = workspace.snapshot()
     local root = snap.root_dir or "."
 
+    local aliases = {}
+    for _, pkg in ipairs(packages) do
+        local alias = depfold.package_alias(pkg)
+        if alias then
+            if aliases[alias] then
+                error("[pnpm.workspace] package directories '" .. aliases[alias]
+                      .. "' and '" .. pkg.dir .. "' both map to recipe alias '"
+                      .. alias .. "'", 3)
+            end
+            aliases[alias] = pkg.dir
+        end
+    end
+
     local base, overrides = split_overrides(tasks_map, snap.by_name)
     for task_name, cfg in pairs(base) do
         reject_negated_outputs(cfg, "task '" .. task_name .. "'")
@@ -468,7 +481,7 @@ function M.mint_from_workspace(opts)
     end
 end
 
--- Escape hatch: register a custom recipe under <pkg>:<name>. The caller
+-- Escape hatch: register a custom recipe under the package's pnpm namespace. The caller
 -- supplies the body via a function receiving the parsed WorkspaceInfo.
 function M.script(pkg_name, name, body_fn)
     local pkg = workspace.lookup(pkg_name)

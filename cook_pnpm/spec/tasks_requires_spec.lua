@@ -3,7 +3,7 @@
 -- verbatim to every minted recipe's requires, so a pnpm task can name a
 -- non-pnpm producer (wasm-pack, codegen) whose outputs it reads. Found
 -- dogfooding ppu-toys: path equality creates no ordering edge in Cook,
--- and depends_on can only resolve to <pkg>:<task> names inside the
+-- and depends_on can only resolve pnpm task names inside the
 -- workspace.
 
 local stub = require("cook_stub")
@@ -41,7 +41,7 @@ describe("cook_pnpm.units.tasks 0.2.1 requires passthrough", function()
         workspace.bootstrap({})
         tasks.task("build", { requires = { "wasm", "codegen" } })
 
-        for _, name in ipairs({ "@scope/web:build", "@scope/docs:build" }) do
+        for _, name in ipairs({ "pnpm:web:build", "pnpm:docs:build" }) do
             local r = stub.recipes()[name]
             assert.is_not_nil(r, "missing minted recipe " .. name)
             assert.same({ "wasm", "codegen" }, r.opts.requires)
@@ -56,10 +56,10 @@ describe("cook_pnpm.units.tasks 0.2.1 requires passthrough", function()
         -- gets only the passthrough (Turborepo no-op-on-missing-script).
         tasks.task("build", { depends_on = { "lint" }, requires = { "wasm" } })
 
-        assert.same({ "@scope/web:lint", "wasm" },
-            stub.recipes()["@scope/web:build"].opts.requires)
+        assert.same({ "pnpm:web:lint", "wasm" },
+            stub.recipes()["pnpm:web:build"].opts.requires)
         assert.same({ "wasm" },
-            stub.recipes()["@scope/docs:build"].opts.requires)
+            stub.recipes()["pnpm:docs:build"].opts.requires)
     end)
 
     it("leaves requires untouched when the option is absent", function()
@@ -67,6 +67,6 @@ describe("cook_pnpm.units.tasks 0.2.1 requires passthrough", function()
         workspace.bootstrap({})
         tasks.task("build", {})
 
-        assert.same({}, stub.recipes()["@scope/web:build"].opts.requires)
+        assert.same({}, stub.recipes()["pnpm:web:build"].opts.requires)
     end)
 end)

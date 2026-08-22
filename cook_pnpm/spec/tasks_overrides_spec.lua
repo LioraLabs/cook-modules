@@ -87,9 +87,9 @@ describe("cook_pnpm 0.4 per-package task overrides", function()
             checks = false,
         })
 
-        assert.same({}, stub.recipes()["@scope/web:build"].opts.requires,
+        assert.same({}, stub.recipes()["pnpm:web:build"].opts.requires,
             "an override that omits `requires` drops the base requires entirely")
-        assert.same({ "wasm" }, stub.recipes()["@scope/desktop:build"].opts.requires)
+        assert.same({ "wasm" }, stub.recipes()["pnpm:desktop:build"].opts.requires)
     end)
 
     it("an override key with no base entry mints for that package only", function()
@@ -103,8 +103,8 @@ describe("cook_pnpm 0.4 per-package task overrides", function()
         })
 
         assert.equals(1, #stub.added_units())
-        assert.is_not_nil(stub.recipes()["@scope/web:build"])
-        assert.is_nil(stub.recipes()["@scope/desktop:build"],
+        assert.is_not_nil(stub.recipes()["pnpm:web:build"])
+        assert.is_nil(stub.recipes()["pnpm:desktop:build"],
             "no base entry — the task exists solely for the overridden package")
     end)
 

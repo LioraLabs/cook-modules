@@ -89,7 +89,7 @@ describe("cook_pnpm 0.3 default inputs + workspace minting", function()
         assert.is_not_nil(test_named("typecheck"))
         assert.is_nil(test_named("dev"),
             "auto minting is an allowlist — arbitrary scripts (dev, clean, ...) are never minted")
-        assert.is_nil(stub.recipes()["@scope/web:dev"])
+        assert.is_nil(stub.recipes()["pnpm:web:dev"])
     end)
 
     it("checks = false disables auto minting", function()
@@ -128,10 +128,10 @@ describe("cook_pnpm 0.3 default inputs + workspace minting", function()
         })
 
         assert.same({ "wasm", "codegen" },
-            stub.recipes()["@scope/web:build"].opts.requires,
+            stub.recipes()["pnpm:web:build"].opts.requires,
             "workspace requires precede per-task requires")
         assert.same({ "wasm" },
-            stub.recipes()["@scope/web:test"].opts.requires,
+            stub.recipes()["pnpm:web:test"].opts.requires,
             "auto-minted checks inherit the workspace requires")
     end)
 
@@ -142,11 +142,11 @@ describe("cook_pnpm 0.3 default inputs + workspace minting", function()
         tasks.task("typecheck", { inputs = { "src/**" } })
 
         assert.equals("cook_pnpm.discovery.workspace",
-            stub.recipes()["@scope/web:build"].opts.origin)
+            stub.recipes()["pnpm:web:build"].opts.origin)
         assert.equals("cook_pnpm.discovery.workspace",
-            stub.recipes()["@scope/web:test"].opts.origin)
+            stub.recipes()["pnpm:web:test"].opts.origin)
         assert.equals("cook_pnpm.task",
-            stub.recipes()["@scope/web:typecheck"].opts.origin)
+            stub.recipes()["pnpm:web:typecheck"].opts.origin)
     end)
 
     it("BUILD default inputs expand subtree globs at register time and drop output files", function()

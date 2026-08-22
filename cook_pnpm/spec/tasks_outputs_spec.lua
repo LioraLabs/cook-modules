@@ -77,7 +77,7 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
         assert.equals("test", web.step_kind)
         assert.is_nil(web.suite,
             "suite was removed with cook.add_test (CS-0185)")
-        assert.equals("@scope/web:build", web._recipe,
+        assert.equals("pnpm:web:build", web._recipe,
             "the enclosing recipe names the test unit (CS-0185)")
     end)
 

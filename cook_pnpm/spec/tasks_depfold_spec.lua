@@ -107,9 +107,9 @@ describe("cook_pnpm 0.4 dependency-output folding + env", function()
             tasks = { build = { outputs = { "dist/**" }, depends_on = { "^build" } } },
         })
 
-        local r = stub.recipes()["@scope/app:typecheck"]
+        local r = stub.recipes()["pnpm:app:typecheck"]
         assert.is_not_nil(r)
-        assert.same({ "@scope/lib:build" }, r.opts.requires)
+        assert.same({ "pnpm:lib:build" }, r.opts.requires)
         local t = test_for("--filter @scope/app run typecheck")
         assert.is_not_nil(t)
         assert.truthy(has(t.inputs, "./pkgs/lib/dist/**/*"))
@@ -120,7 +120,7 @@ describe("cook_pnpm 0.4 dependency-output folding + env", function()
         workspace.bootstrap({})
         tasks.mint_from_workspace({ tasks = {} })   -- checks="auto" only
 
-        local r = stub.recipes()["@scope/app:typecheck"]
+        local r = stub.recipes()["pnpm:app:typecheck"]
         assert.is_not_nil(r)
         assert.same({}, r.opts.requires)
     end)

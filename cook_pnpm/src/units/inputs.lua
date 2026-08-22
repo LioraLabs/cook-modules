@@ -8,7 +8,7 @@
 --   - every top-level directory of the package EXCEPT node_modules,
 --     dot-directories, and any directory claimed by a declared output
 --     glob of ANY task in the same mint batch (so `web:test` does not
---     take `web:build`'s dist/ as an input and self-invalidate);
+--     take `pnpm:web:build`'s dist/ as an input and self-invalidate);
 --   - plus the package's top-level files, minus those matching a
 --     declared output glob.
 -- Subtraction runs through cook_pnpm.units.globs' limited matcher, never

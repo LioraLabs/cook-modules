@@ -59,16 +59,16 @@ register
     })
 ```
 
-That one call gives every workspace package a `<pkg>:build` recipe in
-topological order, cached `<pkg>:test` / `<pkg>:lint` / `<pkg>:typecheck`
+That one call gives every workspace package a `pnpm:<dir>:build` recipe in
+topological order, cached `pnpm:<dir>:test` / `pnpm:<dir>:lint` / `pnpm:<dir>:typecheck`
 checks for the packages that declare those scripts, and an `install`
 recipe — with no per-task input globs to write.
 
 ```
-cook build               # or an aggregator recipe of your own
-cook web:build           # one package (quoted in a Cookfile: "web:build")
+cook pnpm:build          # workspace root package
+cook pnpm:web:build      # member whose directory basename is `web`
 cook test                # run every check, cached — pass results replay
-cook why web:build       # audit every determinant of the key
+cook why pnpm:web:build  # audit every determinant of the key
 ```
 
 ## Single-package repos (0.8)
@@ -77,9 +77,9 @@ A repo with a root `package.json` and **no** `pnpm-workspace.yaml`
 bootstraps as a workspace of one (solo mode). Two visible differences,
 both because the package prefix would carry no information:
 
-- recipes mint **unprefixed** — `build`, `lint`, `test` — so the minted
-  `build` is the engine's default recipe and a bare `cook` builds the
-  project;
+- recipes omit the redundant package segment — `pnpm:build`, `pnpm:lint`,
+  `pnpm:test` — while retaining the module prefix so they cannot collide
+  with handwritten recipes;
 - commands drop `--filter <pkg>` (there is no workspace to filter):
   `pnpm run <task>` at the root, build and check units alike.
 
@@ -117,7 +117,7 @@ Omitting `inputs` means "this package's file tree", computed per package
 as every top-level directory except `node_modules`, dot-directories, and
 any directory claimed by a declared output glob of any task in the same
 `workspace()` batch — plus the package's top-level files, minus output
-matches. So `web:test` never takes `web:build`'s `dist/` as an input and
+matches. So `pnpm:web:test` never takes `pnpm:web:build`'s `dist/` as an input and
 self-invalidates.
 
 Declare `inputs` explicitly to narrow (they replace the default set;
@@ -312,7 +312,7 @@ Cook creates **no ordering edge from path equality**: when a pnpm task
 reads files produced by a non-pnpm recipe (wasm-pack writing into
 `src/`, codegen, a Rust build), the engine rejects the read-after-write
 unless the producer is named. `depends_on` cannot express this — it only
-resolves `<pkg>:<task>` names inside the workspace. Name the producer:
+resolves `pnpm:<dir>:<task>` names inside the workspace. Name the producer:
 
 - workspace-wide: `cook_pnpm.workspace({ requires = { "wasm" }, ... })`
 - per task: `tasks = { build = { requires = { "wasm" } } }`
@@ -335,14 +335,18 @@ explicitly: `tasks = { ["your-script"] = {} }`.
 
 Under the explicit-recipes contract a module MUST NOT mint recipes
 implicitly — but `cook_pnpm` is the documented exception: the workspace
-manifests are data, and one call mints *N* recipes named `<pkg>:<task>`.
+manifests are data, and one call mints *N* recipes named `pnpm:<dir>:<task>`.
 Every minted recipe carries origin metadata (CS-0143), so `cook list`
 attributes it:
 
 ```
-recipe web:build      (from cook_pnpm.workspace)
-recipe web:test       (from cook_pnpm.workspace)
+recipe pnpm:web:build (from cook_pnpm.workspace)
+recipe pnpm:web:test  (from cook_pnpm.workspace)
 ```
+
+Member package segments come from the package directory basename, not its
+possibly-scoped npm name (`packages/ui` becomes `ui`). Duplicate basenames are
+rejected at registration rather than producing colliding recipes.
 
 A name you did not write in the Cookfile is always traceable to the call
 that created it.
@@ -372,7 +376,7 @@ descendants.
 | `cook_pnpm.task(name, opts)` | Incremental single-task mint (single-batch defaults; prefer `workspace{tasks}`) |
 | `cook_pnpm.run(pkg, script, opts)` | Single `pnpm --filter <pkg> run <script>` recipe |
 | `cook_pnpm.install(opts)` | Explicit install-stage recipe |
-| `cook_pnpm.script(pkg, name, fn)` | Custom recipe under `<pkg>:<name>` |
+| `cook_pnpm.script(pkg, name, fn)` | Custom recipe under `pnpm:<dir>:<name>` |
 | `cook_pnpm.workspaces()` | Introspect the parsed workspace graph |
 | `cook_pnpm.toolchain(opts)` | Pin node / pnpm versions |
 | `cook_pnpm.find(tool)` / `find_or_error` / `register_finder` | JS dev-tool locators |

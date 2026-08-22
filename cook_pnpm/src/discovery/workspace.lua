@@ -12,7 +12,7 @@
 --
 -- Getting this wrong was silent: entries were previously anchored as positive
 -- patterns ("./!examples/blog-*/package.json"), which matches nothing, so the
--- exclusion never fired and cook minted `<pkg>:<task>` recipes for packages
+-- exclusion never fired and cook minted recipes for packages
 -- pnpm does not consider part of the workspace — 40 of them on
 -- refinedev/refine. The same `!`-corrupted-by-anchoring shape the 0.5 inputs
 -- surface was hardened against; the difference is that here `!` is valid pnpm
@@ -176,8 +176,8 @@ function M.bootstrap(opts)
            and fs.exists(root .. "/package.json") then
         -- Single-package repo (0.8): pnpm without a pnpm-workspace.yaml is
         -- a workspace of ONE — the root package.json. The `solo` flag on
-        -- the entry propagates to naming (unprefixed recipe names: `build`,
-        -- not `<pkg>:build`) and commands (no `--filter <pkg>`, which has
+        -- the entry propagates to naming (`pnpm:build`, with no package
+        -- segment) and commands (no `--filter <pkg>`, which has
         -- no workspace to filter).
         local pkg = pkg_json.read(root .. "/package.json")
         local entry = {

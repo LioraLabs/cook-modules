@@ -70,14 +70,18 @@ local M = {}
 -- that exclusion is why units.inputs requires this module).
 M.DEPFILE_NAME = ".cook-pnpm.d"
 
--- Recipe name for a (pkg, task) pair. Lives here because resolving a
--- depends_on edge IS producing these names; units.tasks re-exports it.
--- Solo (single-package workspace, 0.8): the package prefix carries no
--- information, so the minted name is the bare task — `build` lands as
--- the engine's default recipe.
+-- Recipe name for a (pkg, task) pair. Keep module-minted names out of the
+-- user's recipe namespace, and use the workspace directory instead of the
+-- often-scoped npm package name. The root needs no redundant `root` segment.
+function M.package_alias(pkg)
+    local dir = pkg.dir:gsub("/+$", ""):gsub("^%./", "")
+    local alias = dir:match("([^/]+)$")
+    return alias ~= "." and alias or nil
+end
+
 function M.recipe_name(pkg, task)
-    if pkg.solo then return task end
-    return pkg.name .. ":" .. task
+    local alias = M.package_alias(pkg)
+    return "pnpm:" .. (alias and alias .. ":" or "") .. task
 end
 
 -- A `depends_on` edge fires if the referenced package declares the
