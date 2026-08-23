@@ -220,6 +220,7 @@ local function mint_graph(opts, mode, context_files)
         for file in pairs(context) do add_input(file) end
         local project_dir = directory(project.path)
         for _, file in ipairs(cook.resolve_gather({ join(project_dir, "**") }, {
+            join(project_dir, "bin/**"), join(project_dir, "obj/**"),
             join(project_dir, "**/bin/**"), join(project_dir, "**/obj/**"),
             join(project_dir, ".git/**"), join(project_dir, ".cook/**"), artifacts .. "/**",
         })) do add_input(file) end

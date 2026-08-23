@@ -18,7 +18,7 @@ function M.reset()
         end,
         resolve_gather = function(globs, excludes)
             gathered = { globs = globs, excludes = excludes }
-            return resolved
+            return type(resolved) == "function" and resolved(globs, excludes) or resolved
         end,
         add_unit = function(unit) units[#units + 1] = unit end,
         export = function(name, value) exported[name] = value end,
