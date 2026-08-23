@@ -16,11 +16,16 @@ recipe wasm
     }
 ```
 
-`rust:project` includes every reachable local/path package, workspace Cargo
-configuration, lock and toolchain files, and the content identities of the
-active toolchain's real `cargo` and `rustc` binaries (not rustup shims).
+`rust:project` includes every reachable local/path package under Cargo's
+all-features graph, active ancestor and Cargo-home configuration, rustup
+override files and environment, and the content identities of the active
+toolchain's real `cargo` and `rustc` binaries (not rustup shims). Configuration
+and environment values are represented only by hashes; credentials are never
+serialized into the probe value.
 Registry and git dependency source trees are not included. Local package directories are tracked conservatively, excluding
 their `target/` and `.git/` directories.
 
 Only one project may be registered per Cookfile. Build scripts that read
 undeclared files outside reachable local packages must be sealed separately.
+Local dependencies and active configuration outside the Cook workspace are
+rejected with an actionable error because Cook cannot track those files safely.

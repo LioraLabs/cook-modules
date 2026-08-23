@@ -1,8 +1,8 @@
 local M = {}
-local probes, commands, gather
+local probes, commands, gather, resolved
 
 function M.reset()
-    probes, commands, gather = {}, {}, nil
+    probes, commands, gather, resolved = {}, {}, nil, { "resolved/project/file.rs" }
     _G.cook = {
         sh = function(command)
             for prefix, response in pairs(commands) do
@@ -15,7 +15,7 @@ function M.reset()
         end,
         resolve_gather = function(globs, excludes)
             gather = { globs = globs, excludes = excludes }
-            return { "resolved/project/file.rs" }
+            return resolved
         end,
         probe = function(key, opts)
             assert(type(key) == "string" and key ~= "", "probe key required")
@@ -28,6 +28,7 @@ function M.reset()
 end
 
 function M.command(prefix, response) commands[prefix] = response end
+function M.resolved(files) resolved = files end
 function M.probe(key) return probes[key] end
 function M.gather() return gather end
 return M

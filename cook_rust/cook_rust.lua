@@ -4,9 +4,11 @@ local registered_manifest
 
 local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
 local function trim(s) return (s:gsub("%s+$", "")) end
-local function lua_list(values)
+local function lua_pairs(values)
     local quoted = {}
-    for i, value in ipairs(values) do quoted[i] = string.format("%q", value) end
+    for i, value in ipairs(values) do
+        quoted[i] = "{" .. string.format("%q,%q", value[1], value[2]) .. "}"
+    end
     return "{" .. table.concat(quoted, ",") .. "}"
 end
 local function relative(p, root)
@@ -24,7 +26,7 @@ local function normalize(p)
 end
 
 local function metadata(manifest)
-    local cmd = "cargo metadata --format-version 1 --manifest-path " .. quote(manifest)
+    local cmd = "cargo metadata --format-version 1 --all-features --manifest-path " .. quote(manifest)
     local ok, raw = pcall(cook.sh, cmd .. " 2>&1")
     if not ok then
         error("[cook_rust.project] cargo metadata failed for '" .. manifest .. "': " .. tostring(raw), 3)
@@ -35,6 +37,38 @@ local function metadata(manifest)
             .. "': " .. tostring(err) .. "\n" .. trim(raw), 3)
     end
     return value
+end
+
+local function context_files()
+    local command = [[sh -c '
+        d=$PWD; depth=0
+        while :; do
+            for f in .cargo/config .cargo/config.toml rust-toolchain rust-toolchain.toml; do
+                [ ! -f "$d/$f" ] || printf "ancestor/%s/%s\t%s/%s\n" "$depth" "$f" "$d" "$f"
+            done
+            [ "$d" = / ] && break
+            d=${d%/*}; [ -n "$d" ] || d=/; depth=$((depth + 1))
+        done
+        h=${CARGO_HOME:-${HOME:+$HOME/.cargo}}
+        if [ -n "$h" ]; then
+            for f in config config.toml; do
+                [ ! -f "$h/$f" ] || printf "cargo-home/%s\t%s/%s\n" "$f" "$h" "$f"
+            done
+        fi
+    ']]
+    local ok, raw = pcall(cook.sh, command)
+    if not ok then
+        error("[cook_rust.project] could not discover active Cargo/rustup configuration: "
+            .. tostring(raw), 3)
+    end
+    local found, seen = {}, {}
+    for key, path in raw:gmatch("([^\t\n]+)\t([^\n]+)") do
+        path = normalize(path)
+        if not seen[path] then
+            found[#found + 1], seen[path] = { path, key }, true
+        end
+    end
+    return found
 end
 
 local function toolchain()
@@ -89,31 +123,81 @@ function M.project(manifest)
     local meta = metadata(manifest)
     local cwd = trim(cook.sh("pwd"))
     local manifest_path = normalize(manifest:sub(1, 1) == "/" and manifest or cwd .. "/" .. manifest)
-    local globs, excludes = {}, {}
+    local globs, excludes, roots = {}, {}, {}
+    local external_names = {}
     for _, p in ipairs(local_packages(meta, manifest_path, manifest)) do
-        local dir = relative(assert(p.manifest_path:match("^(.*)/[^/]+$")), cwd)
+        local absolute_dir = normalize(assert(p.manifest_path:match("^(.*)/[^/]+$")))
+        local dir = relative(absolute_dir, cwd)
+        if dir:sub(1, 1) == "/" or dir == ".." or dir:sub(1, 3) == "../" then
+            error("[cook_rust.project] local dependency '" .. absolute_dir
+                .. "' is outside the Cook workspace; move it under the workspace so Cook can seal it", 2)
+        end
+        local workspace_dir = relative(absolute_dir, normalize(meta.workspace_root))
+        local namespace
+        if workspace_dir:sub(1, 1) ~= "/" and workspace_dir ~= ".."
+            and workspace_dir:sub(1, 3) ~= "../" then
+            namespace = "workspace/" .. workspace_dir
+        else
+            namespace = "local/" .. assert(p.name) .. "@" .. assert(p.version)
+            if external_names[namespace] and external_names[namespace] ~= absolute_dir then
+                error("[cook_rust.project] two external path packages share portable identity '"
+                    .. namespace .. "'; rename or version one package", 2)
+            end
+            external_names[namespace] = absolute_dir
+        end
         globs[#globs + 1] = dir .. "/**"
         excludes[#excludes + 1] = dir .. "/target/**"
         excludes[#excludes + 1] = dir .. "/.git/**"
+        roots[#roots + 1] = { absolute_dir, namespace }
     end
-    local workspace = relative(meta.workspace_root, cwd)
-    for _, file in ipairs({ "Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml",
-                            ".cargo/config", ".cargo/config.toml" }) do
-        globs[#globs + 1] = workspace .. "/" .. file
+    local contexts = context_files()
+    local workspace_root = normalize(meta.workspace_root)
+    contexts[#contexts + 1] = { workspace_root .. "/Cargo.toml", "workspace/Cargo.toml" }
+    contexts[#contexts + 1] = { workspace_root .. "/Cargo.lock", "workspace/Cargo.lock" }
+    for _, item in ipairs(contexts) do
+        local path = relative(item[1], cwd)
+        if path:sub(1, 1) == "/" or path == ".." or path:sub(1, 3) == "../" then
+            error("[cook_rust.project] active Cargo/rustup configuration '" .. item[1]
+                .. "' is outside the Cook workspace; move the setting into this project's .cargo/"
+                .. " or rust-toolchain.toml before sharing its seal", 2)
+        end
+        globs[#globs + 1] = path
     end
     table.sort(globs)
     table.sort(excludes)
 
     local files = cook.resolve_gather(globs, excludes)
+    local identities = {}
+    for _, file in ipairs(files) do
+        local absolute = normalize(file:sub(1, 1) == "/" and file or cwd .. "/" .. file)
+        local key
+        for _, item in ipairs(contexts) do
+            if absolute == item[1] then key = "context/" .. item[2]; break end
+        end
+        if not key then
+            table.sort(roots, function(a, b) return #a[1] > #b[1] end)
+            for _, root in ipairs(roots) do
+                local suffix = relative(absolute, root[1])
+                if suffix:sub(1, 1) ~= "/" then key = root[2] .. "/" .. suffix; break end
+            end
+        end
+        if not key then
+            error("[cook_rust.project] could not assign portable identity to '" .. file .. "'", 2)
+        end
+        identities[#identities + 1] = { file, key }
+    end
+    table.sort(identities, function(a, b) return a[2] < b[2] end)
     local cargo, rustc = toolchain()
     cook.probe("rust:project", {
         inputs = {
             files = files,
             tools = { cargo, rustc },
         },
-        produce = [[
-            local files = ]] .. lua_list(files) .. [[
-            local cargo, rustc = ]] .. string.format("%q, %q", cargo, rustc) .. [[
+        produce = [=[
+            local files = ]=] .. lua_pairs(identities) .. [=[
+            local cargo, rustc = ]=] .. string.format("%q, %q", cargo, rustc) .. [=[
+            local environment = { "CARGO_BUILD_TARGET", "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS",
+                "RUSTDOCFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "RUSTUP_TOOLCHAIN" }
             local K = { 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
                 0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
                 0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
@@ -150,14 +234,20 @@ function M.project(manifest)
                 return table.concat(out)
             end
             local identities = {}
-            for _, path in ipairs(files) do identities[path] = sha256(fs.read(path)) end
+            for _, file in ipairs(files) do identities[file[2]] = sha256(fs.read(file[1])) end
+            local env = {}
+            for _, name in ipairs(environment) do
+                local value = os.getenv(name)
+                if value then env[name] = sha256(value) end
+            end
             local cargo_id, rustc_id = assert(cook.tools.id(cargo)), assert(cook.tools.id(rustc))
             return {
-                schema = 1,
+                schema = 2,
                 files = identities,
+                environment = env,
                 tools = { cargo = cargo_id.hash, rustc = rustc_id.hash },
             }
-        ]],
+        ]=],
     })
     registered_manifest = manifest
     return "rust:project"
