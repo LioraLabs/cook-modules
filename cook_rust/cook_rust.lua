@@ -27,7 +27,7 @@ end
 
 local function metadata(manifest)
     local cmd = "cargo metadata --format-version 1 --all-features --manifest-path " .. quote(manifest)
-    local ok, raw = pcall(cook.sh, cmd .. " 2>&1")
+    local ok, raw = pcall(cook.sh, cmd)
     if not ok then
         error("[cook_rust.project] cargo metadata failed for '" .. manifest .. "': " .. tostring(raw), 3)
     end
