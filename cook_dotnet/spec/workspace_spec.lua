@@ -40,6 +40,7 @@ describe("cook_dotnet.workspace", function()
         local units = stub.units()
         assert.equal(3, #units)
         assert.equal("build/dotnet/discovery.lua", units[1].output)
+        assert.is_truthy(units[1].lua_code:find('configuration, query_items = "src/Graph.slnx", "build/dotnet/discovery.lua", "Debug"', 1, true))
         local by_output = {}
         for _, unit in ipairs(units) do
             if unit.outputs then by_output[unit.outputs[1]] = unit end
@@ -56,6 +57,14 @@ describe("cook_dotnet.workspace", function()
 
         assert.same("src/App/App.csproj", stub.export("dotnet:App").project)
         assert.same("net8.0", stub.export("dotnet:App").framework)
+    end)
+
+    it("puts configuration in the discovery unit identity", function()
+        local dotnet = load_workspace()
+        dotnet.workspace({ solution = "src/Graph.slnx", configuration = "Release" })
+        stub.execute("dotnet:build")
+
+        assert.is_truthy(stub.units()[1].lua_code:find('configuration, query_items = "src/Graph.slnx", "build/dotnet/discovery.lua", "Release"', 1, true))
     end)
 
     it("rejects duplicate recipe names and use inside a recipe", function()

@@ -3,5 +3,8 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="../Lib/Lib.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Lib/Lib.csproj" />
+    <ProjectReference Include="../ReleaseOnly/ReleaseOnly.csproj" Condition="'$(Configuration)' == 'Release'" />
+  </ItemGroup>
 </Project>

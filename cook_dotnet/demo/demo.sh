@@ -6,6 +6,7 @@ demo_dir=$(mktemp -d "${TMPDIR:-/tmp}/cook-dotnet-demo.XXXXXX")
 trap 'rm -rf -- "$demo_dir"' EXIT
 
 cp "$module_dir/cook_dotnet.lua" "$demo_dir/"
+cp -R "$module_dir/cook_dotnet" "$demo_dir/"
 cp -R "$module_dir/demo/." "$demo_dir/"
 cd "$demo_dir"
 export XDG_CACHE_HOME="$demo_dir/cache"
@@ -48,5 +49,16 @@ grep -q "dotnet:App.*rebuild" public.log
 echo "== runnable projection after propagation =="
 cook dotnet:run --color never --replay-logs 2>&1 | tee run.log
 grep -q "hello private-$nonce" run.log
+
+echo "== configuration change: discovery key and conditional graph change =="
+if grep -q "ReleaseOnly.csproj" build/dotnet/discovery.lua; then exit 1; fi
+sed -i 's/configuration = "Debug"/configuration = "Release"/' Cookfile
+cook dotnet:build --color never -v 2>&1 | tee release.log
+grep -q "dotnet:discover/build/dotnet/discovery.lua.*rebuild" release.log
+grep -q "ReleaseOnly.csproj" build/dotnet/discovery.lua
+sed -i 's/configuration = "Release"/configuration = "Debug"/' Cookfile
+cook dotnet:build --color never -v 2>&1 | tee debug.log
+grep -q "dotnet:discover/build/dotnet/discovery.lua.*rebuild" debug.log
+if grep -q "ReleaseOnly.csproj" build/dotnet/discovery.lua; then exit 1; fi
 
 echo "cook_dotnet demo passed"

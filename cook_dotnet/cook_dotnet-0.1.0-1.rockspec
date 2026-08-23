@@ -8,4 +8,7 @@ description = {
    maintainer = "Liora Labs <code@lioralabs.dev>",
 }
 dependencies = { "lua >= 5.4" }
-build = { type = "builtin", modules = { cook_dotnet = "cook_dotnet/cook_dotnet.lua" } }
+build = { type = "builtin", modules = {
+   cook_dotnet = "cook_dotnet/cook_dotnet.lua",
+   ["cook_dotnet.discovery"] = "cook_dotnet/cook_dotnet/discovery.lua",
+} }
