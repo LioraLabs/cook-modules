@@ -110,6 +110,36 @@ describe("cook_dotnet.workspace", function()
         assert.is_falsy(inputs:find("build/dotnet/obj/Lib/%*%*/ref/%*%.dll"))
     end)
 
+    it("isolates reference and generator inputs by target framework", function()
+        local dotnet = load_workspace()
+        local app = multi_target("App", "src/App/App.csproj", "net8.0;net10.0")
+        app.value.Items.ProjectReference = {
+            { FullPath = "src/Lib/Lib.csproj" },
+            { FullPath = "src/Gen/Gen.csproj", OutputItemType = "Analyzer",
+                ReferenceOutputAssembly = "false" },
+        }
+        stub.materialize_as({ configuration = "Release", projects = {
+            app,
+            multi_target("Lib", "src/Lib/Lib.csproj", "net8.0;net10.0"),
+            multi_target("Gen", "src/Gen/Gen.csproj", "net8.0;net10.0"),
+        } })
+        dotnet.workspace({ solution = "src/App/App.csproj", configuration = "Release" })
+        stub.execute("dotnet:build")
+
+        for _, unit in ipairs(stub.units()) do
+            local framework = unit.command:match("%-%-framework '([^']+)'$")
+            if unit.outputs[1]:find("build/dotnet/bin/App/", 1, true) then
+                local inputs = table.concat(unit.inputs, "\n")
+                assert.is_truthy(inputs:find("build/dotnet/obj/Lib/release_" .. framework
+                    .. "/ref/*.dll", 1, true))
+                assert.is_truthy(inputs:find("build/dotnet/bin/Gen/release_" .. framework
+                    .. "/**", 1, true))
+                local sibling = framework == "net8.0" and "net10.0" or "net8.0"
+                assert.is_falsy(inputs:find("release_" .. sibling, 1, true))
+            end
+        end
+    end)
+
     it("does not rescan every project directory during registration", function()
         local dotnet = load_workspace()
         dotnet.workspace({ solution = "src/Graph.slnx" })

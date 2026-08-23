@@ -240,6 +240,11 @@ local function mint_graph(opts, mode, context_files, graph)
             .. "' does not target framework '" .. framework .. "'", 2)
     end
 
+    local function output_suffix(project, framework)
+        return #project.framework_list > 1
+            and "/" .. configuration:lower() .. "_" .. framework or ""
+    end
+
     local roots = {}
     for _, project in ipairs(ordered) do
       for _, framework in ipairs(project.framework_list) do
@@ -259,15 +264,16 @@ local function mint_graph(opts, mode, context_files, graph)
             local dependency_framework = #dependency.framework_list == 1
                 and dependency.framework_list[1] or framework
             requires[#requires + 1] = recipe_for(dependency, dependency_framework)
+            local suffix = output_suffix(dependency, dependency_framework)
             if reference.generator then
-                add_input(artifacts .. "/bin/" .. dependency.name .. "/**")
+                add_input(artifacts .. "/bin/" .. dependency.name .. suffix .. "/**")
             else
-                add_input(artifacts .. "/obj/" .. dependency.name .. "/**/ref/*.dll")
+                add_input(artifacts .. "/obj/" .. dependency.name .. suffix
+                    .. (suffix == "" and "/**/ref/*.dll" or "/ref/*.dll"))
             end
         end
         table.sort(inputs); table.sort(requires)
-        local suffix = #project.framework_list > 1
-            and "/" .. configuration:lower() .. "_" .. framework or ""
+        local suffix = output_suffix(project, framework)
         local bin = artifacts .. "/bin/" .. project.name .. suffix
         local obj = artifacts .. "/obj/" .. project.name .. suffix
         local environment = 'DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
