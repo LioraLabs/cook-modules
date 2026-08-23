@@ -31,7 +31,9 @@ local function ensure_toolchain()
         produce = [[
             local dotnet = cook.sh("command -v dotnet 2>/dev/null"):match("^(%S+)")
             if not dotnet then error("[cook_dotnet] dotnet not on PATH") end
-            return { dotnet = dotnet }
+            local sdk = cook.sh("'" .. dotnet:gsub("'", "'\\''") .. "' --version 2>/dev/null"):match("^(%S+)")
+            if not sdk then error("[cook_dotnet] dotnet did not report an SDK version") end
+            return { dotnet = dotnet, sdk = sdk }
         ]],
     })
     probe_registered = true
@@ -95,9 +97,16 @@ function M.build(opts)
         .. ' && DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
         .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
         .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
+        .. '"$<' .. probe .. '.dotnet>" restore ' .. quote(opts.project)
+        .. " --artifacts-path " .. quote(artifacts)
+        .. " --use-lock-file --locked-mode -p:AllowMissingPrunePackageData=true --verbosity quiet"
+        .. ' && DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
+        .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
+        .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
         .. '"$<' .. probe .. '.dotnet>" build ' .. quote(opts.project)
         .. " --artifacts-path " .. quote(artifacts)
         .. " --configuration " .. quote(opts.configuration or "Debug")
+        .. " --no-restore -p:AllowMissingPrunePackageData=true"
     if opts.framework then command = command .. " --framework " .. quote(opts.framework) end
 
     -- Cleanup lives inside the cached unit: misses start fresh; hits skip it.
@@ -282,11 +291,13 @@ local function mint_graph(opts, mode, context_files, graph)
         local command = "rm -rf -- " .. quote(bin) .. " " .. quote(obj)
             .. " && " .. environment .. '"$<dotnet:toolchain.dotnet>" restore ' .. quote(project.path)
             .. " --artifacts-path " .. quote(artifacts)
-            .. " -p:RestoreRecursive=false --verbosity quiet"
+            .. " -p:RestoreRecursive=false --use-lock-file --locked-mode"
+            .. " -p:AllowMissingPrunePackageData=true --verbosity quiet"
             .. " && " .. environment .. '"$<dotnet:toolchain.dotnet>" build ' .. quote(project.path)
             .. " --artifacts-path " .. quote(artifacts)
             .. " --configuration " .. quote(configuration)
             .. " --no-restore --no-dependencies -p:UseCommonOutputDirectory=true"
+            .. " -p:AllowMissingPrunePackageData=true"
         if framework ~= "" then command = command .. " --framework " .. quote(framework) end
         local project_recipe = recipe_for(project, framework)
         roots[#roots + 1] = project_recipe

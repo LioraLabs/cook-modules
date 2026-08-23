@@ -30,6 +30,12 @@ the .NET SDK. It replaces mutable `bin/obj` state, not MSBuild's target model.
 The CLI home and NuGet package cache live under `.cook/dotnet/`; they are tool
 state, excluded from project inputs and build artifacts.
 
+Builds restore explicitly with `--use-lock-file --locked-mode` and then build with
+`--no-restore`; commit each generated `packages.lock.json`. The sealed toolchain
+probe returns the chosen SDK version as well as the resolved `dotnet` executable.
+`cook_dotnet` also passes `AllowMissingPrunePackageData` so Web SDK projects do not
+need the distro-specific ref-pack workaround in their `.csproj`.
+
 ## Project graph
 
 `workspace` asks MSBuild for evaluated projects, sources, target frameworks,
