@@ -20,15 +20,26 @@ local metadata = [[{
 local function load_module()
     package.loaded.cook_rust = nil
     stub.reset()
-    stub.command("cargo metadata", function(command)
+    stub.command("'/path/bin/cargo' metadata", function(command)
         assert.is_truthy(command:find("--all-features", 1, true))
         return metadata
     end)
     stub.command("pwd", "/work\n")
     stub.command("sh -c", "ancestor/0/.cargo/config.toml\t/work/.cargo/config.toml\n")
-    stub.command("rustc --print sysroot", "/toolchains/stable\n")
+    stub.command("command -v 'cargo'", "/path/bin/cargo\n")
+    stub.command("command -v 'rustc'", "/path/bin/rustc\n")
+    stub.command("'/path/bin/rustc' --print sysroot", "/toolchains/stable\n")
     stub.resolved({ "app/src/lib.rs", ".cargo/config.toml", "Cargo.lock" })
     return require("cook_rust")
+end
+
+local function with_env(values, fn)
+    local getenv = os.getenv
+    os.getenv = function(name) return values[name] end
+    local ok, result = pcall(fn)
+    os.getenv = getenv
+    if not ok then error(result, 0) end
+    return result
 end
 
 local function relocated_value(root, config_name)
@@ -43,11 +54,13 @@ local function relocated_value(root, config_name)
     }]=]):gsub("EXTERNAL", external):gsub("ROOT", root)
     package.loaded.cook_rust = nil
     stub.reset()
-    stub.command("cargo metadata", meta)
+    stub.command("'/path/bin/cargo' metadata", meta)
     stub.command("pwd", root .. "\n")
     stub.command("sh -c", "ancestor/0/.cargo/" .. config_name .. "\t"
         .. root .. "/.cargo/" .. config_name .. "\n")
-    stub.command("rustc --print sysroot", "/toolchains/stable\n")
+    stub.command("command -v 'cargo'", "/path/bin/cargo\n")
+    stub.command("command -v 'rustc'", "/path/bin/rustc\n")
+    stub.command("'/path/bin/rustc' --print sysroot", "/toolchains/stable\n")
     stub.resolved({ root .. "/app/src/lib.rs", external .. "/src/lib.rs",
         root .. "/.cargo/" .. config_name })
     require("cook_rust").project(root .. "/app/Cargo.toml")
@@ -66,7 +79,8 @@ describe("cook_rust.project", function()
         assert.equal("rust:project", rust.project("app/Cargo.toml"))
 
         local probe = assert(stub.probe("rust:project"))
-        assert.same({ "/toolchains/stable/bin/cargo", "/toolchains/stable/bin/rustc" }, probe.inputs.tools)
+        assert.same({ "/path/bin/cargo", "/toolchains/stable/bin/cargo",
+            "/toolchains/stable/bin/rustc", "/path/bin/rustc" }, probe.inputs.tools)
         assert.same({ "app/src/lib.rs", ".cargo/config.toml", "Cargo.lock" }, probe.inputs.files)
 
         _G.fs = { read = function() return "abc" end }
@@ -76,8 +90,10 @@ describe("cook_rust.project", function()
                      value.files["workspace/app/src/lib.rs"])
         assert.is_truthy(value.files["context/ancestor/0/.cargo/config.toml"])
         assert.is_truthy(value.files["context/workspace/Cargo.lock"])
-        assert.same({ cargo = "/toolchains/stable/bin/cargo-hash",
-                      rustc = "/toolchains/stable/bin/rustc-hash" }, value.tools)
+        assert.same({ cargo_command = "/path/bin/cargo-hash",
+                      cargo = "/toolchains/stable/bin/cargo-hash",
+                      rustc = "/toolchains/stable/bin/rustc-hash",
+                      rustc_command = "/path/bin/rustc-hash" }, value.tools)
 
         local gather = stub.gather()
         assert.is_truthy(table.concat(gather.globs, "\n"):find("app/%*%*"))
@@ -92,6 +108,44 @@ describe("cook_rust.project", function()
         local rust = load_module()
         rust.project("app/Cargo.toml")
         assert.is_truthy(table.concat(stub.gather().globs, "\n"):find("optional/%*%*"))
+    end)
+
+    it("keys the PATH cargo and configured compiler wrappers by executable bytes", function()
+        local rust = load_module()
+        stub.command("test -x '/work/tools/rust compiler'", "")
+        stub.command("test -x '/work/tools/cache wrapper'", "")
+        stub.command("command -v 'workspace-wrapper'", "/path/bin/workspace-wrapper\n")
+        stub.command("'/work/tools/rust compiler' --print sysroot", "/toolchains/stable\n")
+        with_env({
+            RUSTC = "tools/rust compiler",
+            RUSTC_WRAPPER = "tools/cache wrapper",
+            RUSTC_WORKSPACE_WRAPPER = "workspace-wrapper",
+        }, function() rust.project("app/Cargo.toml") end)
+
+        local probe = assert(stub.probe("rust:project"))
+        assert.same({ "/path/bin/cargo", "/toolchains/stable/bin/cargo",
+            "/toolchains/stable/bin/rustc", "/work/tools/rust compiler",
+            "/work/tools/cache wrapper", "/path/bin/workspace-wrapper" }, probe.inputs.tools)
+
+        _G.fs = { read = function() return "source" end }
+        local bytes = { ["/path/bin/cargo"] = "cargo-a", ["/work/tools/rust compiler"] = "rustc-a",
+            ["/toolchains/stable/bin/cargo"] = "toolchain-cargo-a",
+            ["/toolchains/stable/bin/rustc"] = "toolchain-rustc-a",
+            ["/work/tools/cache wrapper"] = "wrapper-a",
+            ["/path/bin/workspace-wrapper"] = "workspace-a" }
+        cook.tools = { id = function(path) return { hash = bytes[path] } end }
+        local produce = assert(load(probe.produce))
+        local before = produce()
+        bytes["/work/tools/cache wrapper"] = "wrapper-b"
+        local after = produce()
+        assert.not_same(before, after)
+        bytes["/work/tools/rust compiler"] = "rustc-b"
+        local after_rustc = produce()
+        assert.not_same(after, after_rustc)
+        assert.same("cargo-a", after.tools.cargo_command)
+        assert.same("rustc-b", after_rustc.tools.rustc_command)
+        assert.same("wrapper-b", after.tools.rustc_wrapper)
+        assert.same("workspace-a", after.tools.rustc_workspace_wrapper)
     end)
 
     it("keeps workspace and external path identities stable after relocation", function()
@@ -129,15 +183,25 @@ describe("cook_rust.project", function()
         assert.is_truthy(err:find("non-empty path", 1, true))
 
         rust = load_module()
-        stub.command("cargo metadata", function() error("manifest not found") end)
+        stub.command("'/path/bin/cargo' metadata", function() error("manifest not found") end)
         ok, err = pcall(rust.project, "missing/Cargo.toml")
         assert.is_false(ok)
         assert.is_truthy(err:find("cargo metadata failed", 1, true))
     end)
 
+    it("reports an unresolved configured compiler by name", function()
+        local rust = load_module()
+        stub.command("command -v 'missing-rustc'", function() error("not found") end)
+        local ok, err = pcall(function()
+            with_env({ RUSTC = "missing-rustc" }, function() rust.project("app/Cargo.toml") end)
+        end)
+        assert.is_false(ok)
+        assert.is_truthy(err:find("could not resolve rustc executable 'missing-rustc' on PATH", 1, true))
+    end)
+
     it("keeps Cargo stderr out of metadata before refusing external dependencies", function()
         local rust = load_module()
-        stub.command("cargo metadata", function(command)
+        stub.command("'/path/bin/cargo' metadata", function(command)
             assert.is_falsy(command:find("2>&1", 1, true))
             io.stderr:write("    Updating crates.io index\n")
             return metadata:gsub("/work/shared", "/outside/shared")

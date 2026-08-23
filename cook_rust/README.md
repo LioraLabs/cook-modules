@@ -18,8 +18,9 @@ recipe wasm
 
 `rust:project` includes every reachable local/path package under Cargo's
 all-features graph, active ancestor and Cargo-home configuration, rustup
-override files and environment, and the content identities of the active
-toolchain's real `cargo` and `rustc` binaries (not rustup shims). Configuration
+override files and environment, and the content identities of the PATH-selected
+Cargo, configured compiler wrappers, and active toolchain's real `cargo` and
+`rustc` binaries. Configuration
 and environment values are represented only by hashes; credentials are never
 serialized into the probe value.
 Registry and git dependency source trees are not included. Local package directories are tracked conservatively, excluding

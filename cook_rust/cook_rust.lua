@@ -25,8 +25,8 @@ local function normalize(p)
     return (p:sub(1, 1) == "/" and "/" or "") .. table.concat(parts, "/")
 end
 
-local function metadata(manifest)
-    local cmd = "cargo metadata --format-version 1 --all-features --manifest-path " .. quote(manifest)
+local function metadata(cargo, manifest)
+    local cmd = quote(cargo) .. " metadata --format-version 1 --all-features --manifest-path " .. quote(manifest)
     local ok, raw = pcall(cook.sh, cmd)
     if not ok then
         error("[cook_rust.project] cargo metadata failed for '" .. manifest .. "': " .. tostring(raw), 3)
@@ -71,10 +71,31 @@ local function context_files()
     return found
 end
 
-local function toolchain()
-    local ok, root = pcall(cook.sh, "rustc --print sysroot 2>&1")
+local function executable(name, configured, cwd)
+    local value = configured or name
+    if value:find("/", 1, true) then
+        local path = normalize(value:sub(1, 1) == "/" and value or cwd .. "/" .. value)
+        local ok = pcall(cook.sh, "test -x " .. quote(path))
+        if not ok then
+            error("[cook_rust.project] " .. name .. " executable '" .. value
+                .. "' does not exist or is not executable", 3)
+        end
+        return path
+    end
+    local ok, path = pcall(cook.sh, "command -v " .. quote(value))
+    path = ok and trim(path) or ""
+    if path == "" or path:sub(1, 1) ~= "/" then
+        error("[cook_rust.project] could not resolve " .. name .. " executable '" .. value
+            .. "' on PATH", 3)
+    end
+    return normalize(path)
+end
+
+local function toolchain(rustc)
+    local ok, root = pcall(cook.sh, quote(rustc) .. " --print sysroot 2>&1")
     if not ok or not trim(root):match("%S") then
-        error("[cook_rust.project] could not resolve the active Rust sysroot: " .. tostring(root), 3)
+        error("[cook_rust.project] could not resolve the active Rust sysroot using '"
+            .. rustc .. "': " .. tostring(root), 3)
     end
     root = trim(root)
     return root .. "/bin/cargo", root .. "/bin/rustc"
@@ -120,8 +141,19 @@ function M.project(manifest)
             .. registered_manifest .. "')", 2)
     end
 
-    local meta = metadata(manifest)
     local cwd = trim(cook.sh("pwd"))
+    local cargo_command = executable("cargo", nil, cwd)
+    local rustc_command = executable("rustc", os.getenv("RUSTC"), cwd)
+    local cargo, rustc = toolchain(rustc_command)
+    local tools = { { "cargo_command", cargo_command }, { "cargo", cargo }, { "rustc", rustc } }
+    if rustc_command ~= rustc then tools[#tools + 1] = { "rustc_command", rustc_command } end
+    for _, name in ipairs({ "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER" }) do
+        local value = os.getenv(name)
+        if value and value ~= "" then
+            tools[#tools + 1] = { name:lower(), executable(name, value, cwd) }
+        end
+    end
+    local meta = metadata(cargo_command, manifest)
     local manifest_path = normalize(manifest:sub(1, 1) == "/" and manifest or cwd .. "/" .. manifest)
     local globs, excludes, roots = {}, {}, {}
     local external_names = {}
@@ -187,17 +219,18 @@ function M.project(manifest)
         identities[#identities + 1] = { file, key }
     end
     table.sort(identities, function(a, b) return a[2] < b[2] end)
-    local cargo, rustc = toolchain()
+    local tool_inputs = {}
+    for i, tool in ipairs(tools) do tool_inputs[i] = tool[2] end
     cook.probe("rust:project", {
         inputs = {
             files = files,
-            tools = { cargo, rustc },
+            tools = tool_inputs,
         },
         produce = [=[
             local files = ]=] .. lua_pairs(identities) .. [=[
-            local cargo, rustc = ]=] .. string.format("%q, %q", cargo, rustc) .. [=[
+            local tools = ]=] .. lua_pairs(tools) .. [=[
             local environment = { "CARGO_BUILD_TARGET", "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS",
-                "RUSTDOCFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "RUSTUP_TOOLCHAIN" }
+                "RUSTDOCFLAGS", "RUSTUP_TOOLCHAIN" }
             local K = { 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
                 0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
                 0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
@@ -240,12 +273,15 @@ function M.project(manifest)
                 local value = os.getenv(name)
                 if value then env[name] = sha256(value) end
             end
-            local cargo_id, rustc_id = assert(cook.tools.id(cargo)), assert(cook.tools.id(rustc))
+            local tool_ids = {}
+            for _, tool in ipairs(tools) do
+                tool_ids[tool[1]] = assert(cook.tools.id(tool[2])).hash
+            end
             return {
-                schema = 2,
+                schema = 3,
                 files = identities,
                 environment = env,
-                tools = { cargo = cargo_id.hash, rustc = rustc_id.hash },
+                tools = tool_ids,
             }
         ]=],
     })
