@@ -158,23 +158,11 @@ local function discover_project(project, value)
     }
 end
 
-local function read_manifest(pathname)
-    local chunk, err = load(fs.read(pathname), "@" .. pathname, "t", {})
-    if not chunk then error("[cook_dotnet.workspace] invalid discovery manifest: " .. tostring(err), 2) end
-    local ok, value = pcall(chunk)
-    if not ok or type(value) ~= "table" or type(value.projects) ~= "table" then
-        error("[cook_dotnet.workspace] invalid discovery manifest: " .. tostring(value), 2)
-    end
-    return value
-end
-
 local function recipe_segment(name)
     return (name:gsub("[^A-Za-z0-9_+-]", "-"))
 end
 
-local function mint_graph(opts, mode, context_files)
-    local artifact = cook.materialize("dotnet:discover")
-    local manifest = read_manifest(artifact)
+local function mint_graph(opts, mode, context_files, graph)
     local artifacts, configuration = opts.artifacts, opts.configuration
     local context = {}
     for _, file in ipairs(context_files) do
@@ -186,7 +174,7 @@ local function mint_graph(opts, mode, context_files)
     end
 
     local projects = {}
-    for _, entry in ipairs(manifest.projects) do
+    for _, entry in ipairs(graph.projects) do
         local info = discover_project(entry.path, entry.value)
         projects[info.path] = info
     end
@@ -340,21 +328,14 @@ function M.workspace(opts)
     local inputs = cook.resolve_gather({ solution, "**/*.csproj", "**/*.props", "**/*.targets",
         "**/global.json", "**/NuGet.config", "**/nuget.config", "**/packages.lock.json", "**/.editorconfig" },
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
-    local manifest = artifacts .. "/discovery.lua"
-    cook.recipe("dotnet:discover", { origin = "cook_dotnet.workspace" }, function()
-        cook.add_unit({
-            inputs = inputs,
-            output = manifest,
-            lua_code = discovery.code(solution, manifest, configuration),
-            probes = { "dotnet:toolchain" },
-        })
-    end)
+    local graph = cook.materialize("graph", { files = inputs, tools = { "dotnet" } },
+        discovery.producer(solution, configuration))
     local settings = { artifacts = artifacts, configuration = configuration }
     cook.recipe("dotnet:build", { origin = "cook_dotnet.workspace" }, function()
-        mint_graph(settings, "build", inputs)
+        mint_graph(settings, "build", inputs, graph)
     end)
     cook.recipe("dotnet:run", { origin = "cook_dotnet.workspace" }, function()
-        mint_graph(settings, "run", inputs)
+        mint_graph(settings, "run", inputs, graph)
     end)
     return { "dotnet:build", "dotnet:run" }
 end

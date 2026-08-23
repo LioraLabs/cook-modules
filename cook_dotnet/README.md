@@ -42,8 +42,8 @@ use cook_dotnet
 cook_dotnet.workspace({ solution = "src/Product.slnx" })
 ```
 
-`cook dotnet:build` builds the whole solution. `dotnet:discover` is an ordinary
-cached recipe whose manifest is materialized during registration, so warm runs
+`cook dotnet:build` builds the whole solution. Discovery uses Cook's registration-time
+`cook.materialize` cache and returns the structured graph directly, so warm runs
 do not start MSBuild just to rediscover the graph. Each project restores and builds
 inside `build/dotnet/{bin,obj}/<project>` with MSBuild's recursive build disabled.
 Consumers fold dependency reference assemblies, so an implementation-only

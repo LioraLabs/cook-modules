@@ -1,10 +1,10 @@
 local M = {}
 local json = require("cjson.safe")
-local probes, units, exported, gathered, current_recipe, recipes, commands, resolved, files, materialized
+local probes, units, exported, gathered, current_recipe, recipes, commands, resolved, materialized, materialized_value
 
 function M.reset()
     probes, units, exported, gathered, current_recipe = {}, {}, {}, nil, nil
-    recipes, commands, files, materialized = {}, {}, {}, nil
+    recipes, commands, materialized, materialized_value = {}, {}, nil, nil
     resolved = { "src/App.csproj", "src/Program.cs" }
     _G.recipe = nil
     _G.cook = {
@@ -23,9 +23,9 @@ function M.reset()
         add_unit = function(unit) units[#units + 1] = unit end,
         export = function(name, value) exported[name] = value end,
         json_decode = function(value) return assert(json.decode(value)) end,
-        materialize = function(name)
-            M.execute(name)
-            return assert(materialized, "no materialized path configured")
+        materialize = function(name, spec, produce)
+            materialized = { name = name, spec = spec, produce = produce }
+            return assert(materialized_value, "no materialized value configured")
         end,
         require_recipe = function(name) M.execute(name) end,
         sh = function(command)
@@ -40,9 +40,7 @@ function M.reset()
             recipes[name] = { opts = opts, body = body }
         end,
     }
-    _G.fs = {
-        read = function(pathname) return assert(files[pathname], "no file configured: " .. pathname) end,
-    }
+    _G.fs = {}
 end
 
 function M.in_recipe(name, fn)
@@ -60,7 +58,8 @@ function M.gathered() return gathered end
 function M.recipes() return recipes end
 function M.command(prefix, response) commands[prefix] = response end
 function M.resolved(files) resolved = files end
-function M.materialized(pathname, contents) materialized, files[pathname] = pathname, contents end
+function M.materialize_as(value) materialized_value = value end
+function M.materialized() return materialized end
 function M.execute(name)
     local entry = assert(recipes[name], "unknown recipe " .. name)
     if entry.executed then return end

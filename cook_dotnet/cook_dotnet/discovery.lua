@@ -3,9 +3,9 @@ local M = {}
 local query_items = "ProjectReference,Compile,Content,EmbeddedResource,None,AdditionalFiles,"
     .. "Analyzer,EditorConfigFiles,RazorComponent"
 
-function M.code(solution, output, configuration)
-    return ([=[
-local solution, output, configuration, query_items = %q, %q, %q, %q
+function M.producer(solution, configuration)
+    local code = ([=[
+local solution, configuration, query_items = %q, %q, %q
 local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
 local function trim(s) return (s:gsub("^%%s+", ""):gsub("%%s+$", "")) end
 local function normalize(p)
@@ -23,28 +23,13 @@ local function relative(p, cwd)
 end
 local function directory(p) return p:match("^(.*)/[^/]+$") or "." end
 local function join(root, child) return root == "." and child or root .. "/" .. child end
-local function encode(value)
-    if type(value) == "string" then return string.format("%%q", value) end
-    if type(value) ~= "table" then return tostring(value) end
-    local keys = {}; for key in pairs(value) do keys[#keys + 1] = key end
-    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-    local out = { "{" }
-    for _, key in ipairs(keys) do
-        out[#out + 1] = "[" .. encode(key) .. "]=" .. encode(value[key]) .. ","
-    end
-    out[#out + 1] = "}"; return table.concat(out)
-end
-
 local cwd = trim(cook.sh("pwd"))
-local tool = cook.probes.get("dotnet:toolchain")
+local tool = trim(cook.sh("command -v dotnet"))
 local env = "DOTNET_CLI_HOME=" .. quote(cwd .. "/.cook/dotnet/home")
     .. " NUGET_PACKAGES=" .. quote(cwd .. "/.cook/dotnet/packages")
     .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 DOTNET_CLI_UI_LANGUAGE=en "
-fs.mkdir_p(directory(output))
-local query_output = output .. ".query"
 local function dotnet(args)
-    cook.sh(env .. quote(tool.dotnet) .. args .. " > " .. quote(query_output))
-    local value = fs.read(query_output); fs.remove(query_output); return value
+    return cook.sh(env .. quote(tool) .. args)
 end
 local root, queue = directory(solution), {}
 if solution:lower():match("%%.csproj$") then queue[1] = solution else
@@ -99,8 +84,9 @@ while next_index <= #queue do
     end
 end
 table.sort(projects, function(a, b) return a.path < b.path end)
-fs.write(output, "return " .. encode({ configuration = configuration, projects = projects }) .. "\n")
-]=]):format(solution, output, configuration, query_items)
+return { configuration = configuration, projects = projects }
+]=]):format(solution, configuration, query_items)
+    return assert(load(code, "@cook_dotnet.discovery", "t", _ENV))
 end
 
 return M

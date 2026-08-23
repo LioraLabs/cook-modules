@@ -1,46 +1,45 @@
 local stub = require("spec.cook_stub")
 
-local function project_lua(name, path, reference, output_type)
-    local ref = reference and ('{{FullPath=%q}}'):format(reference) or "{}"
-    return ([=[{path=%q,value={Properties={MSBuildProjectName=%q,TargetFramework="net8.0",TargetFrameworks="",
-      OutputType=%q,TargetFileName=%q,MSBuildAllProjects=%q},Items={ProjectReference=%s,
-      Compile={{FullPath=%q}},Content={},EmbeddedResource={},None={},AdditionalFiles={},Analyzer={},
-      EditorConfigFiles={},RazorComponent={}}}}]=]):format(path, name, output_type or "Library",
-        name .. ".dll", path, ref, path:match("(.+)/[^/]+$") .. "/" .. name .. ".cs")
+local function project(name, path, reference, output_type)
+    return { path = path, value = { Properties = { MSBuildProjectName = name, TargetFramework = "net8.0",
+        TargetFrameworks = "", OutputType = output_type or "Library", TargetFileName = name .. ".dll",
+        MSBuildAllProjects = path }, Items = { ProjectReference = reference and { { FullPath = reference } } or {},
+        Compile = { { FullPath = path:match("(.+)/[^/]+$") .. "/" .. name .. ".cs" } }, Content = {},
+        EmbeddedResource = {}, None = {}, AdditionalFiles = {}, Analyzer = {}, EditorConfigFiles = {},
+        RazorComponent = {} } } }
 end
 
 local function load_workspace(duplicate)
     package.loaded.cook_dotnet = nil
     stub.reset()
-    local projects
-    if duplicate then
-        projects = project_lua("App", "src/A/App.csproj") .. "," .. project_lua("App", "src/B/App.csproj")
-    else
-        projects = project_lua("App", "src/App/App.csproj", "src/Lib/Lib.csproj", "Exe") .. ","
-            .. project_lua("Lib", "src/Lib/Lib.csproj")
-    end
-    stub.materialized("build/dotnet/discovery.lua", "return {projects={" .. projects .. "}}")
+    local projects = duplicate
+        and { project("App", "src/A/App.csproj"), project("App", "src/B/App.csproj") }
+        or { project("App", "src/App/App.csproj", "src/Lib/Lib.csproj", "Exe"),
+            project("Lib", "src/Lib/Lib.csproj") }
+    stub.materialize_as({ configuration = "Debug", projects = projects })
     stub.resolved({ "src/Graph.slnx", "src/App/App.csproj", "src/App/App.cs",
         "src/Lib/Lib.csproj", "src/Lib/Lib.cs", "src/Directory.Build.props" })
-    return require("cook_dotnet")
+    return require("cook_dotnet"), projects
 end
 
 describe("cook_dotnet.workspace", function()
     it("mints one ordered recipe per evaluated project", function()
-        local dotnet = load_workspace()
+        local dotnet, projects = load_workspace()
         assert.same({ "dotnet:build", "dotnet:run" }, dotnet.workspace({ solution = "src/Graph.slnx" }))
+        local recipes = stub.recipes()
+        assert.is_nil(recipes["dotnet:discover"])
         stub.execute("dotnet:build")
 
-        local recipes = stub.recipes()
         assert.same({}, recipes["dotnet:Lib"].opts.requires)
         assert.same({ "dotnet:Lib" }, recipes["dotnet:App"].opts.requires)
-        assert.is_truthy(recipes["dotnet:discover"])
         assert.same({ "dotnet:App" }, recipes["dotnet:App:run"].opts.requires)
 
         local units = stub.units()
-        assert.equal(3, #units)
-        assert.equal("build/dotnet/discovery.lua", units[1].output)
-        assert.is_truthy(units[1].lua_code:find('configuration, query_items = "src/Graph.slnx", "build/dotnet/discovery.lua", "Debug"', 1, true))
+        assert.equal(2, #units)
+        local materialized = stub.materialized()
+        assert.equal("graph", materialized.name)
+        assert.same({ "dotnet" }, materialized.spec.tools)
+        assert.is_function(materialized.produce)
         local by_output = {}
         for _, unit in ipairs(units) do
             if unit.outputs then by_output[unit.outputs[1]] = unit end
@@ -64,7 +63,7 @@ describe("cook_dotnet.workspace", function()
         dotnet.workspace({ solution = "src/Graph.slnx", configuration = "Release" })
         stub.execute("dotnet:build")
 
-        assert.is_truthy(stub.units()[1].lua_code:find('configuration, query_items = "src/Graph.slnx", "build/dotnet/discovery.lua", "Release"', 1, true))
+        assert.is_function(stub.materialized().produce)
     end)
 
     it("keeps project bin and obj trees out of build inputs", function()
@@ -98,19 +97,17 @@ describe("cook_dotnet.workspace", function()
     end)
 
     it("keeps evaluated project bin and obj items out of build inputs", function()
-        local dotnet = load_workspace()
-        stub.materialized("build/dotnet/discovery.lua", [[return {projects={{
-          path="src/App/App.csproj",value={Properties={MSBuildProjectName="App",TargetFramework="net8.0",
-          TargetFrameworks="",OutputType="Library",TargetFileName="App.dll",
-          MSBuildAllProjects="src/App/App.csproj;src/App/obj/generated.props"},Items={ProjectReference={},
-          Compile={{FullPath="src/App/App.cs"}},Content={},EmbeddedResource={},
-          None={{FullPath="src/App/bin/Debug/net8.0/App.dll"},{FullPath="src/App/obj/Debug/net8.0/App.dll"},
-          {FullPath="src/App/assets/kept.txt"},{FullPath="src/Shared/bin/kept.txt"}},AdditionalFiles={},Analyzer={},EditorConfigFiles={},
-          RazorComponent={}}}}}}]])
+        local dotnet, projects = load_workspace()
+        projects[1].value.Properties.OutputType = "Library"
+        projects[1].value.Properties.MSBuildAllProjects = "src/App/App.csproj;src/App/obj/generated.props"
+        projects[1].value.Items.ProjectReference = {}
+        projects[1].value.Items.None = { { FullPath = "src/App/bin/Debug/net8.0/App.dll" },
+            { FullPath = "src/App/obj/Debug/net8.0/App.dll" }, { FullPath = "src/App/assets/kept.txt" },
+            { FullPath = "src/Shared/bin/kept.txt" } }
         dotnet.workspace({ solution = "src/App/App.csproj" })
         stub.execute("dotnet:build")
 
-        local inputs = table.concat(stub.units()[2].inputs, "\n")
+        local inputs = table.concat(stub.units()[1].inputs, "\n")
         assert.is_falsy(inputs:find("src/App/bin/", 1, true))
         assert.is_falsy(inputs:find("src/App/obj/", 1, true))
         assert.is_truthy(inputs:find("src/App/assets/kept.txt", 1, true))

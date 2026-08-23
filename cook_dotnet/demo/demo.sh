@@ -17,20 +17,14 @@ sed -i "s/v1/baseline-$nonce/" Lib/Message.cs
 echo "== cold graph build =="
 cook dotnet:build --color never
 
-echo "== unchanged graph: cache hit =="
-cook dotnet:build --color never
+echo "== unchanged graph: materializer restore without MSBuild =="
+cook dotnet:build --color never -v 2>&1 | tee warm.log
+grep -q "cook materialize cook_dotnet.graph restored" warm.log
 
-echo "== missing discovery manifest: restored without MSBuild =="
-mv build/dotnet/discovery.lua "$demo_dir/discovery.saved"
-cook dotnet:build --color never -v 2>&1 | tee restore.log
-test -f build/dotnet/discovery.lua
-if grep -q "dotnet:discover/build/dotnet/discovery.lua.*rebuild" restore.log; then exit 1; fi
-rm -f "$demo_dir/discovery.saved"
-
-echo "== project change: discovery invalidates through its recipe input =="
+echo "== project change: graph materializer invalidates =="
 printf '\n<!-- discovery-%s -->\n' "$nonce" >> Lib/Lib.csproj
 cook dotnet:build --color never -v 2>&1 | tee discovery-change.log
-grep -q "dotnet:discover/build/dotnet/discovery.lua.*rebuild" discovery-change.log
+grep -q "cook materialize cook_dotnet.graph ran" discovery-change.log
 
 echo "== private implementation change: App stays cached =="
 sed -i "s/baseline-$nonce/private-$nonce/" Lib/Message.cs
@@ -51,14 +45,13 @@ cook dotnet:run --color never --replay-logs 2>&1 | tee run.log
 grep -q "hello private-$nonce" run.log
 
 echo "== configuration change: discovery key and conditional graph change =="
-if grep -q "ReleaseOnly.csproj" build/dotnet/discovery.lua; then exit 1; fi
 sed -i 's/configuration = "Debug"/configuration = "Release"/' Cookfile
 cook dotnet:build --color never -v 2>&1 | tee release.log
-grep -q "dotnet:discover/build/dotnet/discovery.lua.*rebuild" release.log
-grep -q "ReleaseOnly.csproj" build/dotnet/discovery.lua
+grep -q "cook materialize cook_dotnet.graph ran" release.log
+grep -q "dotnet:ReleaseOnly" release.log
 sed -i 's/configuration = "Release"/configuration = "Debug"/' Cookfile
 cook dotnet:build --color never -v 2>&1 | tee debug.log
-grep -q "dotnet:discover.*1/2 cached" debug.log
-if grep -q "ReleaseOnly.csproj" build/dotnet/discovery.lua; then exit 1; fi
+grep -q "cook materialize cook_dotnet.graph restored" debug.log
+if grep -q "dotnet:ReleaseOnly" debug.log; then exit 1; fi
 
 echo "cook_dotnet demo passed"
