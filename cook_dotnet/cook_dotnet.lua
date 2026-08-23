@@ -104,20 +104,20 @@ function M.build(opts)
 
     -- ponytail: shared CLI/NuGet caches; split per SDK only if dotnet proves they conflict.
     local dotnet = '"$<dotnet:tool.dotnet.path>"'
-    local web = dotnet .. " msbuild " .. quote(opts.project)
-        .. " -nologo -getProperty:UsingMicrosoftNETSdkWeb"
-    local command = "rm -rf -- " .. quote(artifacts)
-        .. " && web=$(" .. web .. ")"
-        .. " && if [ \"$web\" = true ]; then prune=-p:AllowMissingPrunePackageData=true; else prune=; fi"
-        .. ' && DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
+    local environment = 'DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
         .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
         .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
+    local web = project_lower:match("%.csproj$")
+        and (environment .. dotnet .. " msbuild " .. quote(opts.project)
+            .. " -nologo -getProperty:UsingMicrosoftNETSdkWeb")
+    local command = "rm -rf -- " .. quote(artifacts)
+        .. (web and (" && web=$(" .. web .. ")") or " && web=true")
+        .. " && if [ \"$web\" = true ]; then prune=-p:AllowMissingPrunePackageData=true; else prune=; fi"
+        .. " && " .. environment
         .. dotnet .. " restore " .. quote(opts.project)
         .. " --artifacts-path " .. quote(artifacts)
         .. " --use-lock-file --locked-mode --verbosity quiet $prune"
-        .. ' && DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
-        .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
-        .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
+        .. " && " .. environment
         .. dotnet .. " build " .. quote(opts.project)
         .. " --artifacts-path " .. quote(artifacts)
         .. " --configuration " .. quote(opts.configuration or "Debug")
@@ -451,10 +451,13 @@ function M.workspace(opts)
     end
 
     ensure_toolchain()
+    local graph_inputs = cook.resolve_gather({ solution, "**/*.csproj", "**/*.props", "**/*.targets",
+        "**/global.json", "**/NuGet.config", "**/nuget.config", "**/.editorconfig" },
+        { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
     local inputs = cook.resolve_gather({ solution, "**/*.csproj", "**/*.props", "**/*.targets",
         "**/global.json", "**/NuGet.config", "**/nuget.config", "**/packages.lock.json", "**/.editorconfig" },
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
-    local graph = cook.materialize("graph", { files = inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
+    local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
         discovery.producer(solution, configuration))
     local settings = { artifacts = artifacts, configuration = configuration }
     cook.recipe("dotnet:build", { origin = "cook_dotnet.workspace" }, function()

@@ -51,6 +51,7 @@ describe("cook_dotnet.workspace", function()
         assert.equal("graph", materialized.name)
         assert.same({ "dotnet" }, materialized.spec.tools)
         assert.same({ "dotnet:toolchain" }, materialized.spec.seals)
+        assert.is_falsy(table.concat(materialized.spec.files, "\n"):find("packages.lock.json", 1, true))
         assert.is_function(materialized.produce)
         local by_output = {}
         for _, unit in ipairs(units) do
@@ -152,7 +153,7 @@ describe("cook_dotnet.workspace", function()
         dotnet.workspace({ solution = "src/Graph.slnx" })
         stub.execute("dotnet:build")
 
-        assert.equal(2, stub.gather_count())
+        assert.equal(3, stub.gather_count())
     end)
 
     it("keeps evaluated project bin and obj items out of build inputs", function()

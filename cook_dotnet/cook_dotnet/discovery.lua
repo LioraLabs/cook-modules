@@ -17,10 +17,11 @@ local root = base:match("^(.*)/sdk/[^/]+/?$")
 if not root then error("[cook_dotnet] dotnet did not report its selected SDK path") end
 local function ref_pack(name)
     local path = root .. "/packs/" .. name
-    local versions = trim(cook.sh("if [ -d " .. quote(path) .. "]; then find " .. quote(path)
-        .. " -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' | LC_ALL=C sort; fi; true"))
-    local digest = trim(cook.sh("if [ -d " .. quote(path) .. "]; then cd " .. quote(path)
-        .. " && find . -type f -exec sha256sum {} + | LC_ALL=C sort | sha256sum | cut -d' ' -f1; fi; true"))
+    local versions = trim(cook.sh("if [ -d " .. quote(path) .. " ]; then for v in " .. quote(path)
+        .. "/*; do [ ! -d \"$v\" ] || basename \"$v\"; done | LC_ALL=C sort; fi"))
+    local digest = trim(cook.sh("if [ -d " .. quote(path) .. " ]; then cd " .. quote(path)
+        .. " && find . -type f -exec openssl dgst -sha256 {} \\; | LC_ALL=C sort"
+        .. " | openssl dgst -sha256; fi"))
     return { versions = versions, digest = digest ~= "" and digest or "<missing>" }
 end
 return {
