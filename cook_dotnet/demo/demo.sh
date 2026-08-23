@@ -58,7 +58,7 @@ grep -q "dotnet:discover/build/dotnet/discovery.lua.*rebuild" release.log
 grep -q "ReleaseOnly.csproj" build/dotnet/discovery.lua
 sed -i 's/configuration = "Release"/configuration = "Debug"/' Cookfile
 cook dotnet:build --color never -v 2>&1 | tee debug.log
-grep -q "dotnet:discover/build/dotnet/discovery.lua.*rebuild" debug.log
+grep -q "dotnet:discover.*1/2 cached" debug.log
 if grep -q "ReleaseOnly.csproj" build/dotnet/discovery.lua; then exit 1; fi
 
 echo "cook_dotnet demo passed"
