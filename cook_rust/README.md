@@ -1,7 +1,26 @@
 # cook_rust
 
-**Stub rock for the cook Rust build module.** Real implementation tracked in [SHI-190](https://linear.app/shiny-guru/issue/SHI-190).
+`cook_rust` turns one Cargo manifest into one portable Cook seal. Cargo remains
+the build scheduler; the module only derives the determinants needed to share
+the output of commands such as `wasm-pack build` safely.
 
-This rock currently exposes only `cook_rust.placeholder()`, which raises an error pointing at the real-implementation ticket. It exists to reserve the `cook_rust` name on `rocks.usecook.com` and to exercise the publish pipeline at multi-rock scale (SHI-176 Phase 4).
+```cook
+use cook_rust
 
-When SHI-190 ships, replace this directory's contents with the real implementation and bump the rock version to `0.1.0-1` (or higher). The Gitea Actions publish CI on tag push handles the rest.
+cook_rust.project("crates/web/Cargo.toml")
+
+recipe wasm
+    seal rust:project
+    cook "packages/wasm/**" {
+        wasm-pack build crates/web --out-dir packages/wasm
+    }
+```
+
+`rust:project` includes every reachable local/path package, workspace Cargo
+configuration, lock and toolchain files, and the content identities of the
+active toolchain's real `cargo` and `rustc` binaries (not rustup shims).
+Registry and git dependency source trees are not included. Local package directories are tracked conservatively, excluding
+their `target/` and `.git/` directories.
+
+Only one project may be registered per Cookfile. Build scripts that read
+undeclared files outside reachable local packages must be sealed separately.
