@@ -178,6 +178,14 @@ local function mint_graph(opts, mode, context_files, graph)
         local info = discover_project(entry.path, entry.value)
         projects[info.path] = info
     end
+    local workspace_files, roots = {}, {}
+    for path in pairs(projects) do roots[path:match("^([^/]+)/") or "."] = true end
+    for root in pairs(roots) do
+        local glob = root == "." and "**" or root .. "/**"
+        for _, file in ipairs(cook.resolve_gather({ glob }, {
+            "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**",
+        })) do workspace_files[#workspace_files + 1] = file end
+    end
 
     local by_name = {}
     for _, project in pairs(projects) do
@@ -213,11 +221,10 @@ local function mint_graph(opts, mode, context_files, graph)
         for file in pairs(project.files) do add_input(file) end
         for file in pairs(context) do add_input(file) end
         local project_dir = directory(project.path)
-        for _, file in ipairs(cook.resolve_gather({ join(project_dir, "**") }, {
-            join(project_dir, "bin/**"), join(project_dir, "obj/**"),
-            join(project_dir, "**/bin/**"), join(project_dir, "**/obj/**"),
-            join(project_dir, ".git/**"), join(project_dir, ".cook/**"), artifacts .. "/**",
-        })) do add_input(file) end
+        local prefix = project_dir == "." and "" or project_dir .. "/"
+        for _, file in ipairs(workspace_files) do
+            if file:sub(1, #prefix) == prefix then add_input(file) end
+        end
         for _, reference in ipairs(project.references) do
             local dependency = projects[reference]
             requires[#requires + 1] = dependency.recipe

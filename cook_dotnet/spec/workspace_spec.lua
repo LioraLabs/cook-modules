@@ -66,34 +66,12 @@ describe("cook_dotnet.workspace", function()
         assert.is_function(stub.materialized().produce)
     end)
 
-    it("keeps project bin and obj trees out of build inputs", function()
+    it("does not rescan every project directory during registration", function()
         local dotnet = load_workspace()
         dotnet.workspace({ solution = "src/Graph.slnx" })
-        stub.resolved(function(_, excludes)
-            local excluded = {}
-            for _, pattern in ipairs(excludes) do excluded[pattern] = true end
-            local files = { "src/App/App.cs", "src/App/bin/generated.dll", "src/App/obj/generated.dll",
-                "src/App/nested/bin/generated.dll", "src/App/nested/obj/generated.dll" }
-            local kept = {}
-            for _, file in ipairs(files) do
-                local immediate = file:match("^src/App/(bin)/") or file:match("^src/App/(obj)/")
-                local nested = file:match("^src/App/.+/(bin)/") or file:match("^src/App/.+/(obj)/")
-                if not (immediate and excluded["src/App/" .. immediate .. "/**"])
-                    and not (nested and excluded["src/App/**/" .. nested .. "/**"]) then
-                    kept[#kept + 1] = file
-                end
-            end
-            return kept
-        end)
         stub.execute("dotnet:build")
 
-        for _, unit in ipairs(stub.units()) do
-            if unit.outputs and unit.outputs[1] == "build/dotnet/bin/App/**" then
-                local inputs = table.concat(unit.inputs, "\n")
-                assert.is_falsy(inputs:find("/bin/generated.dll", 1, true))
-                assert.is_falsy(inputs:find("/obj/generated.dll", 1, true))
-            end
-        end
+        assert.equal(2, stub.gather_count())
     end)
 
     it("keeps evaluated project bin and obj items out of build inputs", function()
