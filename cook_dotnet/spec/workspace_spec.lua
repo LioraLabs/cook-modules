@@ -97,6 +97,26 @@ describe("cook_dotnet.workspace", function()
         end
     end)
 
+    it("keeps evaluated project bin and obj items out of build inputs", function()
+        local dotnet = load_workspace()
+        stub.materialized("build/dotnet/discovery.lua", [[return {projects={{
+          path="src/App/App.csproj",value={Properties={MSBuildProjectName="App",TargetFramework="net8.0",
+          TargetFrameworks="",OutputType="Library",TargetFileName="App.dll",
+          MSBuildAllProjects="src/App/App.csproj;src/App/obj/generated.props"},Items={ProjectReference={},
+          Compile={{FullPath="src/App/App.cs"}},Content={},EmbeddedResource={},
+          None={{FullPath="src/App/bin/Debug/net8.0/App.dll"},{FullPath="src/App/obj/Debug/net8.0/App.dll"},
+          {FullPath="src/App/assets/kept.txt"},{FullPath="src/Shared/bin/kept.txt"}},AdditionalFiles={},Analyzer={},EditorConfigFiles={},
+          RazorComponent={}}}}}}]])
+        dotnet.workspace({ solution = "src/App/App.csproj" })
+        stub.execute("dotnet:build")
+
+        local inputs = table.concat(stub.units()[2].inputs, "\n")
+        assert.is_falsy(inputs:find("src/App/bin/", 1, true))
+        assert.is_falsy(inputs:find("src/App/obj/", 1, true))
+        assert.is_truthy(inputs:find("src/App/assets/kept.txt", 1, true))
+        assert.is_truthy(inputs:find("src/Shared/bin/kept.txt", 1, true))
+    end)
+
     it("rejects duplicate recipe names and use inside a recipe", function()
         local dotnet = load_workspace(true)
         dotnet.workspace({ solution = "src/Graph.slnx" })

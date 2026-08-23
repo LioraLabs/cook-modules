@@ -116,18 +116,24 @@ local function discover_project(project, value)
         error("[cook_dotnet.workspace] MSBuild did not return a project name for '" .. project .. "'", 2)
     end
     local files, references = { [project] = true }, {}
+    local project_dir = directory(project)
+    local function add_file(pathname)
+        local path = normalize(pathname)
+        local prefix = project_dir == "." and "" or project_dir .. "/"
+        local relative = path:sub(1, #prefix) == prefix and path:sub(#prefix + 1)
+        if path:sub(1, 1) ~= "/"
+            and not (relative and (relative:match("^bin/") or relative:match("^obj/"))) then
+            files[path] = true
+        end
+    end
     for _, kind in ipairs({ "Compile", "Content", "EmbeddedResource", "None", "AdditionalFiles",
                             "Analyzer", "EditorConfigFiles", "RazorComponent" }) do
         for _, item in ipairs(items[kind] or {}) do
-            if item.FullPath then
-                local path = normalize(item.FullPath)
-                if path:sub(1, 1) ~= "/" then files[path] = true end
-            end
+            if item.FullPath then add_file(item.FullPath) end
         end
     end
     for imported in (props.MSBuildAllProjects or ""):gmatch("[^;]+") do
-        local path = normalize(imported)
-        if path:sub(1, 1) ~= "/" then files[path] = true end
+        add_file(imported)
     end
     for _, item in ipairs(items.ProjectReference or {}) do
         if item.FullPath then
