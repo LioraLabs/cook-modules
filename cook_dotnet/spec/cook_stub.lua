@@ -69,7 +69,9 @@ function M.command(prefix, response) commands[prefix] = response end
 function M.resolved(files) resolved = files end
 function M.materialize_as(value)
     value.toolchain = value.toolchain or {
-        dotnet_id = string.rep("d", 64), sdk = "10.0.302", netcore_ref = "10.0.10", aspnetcore_ref = "10.0.10",
+        dotnet_id = string.rep("d", 64), sdk = "10.0.302",
+        netcore_ref = { versions = "8.0.10\n10.0.10", digest = string.rep("n", 64) },
+        aspnetcore_ref = { versions = "8.0.10\n10.0.10", digest = string.rep("a", 64) },
     }
     materialized_value = value
 end

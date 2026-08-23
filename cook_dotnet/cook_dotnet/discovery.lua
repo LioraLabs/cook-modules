@@ -12,24 +12,22 @@ if not tool then error("[cook_dotnet] dotnet not on PATH") end
 local dotnet = tool.path
 local sdk = trim(cook.sh(quote(dotnet) .. " --version 2>/dev/null"))
 if sdk == "" then error("[cook_dotnet] dotnet did not report an SDK version") end
-local runtimes = cook.sh(quote(dotnet) .. " --list-runtimes 2>/dev/null")
 local base = trim(cook.sh(quote(dotnet) .. " --info 2>/dev/null"):match("Base Path:%s*([^\r\n]+)") or "")
 local root = base:match("^(.*)/sdk/[^/]+/?$")
 if not root then error("[cook_dotnet] dotnet did not report its selected SDK path") end
-local function runtime(name)
-    return runtimes:match(name:gsub("%.", "%%.") .. "%s+([^%s]+)") or "<missing>"
-end
-local function ref_pack(name, version)
-    if version == "<missing>" then return version end
-    local path = root .. "/packs/" .. name .. "/" .. version
-    local found = trim(cook.sh("if [ -d " .. quote(path) .. " ]; then printf %s " .. quote(version) .. "; fi; true"))
-    return found == version and name .. "@" .. version or "<missing>"
+local function ref_pack(name)
+    local path = root .. "/packs/" .. name
+    local versions = trim(cook.sh("if [ -d " .. quote(path) .. "]; then find " .. quote(path)
+        .. " -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' | LC_ALL=C sort; fi; true"))
+    local digest = trim(cook.sh("if [ -d " .. quote(path) .. "]; then cd " .. quote(path)
+        .. " && find . -type f -exec sha256sum {} + | LC_ALL=C sort | sha256sum | cut -d' ' -f1; fi; true"))
+    return { versions = versions, digest = digest ~= "" and digest or "<missing>" }
 end
 return {
     dotnet_id = tool.hash,
     sdk = sdk,
-    netcore_ref = ref_pack("Microsoft.NETCore.App.Ref", runtime("Microsoft.NETCore.App")),
-    aspnetcore_ref = ref_pack("Microsoft.AspNetCore.App.Ref", runtime("Microsoft.AspNetCore.App")),
+    netcore_ref = ref_pack("Microsoft.NETCore.App.Ref"),
+    aspnetcore_ref = ref_pack("Microsoft.AspNetCore.App.Ref"),
 }
 ]]
 end

@@ -24,7 +24,9 @@ local function load_workspace(duplicate)
         or { project("App", "src/App/App.csproj", "src/Lib/Lib.csproj", "Exe"),
             project("Lib", "src/Lib/Lib.csproj") }
     stub.materialize_as({ configuration = "Debug", toolchain = {
-        dotnet_id = string.rep("d", 64), sdk = "10.0.302", netcore_ref = "10.0.10", aspnetcore_ref = "10.0.10",
+        dotnet_id = string.rep("d", 64), sdk = "10.0.302",
+        netcore_ref = { versions = "8.0.10\n10.0.10", digest = string.rep("n", 64) },
+        aspnetcore_ref = { versions = "8.0.10\n10.0.10", digest = string.rep("a", 64) },
     }, projects = projects })
     stub.resolved({ "src/Graph.slnx", "src/App/App.csproj", "src/App/App.cs",
         "src/Lib/Lib.csproj", "src/Lib/Lib.cs", "src/Directory.Build.props" })
@@ -174,6 +176,11 @@ describe("cook_dotnet.workspace", function()
     it("scopes lockfiles and applies the Web workaround only to evaluated Web SDK projects", function()
         local dotnet, projects = load_workspace()
         projects[1].value.Properties.UsingMicrosoftNETSdkWeb = "true"
+        stub.materialize_as({ configuration = "Debug", toolchain = {
+            dotnet_id = string.rep("d", 64), sdk = "10.0.302",
+            netcore_ref = { versions = "8.0.10", digest = string.rep("n", 64) },
+            aspnetcore_ref = { versions = "", digest = "<missing>" },
+        }, projects = projects })
         stub.resolved({ "src/Graph.slnx", "global.json", "NuGet.config", "src/Directory.Build.props",
             "src/App/App.csproj", "src/App/App.cs", "src/App/packages.lock.json",
             "src/Lib/Lib.csproj", "src/Lib/Lib.cs", "src/Lib/packages.lock.json" })
@@ -191,14 +198,19 @@ describe("cook_dotnet.workspace", function()
         package.loaded.cook_dotnet = nil
         stub.reset()
         stub.materialize_as({ configuration = "Debug", toolchain = {
-            dotnet_id = string.rep("d", 64), sdk = "10.0.302", netcore_ref = "10.0.10", aspnetcore_ref = "<missing>",
+            dotnet_id = string.rep("d", 64), sdk = "10.0.302",
+            netcore_ref = { versions = "8.0.10", digest = string.rep("n", 64) },
+            aspnetcore_ref = { versions = "", digest = "<missing>" },
         }, projects = { projects[1], projects[2] } })
         stub.resolved({ "src/Graph.slnx", "src/App/App.csproj", "src/Lib/Lib.csproj" })
         dotnet = require("cook_dotnet")
         dotnet.workspace({ solution = "src/Graph.slnx" })
-        local ok, err = pcall(stub.execute, "dotnet:build")
-        assert.is_false(ok)
-        assert.is_truthy(err:find("Web SDK project", 1, true))
+        stub.execute("dotnet:build")
+        local web_unit
+        for _, unit in ipairs(stub.units()) do
+            if unit.outputs[1] == "build/dotnet/bin/App/**" then web_unit = unit end
+        end
+        assert.is_truthy(web_unit.command:find("AllowMissingPrunePackageData=true", 1, true))
     end)
 
     it("rejects duplicate recipe names and use inside a recipe", function()

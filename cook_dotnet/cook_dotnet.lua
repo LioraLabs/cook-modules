@@ -92,8 +92,8 @@ function M.build(opts)
     }
     for _, pattern in ipairs(opts.excludes or {}) do excludes[#excludes + 1] = pattern end
     local inputs = cook.resolve_gather(globs, excludes)
-    local lock_root = project_lower:match("%.csproj$") and directory(opts.project) or root
-    local locks = cook.resolve_gather({ join(lock_root, project_lower:match("%.csproj$") and "packages.lock.json" or "**/packages.lock.json") }, {
+    local lock_root = root
+    local locks = cook.resolve_gather({ join(lock_root, "**/packages.lock.json") }, {
         join(lock_root, "bin/**"), join(lock_root, "obj/**"), join(lock_root, ".git/**"),
         join(lock_root, ".cook/**"), artifacts .. "/**",
     })
@@ -103,17 +103,22 @@ function M.build(opts)
     local probe = ensure_toolchain()
 
     -- ponytail: shared CLI/NuGet caches; split per SDK only if dotnet proves they conflict.
+    local dotnet = '"$<dotnet:tool.dotnet.path>"'
+    local web = dotnet .. " msbuild " .. quote(opts.project)
+        .. " -nologo -getProperty:UsingMicrosoftNETSdkWeb"
     local command = "rm -rf -- " .. quote(artifacts)
+        .. " && web=$(" .. web .. ")"
+        .. " && if [ \"$web\" = true ]; then prune=-p:AllowMissingPrunePackageData=true; else prune=; fi"
         .. ' && DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
         .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
         .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
-        .. '"$<dotnet:tool.dotnet.path>" restore ' .. quote(opts.project)
+        .. dotnet .. " restore " .. quote(opts.project)
         .. " --artifacts-path " .. quote(artifacts)
-        .. " --use-lock-file --locked-mode --verbosity quiet"
+        .. " --use-lock-file --locked-mode --verbosity quiet $prune"
         .. ' && DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
         .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
         .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
-        .. '"$<dotnet:tool.dotnet.path>" build ' .. quote(opts.project)
+        .. dotnet .. " build " .. quote(opts.project)
         .. " --artifacts-path " .. quote(artifacts)
         .. " --configuration " .. quote(opts.configuration or "Debug")
         .. " --no-restore"
@@ -208,19 +213,6 @@ local function project_context(project, context)
     return inherited
 end
 
-local function web_workaround(project, toolchain)
-    if toolchain.netcore_ref == "<missing>" then
-        error("[cook_dotnet.workspace] selected SDK '" .. toolchain.sdk
-            .. "' has no Microsoft.NETCore.App reference-pack pairing", 2)
-    end
-    if not project.web then return "" end
-    if toolchain.aspnetcore_ref == "<missing>" then
-        error("[cook_dotnet.workspace] Web SDK project '" .. project.path
-            .. "' has no Microsoft.AspNetCore.App reference-pack pairing", 2)
-    end
-    return " -p:AllowMissingPrunePackageData=true"
-end
-
 local function recipe_segment(name)
     return (name:gsub("[^A-Za-z0-9_+-]", "-"))
 end
@@ -234,6 +226,22 @@ local function target_frameworks(project)
     local result = {}
     for framework in (project.frameworks or ""):gmatch("[^;]+") do result[#result + 1] = framework end
     return result
+end
+
+local function web_workaround(project, toolchain)
+    local function has_pack(pack, framework)
+        local major = framework:match("^net(%d+)")
+        return major and pack and pack.versions
+            and ("\n" .. pack.versions .. "\n"):find("\n" .. major .. "%.[^\n]*\n")
+    end
+    local frameworks = target_frameworks(project)
+    if not project.web then return "" end
+    for _, framework in ipairs(frameworks) do
+        if framework ~= "" and not has_pack(toolchain.aspnetcore_ref, framework) then
+            return " -p:AllowMissingPrunePackageData=true"
+        end
+    end
+    return ""
 end
 
 local function mint_graph(opts, mode, context_files, graph)
