@@ -66,7 +66,12 @@ while next_index <= #queue do
                 if item.FullPath then
                     local path = relative(item.FullPath, cwd)
                     if path:sub(1, 1) ~= "/" then
-                        compact.Items[kind][#compact.Items[kind] + 1] = { FullPath = path }
+                        local compact_item = { FullPath = path }
+                        if kind == "ProjectReference" then
+                            compact_item.OutputItemType = item.OutputItemType
+                            compact_item.ReferenceOutputAssembly = item.ReferenceOutputAssembly
+                        end
+                        compact.Items[kind][#compact.Items[kind] + 1] = compact_item
                     end
                 end
             end

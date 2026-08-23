@@ -106,6 +106,7 @@ function M.build(opts)
         outputs = { artifacts .. "/**" },
         command = command,
         probes = { probe },
+        seal = { probe },
     })
     cook.export(qualified, { artifacts = artifacts, outputs = { artifacts .. "/**" } })
 end
@@ -142,10 +143,14 @@ local function discover_project(project, value)
                 error("[cook_dotnet.workspace] project reference outside the Cook workspace: "
                     .. item.FullPath, 2)
             end
-            references[#references + 1] = path
+            references[#references + 1] = {
+                path = path,
+                generator = item.OutputItemType == "Analyzer"
+                    or item.ReferenceOutputAssembly == "false",
+            }
         end
     end
-    table.sort(references)
+    table.sort(references, function(a, b) return a.path < b.path end)
     return {
         path = project,
         name = props.MSBuildProjectName,
@@ -160,6 +165,17 @@ end
 
 local function recipe_segment(name)
     return (name:gsub("[^A-Za-z0-9_+-]", "-"))
+end
+
+local function framework_segment(framework)
+    return "tfm-" .. framework:gsub(".", function(byte) return ("%02x"):format(byte:byte()) end)
+end
+
+local function target_frameworks(project)
+    if project.framework and project.framework ~= "" then return { project.framework } end
+    local result = {}
+    for framework in (project.frameworks or ""):gmatch("[^;]+") do result[#result + 1] = framework end
+    return result
 end
 
 local function mint_graph(opts, mode, context_files, graph)
@@ -190,6 +206,8 @@ local function mint_graph(opts, mode, context_files, graph)
     local by_name = {}
     for _, project in pairs(projects) do
         project.recipe = "dotnet:" .. recipe_segment(project.name)
+        project.framework_list = target_frameworks(project)
+        if #project.framework_list == 0 then project.framework_list[1] = "" end
         if by_name[project.recipe] and by_name[project.recipe] ~= project.path then
             error("[cook_dotnet.workspace] projects '" .. by_name[project.recipe] .. "' and '"
                 .. project.path .. "' map to the same recipe '" .. project.recipe .. "'", 2)
@@ -206,14 +224,25 @@ local function mint_graph(opts, mode, context_files, graph)
         if not project then error("[cook_dotnet.workspace] undiscovered project reference '"
             .. pathname .. "'", 2) end
         visiting[pathname] = true
-        for _, reference in ipairs(project.references) do visit(reference) end
+        for _, reference in ipairs(project.references) do visit(reference.path) end
         visiting[pathname], visited[pathname] = nil, true
         ordered[#ordered + 1] = project
     end
     local paths = {}; for path in pairs(projects) do paths[#paths + 1] = path end; table.sort(paths)
     for _, path in ipairs(paths) do visit(path) end
 
+    local function recipe_for(project, framework)
+        if #project.framework_list == 1 then return project.recipe end
+        for _, candidate in ipairs(project.framework_list) do
+            if candidate == framework then return project.recipe .. ":" .. framework_segment(candidate) end
+        end
+        error("[cook_dotnet.workspace] project '" .. project.path
+            .. "' does not target framework '" .. framework .. "'", 2)
+    end
+
+    local roots = {}
     for _, project in ipairs(ordered) do
+      for _, framework in ipairs(project.framework_list) do
         local requires, inputs, input_set = {}, {}, {}
         local function add_input(file)
             if not input_set[file] then input_set[file], inputs[#inputs + 1] = true, file end
@@ -226,13 +255,21 @@ local function mint_graph(opts, mode, context_files, graph)
             if file:sub(1, #prefix) == prefix then add_input(file) end
         end
         for _, reference in ipairs(project.references) do
-            local dependency = projects[reference]
-            requires[#requires + 1] = dependency.recipe
-            add_input(artifacts .. "/obj/" .. dependency.name .. "/**/ref/*.dll")
+            local dependency = projects[reference.path]
+            local dependency_framework = #dependency.framework_list == 1
+                and dependency.framework_list[1] or framework
+            requires[#requires + 1] = recipe_for(dependency, dependency_framework)
+            if reference.generator then
+                add_input(artifacts .. "/bin/" .. dependency.name .. "/**")
+            else
+                add_input(artifacts .. "/obj/" .. dependency.name .. "/**/ref/*.dll")
+            end
         end
         table.sort(inputs); table.sort(requires)
-        local bin = artifacts .. "/bin/" .. project.name
-        local obj = artifacts .. "/obj/" .. project.name
+        local suffix = #project.framework_list > 1
+            and "/" .. configuration:lower() .. "_" .. framework or ""
+        local bin = artifacts .. "/bin/" .. project.name .. suffix
+        local obj = artifacts .. "/obj/" .. project.name .. suffix
         local environment = 'DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
             .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
             .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
@@ -244,14 +281,18 @@ local function mint_graph(opts, mode, context_files, graph)
             .. " --artifacts-path " .. quote(artifacts)
             .. " --configuration " .. quote(configuration)
             .. " --no-restore --no-dependencies -p:UseCommonOutputDirectory=true"
-        cook.recipe(project.recipe, { requires = requires, origin = "cook_dotnet.workspace" }, function()
+        if framework ~= "" then command = command .. " --framework " .. quote(framework) end
+        local project_recipe = recipe_for(project, framework)
+        roots[#roots + 1] = project_recipe
+        cook.recipe(project_recipe, { requires = requires, origin = "cook_dotnet.workspace" }, function()
             cook.add_unit({
                 inputs = inputs,
                 outputs = { bin .. "/**", obj .. "/**" },
                 command = command,
                 probes = { "dotnet:toolchain" },
+                seal = { "dotnet:toolchain" },
             })
-            cook.export(project.recipe, {
+            cook.export(project_recipe, {
                 project = project.path,
                 name = project.name,
                 framework = project.framework,
@@ -260,13 +301,14 @@ local function mint_graph(opts, mode, context_files, graph)
                 outputs = { bin .. "/**", obj .. "/**" },
             })
         end)
+      end
     end
 
     local executables = {}
     local function transitive(project, seen, result)
         if seen[project.path] then return end
         seen[project.path] = true
-        for _, reference in ipairs(project.references) do transitive(projects[reference], seen, result) end
+        for _, reference in ipairs(project.references) do transitive(projects[reference.path], seen, result) end
         result[#result + 1] = project
     end
     for _, project in ipairs(ordered) do
@@ -293,6 +335,7 @@ local function mint_graph(opts, mode, context_files, graph)
                     inputs = { run_dir .. "/" .. project.target_file },
                     command = '"$<dotnet:toolchain.dotnet>" ' .. quote(run_dir .. "/" .. project.target_file),
                     probes = { "dotnet:toolchain" },
+                    seal = { "dotnet:toolchain" },
                     cache = false,
                     sharing = "local",
                 })
@@ -301,7 +344,6 @@ local function mint_graph(opts, mode, context_files, graph)
         end
     end
 
-    local roots = {}; for _, project in ipairs(ordered) do roots[#roots + 1] = project.recipe end
     table.sort(roots)
     if mode == "run" then
         if #executables ~= 1 then error("[cook_dotnet.workspace] dotnet:run requires exactly one single-target executable; found "

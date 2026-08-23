@@ -27,6 +27,7 @@ describe("cook_dotnet.build", function()
         assert.is_truthy(units[1].command:find("--artifacts-path 'build/dotnet/app'", 1, true))
         assert.is_truthy(units[1].command:find("--configuration 'Debug'", 1, true))
         assert.same({ "dotnet:toolchain" }, units[1].probes)
+        assert.same({ "dotnet:toolchain" }, units[1].seal)
         assert.same({ artifacts = "build/dotnet/app", outputs = { "build/dotnet/app/**" } },
             stub.export("app"))
 

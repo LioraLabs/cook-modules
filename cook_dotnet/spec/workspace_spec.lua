@@ -9,6 +9,13 @@ local function project(name, path, reference, output_type)
         RazorComponent = {} } } }
 end
 
+local function multi_target(name, path, frameworks)
+    local value = project(name, path).value
+    value.Properties.TargetFramework = ""
+    value.Properties.TargetFrameworks = frameworks
+    return { path = path, value = value }
+end
+
 local function load_workspace(duplicate)
     package.loaded.cook_dotnet = nil
     stub.reset()
@@ -64,6 +71,43 @@ describe("cook_dotnet.workspace", function()
         stub.execute("dotnet:build")
 
         assert.is_function(stub.materialized().produce)
+    end)
+
+    it("mints and keys one unit per target framework", function()
+        local dotnet = load_workspace()
+        stub.materialize_as({ configuration = "Release", projects = {
+            multi_target("Lib", "src/Lib/Lib.csproj", "net8.0;net10.0"),
+        } })
+        dotnet.workspace({ solution = "src/Lib/Lib.csproj", configuration = "Release" })
+        stub.execute("dotnet:build")
+
+        local recipes = stub.recipes()
+        assert.is_table(recipes["dotnet:Lib:tfm-6e6574382e30"])
+        assert.is_table(recipes["dotnet:Lib:tfm-6e657431302e30"])
+        assert.equal(2, #stub.units())
+        for _, unit in ipairs(stub.units()) do
+            assert.is_truthy(unit.command:find("--framework 'net", 1, true))
+            assert.same({ "dotnet:toolchain" }, unit.seal)
+        end
+    end)
+
+    it("uses implementation outputs only for source-generator references", function()
+        local dotnet, projects = load_workspace()
+        projects[1].value.Properties.OutputType = "Library"
+        projects[1].value.Items.ProjectReference[1].OutputItemType = "Analyzer"
+        projects[1].value.Items.ProjectReference[1].ReferenceOutputAssembly = "false"
+        dotnet.workspace({ solution = "src/App/App.csproj" })
+        stub.execute("dotnet:build")
+
+        local inputs
+        for _, unit in ipairs(stub.units()) do
+            if unit.outputs[1] == "build/dotnet/bin/App/**" then
+                inputs = table.concat(unit.inputs, "\n")
+            end
+        end
+        assert.is_string(inputs)
+        assert.is_truthy(inputs:find("build/dotnet/bin/Lib/**", 1, true))
+        assert.is_falsy(inputs:find("build/dotnet/obj/Lib/%*%*/ref/%*%.dll"))
     end)
 
     it("does not rescan every project directory during registration", function()
