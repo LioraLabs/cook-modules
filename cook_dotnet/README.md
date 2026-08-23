@@ -32,9 +32,9 @@ state, excluded from project inputs and build artifacts.
 
 Builds restore explicitly with `--use-lock-file --locked-mode` and then build with
 `--no-restore`; commit each generated `packages.lock.json`. The sealed toolchain
-probe returns the chosen SDK version as well as the resolved `dotnet` executable.
-`cook_dotnet` also passes `AllowMissingPrunePackageData` so Web SDK projects do not
-need the distro-specific ref-pack workaround in their `.csproj`.
+probe carries the chosen SDK, canonical `dotnet` identity, and paired reference-pack
+versions without sealing a machine path. The Web-SDK-only ref-pack workaround is
+applied from MSBuild's evaluated `UsingMicrosoftNETSdkWeb` property.
 
 ## Project graph
 

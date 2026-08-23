@@ -1,6 +1,7 @@
 local M = { name = "cook_dotnet" }
 local discovery = require("cook_dotnet.discovery")
 local probe_registered = false
+local tool_registered = false
 
 local function quote(s)
     return "'" .. s:gsub("'", "'\\''") .. "'"
@@ -25,16 +26,17 @@ local function normalize(pathname)
 end
 
 local function ensure_toolchain()
+    if not tool_registered then
+        cook.probe("dotnet:tool", {
+            inputs = { tools = { "dotnet" } },
+            produce = "@tools-identity",
+        })
+        tool_registered = true
+    end
     if probe_registered then return "dotnet:toolchain" end
     cook.probe("dotnet:toolchain", {
         inputs = { tools = { "dotnet" } },
-        produce = [[
-            local dotnet = cook.sh("command -v dotnet 2>/dev/null"):match("^(%S+)")
-            if not dotnet then error("[cook_dotnet] dotnet not on PATH") end
-            local sdk = cook.sh("'" .. dotnet:gsub("'", "'\\''") .. "' --version 2>/dev/null"):match("^(%S+)")
-            if not sdk then error("[cook_dotnet] dotnet did not report an SDK version") end
-            return { dotnet = dotnet, sdk = sdk }
-        ]],
+        produce = discovery.toolchain_producer(),
     })
     probe_registered = true
     return "dotnet:toolchain"
@@ -90,6 +92,14 @@ function M.build(opts)
     }
     for _, pattern in ipairs(opts.excludes or {}) do excludes[#excludes + 1] = pattern end
     local inputs = cook.resolve_gather(globs, excludes)
+    local lock_root = project_lower:match("%.csproj$") and directory(opts.project) or root
+    local locks = cook.resolve_gather({ join(lock_root, project_lower:match("%.csproj$") and "packages.lock.json" or "**/packages.lock.json") }, {
+        join(lock_root, "bin/**"), join(lock_root, "obj/**"), join(lock_root, ".git/**"),
+        join(lock_root, ".cook/**"), artifacts .. "/**",
+    })
+    local seen = {}; for _, input in ipairs(inputs) do seen[input] = true end
+    for _, lock in ipairs(locks) do if not seen[lock] then inputs[#inputs + 1], seen[lock] = lock, true end end
+    table.sort(inputs)
     local probe = ensure_toolchain()
 
     -- ponytail: shared CLI/NuGet caches; split per SDK only if dotnet proves they conflict.
@@ -97,16 +107,16 @@ function M.build(opts)
         .. ' && DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
         .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
         .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
-        .. '"$<' .. probe .. '.dotnet>" restore ' .. quote(opts.project)
+        .. '"$<dotnet:tool.dotnet.path>" restore ' .. quote(opts.project)
         .. " --artifacts-path " .. quote(artifacts)
-        .. " --use-lock-file --locked-mode -p:AllowMissingPrunePackageData=true --verbosity quiet"
+        .. " --use-lock-file --locked-mode --verbosity quiet"
         .. ' && DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
         .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
         .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
-        .. '"$<' .. probe .. '.dotnet>" build ' .. quote(opts.project)
+        .. '"$<dotnet:tool.dotnet.path>" build ' .. quote(opts.project)
         .. " --artifacts-path " .. quote(artifacts)
         .. " --configuration " .. quote(opts.configuration or "Debug")
-        .. " --no-restore -p:AllowMissingPrunePackageData=true"
+        .. " --no-restore"
     if opts.framework then command = command .. " --framework " .. quote(opts.framework) end
 
     -- Cleanup lives inside the cached unit: misses start fresh; hits skip it.
@@ -114,7 +124,7 @@ function M.build(opts)
         inputs = inputs,
         outputs = { artifacts .. "/**" },
         command = command,
-        probes = { probe },
+        probes = { "dotnet:tool", probe },
         seal = { probe },
     })
     cook.export(qualified, { artifacts = artifacts, outputs = { artifacts .. "/**" } })
@@ -167,9 +177,48 @@ local function discover_project(project, value)
         frameworks = props.TargetFrameworks,
         output_type = props.OutputType,
         target_file = props.TargetFileName,
+        web = props.UsingMicrosoftNETSdkWeb == "true",
         files = files,
         references = references,
     }
+end
+
+local function is_ancestor(parent, child)
+    return parent == "." or child == parent or child:sub(1, #parent + 1) == parent .. "/"
+end
+
+local function project_context(project, context)
+    local dir, nearest, inherited = directory(project.path), {}, {}
+    for file in pairs(context) do
+        local base, parent = file:match("([^/]+)$") or file, directory(file)
+        local lower = base:lower()
+        if is_ancestor(parent, dir) then
+            if lower == "directory.build.props" or lower == "directory.build.targets"
+                or lower == "directory.packages.props" or lower == "global.json"
+            then
+                if not nearest[lower] or #parent > #directory(nearest[lower]) then nearest[lower] = file end
+            elseif lower == "nuget.config" or lower == ".editorconfig" then
+                inherited[#inherited + 1] = file
+            elseif lower == "packages.lock.json" and parent == dir then
+                inherited[#inherited + 1] = file
+            end
+        end
+    end
+    for _, file in pairs(nearest) do inherited[#inherited + 1] = file end
+    return inherited
+end
+
+local function web_workaround(project, toolchain)
+    if toolchain.netcore_ref == "<missing>" then
+        error("[cook_dotnet.workspace] selected SDK '" .. toolchain.sdk
+            .. "' has no Microsoft.NETCore.App reference-pack pairing", 2)
+    end
+    if not project.web then return "" end
+    if toolchain.aspnetcore_ref == "<missing>" then
+        error("[cook_dotnet.workspace] Web SDK project '" .. project.path
+            .. "' has no Microsoft.AspNetCore.App reference-pack pairing", 2)
+    end
+    return " -p:AllowMissingPrunePackageData=true"
 end
 
 local function recipe_segment(name)
@@ -192,9 +241,10 @@ local function mint_graph(opts, mode, context_files, graph)
     local context = {}
     for _, file in ipairs(context_files) do
         local base = file:match("([^/]+)$") or file
-        if base == "Directory.Build.props" or base == "Directory.Build.targets"
-            or base == "Directory.Packages.props" or base == "global.json"
-            or base == "NuGet.config" or base == "packages.lock.json" or base == ".editorconfig"
+        local lower = base:lower()
+        if lower == "directory.build.props" or lower == "directory.build.targets"
+            or lower == "directory.packages.props" or lower == "global.json"
+            or lower == "nuget.config" or lower == "packages.lock.json" or lower == ".editorconfig"
         then context[file] = true end
     end
 
@@ -262,11 +312,13 @@ local function mint_graph(opts, mode, context_files, graph)
             if not input_set[file] then input_set[file], inputs[#inputs + 1] = true, file end
         end
         for file in pairs(project.files) do add_input(file) end
-        for file in pairs(context) do add_input(file) end
+        for _, file in ipairs(project_context(project, context)) do add_input(file) end
         local project_dir = directory(project.path)
         local prefix = project_dir == "." and "" or project_dir .. "/"
         for _, file in ipairs(workspace_files) do
-            if file:sub(1, #prefix) == prefix then add_input(file) end
+            if file:sub(1, #prefix) == prefix
+                and (file:match("([^/]+)$") ~= "packages.lock.json" or directory(file) == project_dir)
+            then add_input(file) end
         end
         for _, reference in ipairs(project.references) do
             local dependency = projects[reference.path]
@@ -289,15 +341,15 @@ local function mint_graph(opts, mode, context_files, graph)
             .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
             .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
         local command = "rm -rf -- " .. quote(bin) .. " " .. quote(obj)
-            .. " && " .. environment .. '"$<dotnet:toolchain.dotnet>" restore ' .. quote(project.path)
+            .. " && " .. environment .. '"$<dotnet:tool.dotnet.path>" restore ' .. quote(project.path)
             .. " --artifacts-path " .. quote(artifacts)
             .. " -p:RestoreRecursive=false --use-lock-file --locked-mode"
-            .. " -p:AllowMissingPrunePackageData=true --verbosity quiet"
-            .. " && " .. environment .. '"$<dotnet:toolchain.dotnet>" build ' .. quote(project.path)
+            .. web_workaround(project, graph.toolchain) .. " --verbosity quiet"
+            .. " && " .. environment .. '"$<dotnet:tool.dotnet.path>" build ' .. quote(project.path)
             .. " --artifacts-path " .. quote(artifacts)
             .. " --configuration " .. quote(configuration)
             .. " --no-restore --no-dependencies -p:UseCommonOutputDirectory=true"
-            .. " -p:AllowMissingPrunePackageData=true"
+            .. web_workaround(project, graph.toolchain)
         if framework ~= "" then command = command .. " --framework " .. quote(framework) end
         local project_recipe = recipe_for(project, framework)
         roots[#roots + 1] = project_recipe
@@ -306,7 +358,7 @@ local function mint_graph(opts, mode, context_files, graph)
                 inputs = inputs,
                 outputs = { bin .. "/**", obj .. "/**" },
                 command = command,
-                probes = { "dotnet:toolchain" },
+                probes = { "dotnet:tool", "dotnet:toolchain" },
                 seal = { "dotnet:toolchain" },
             })
             cook.export(project_recipe, {
@@ -350,8 +402,8 @@ local function mint_graph(opts, mode, context_files, graph)
                 })
                 cook.add_unit({
                     inputs = { run_dir .. "/" .. project.target_file },
-                    command = '"$<dotnet:toolchain.dotnet>" ' .. quote(run_dir .. "/" .. project.target_file),
-                    probes = { "dotnet:toolchain" },
+                    command = '"$<dotnet:tool.dotnet.path>" ' .. quote(run_dir .. "/" .. project.target_file),
+                    probes = { "dotnet:tool", "dotnet:toolchain" },
                     seal = { "dotnet:toolchain" },
                     cache = false,
                     sharing = "local",
@@ -394,7 +446,7 @@ function M.workspace(opts)
     local inputs = cook.resolve_gather({ solution, "**/*.csproj", "**/*.props", "**/*.targets",
         "**/global.json", "**/NuGet.config", "**/nuget.config", "**/packages.lock.json", "**/.editorconfig" },
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
-    local graph = cook.materialize("graph", { files = inputs, tools = { "dotnet" } },
+    local graph = cook.materialize("graph", { files = inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
         discovery.producer(solution, configuration))
     local settings = { artifacts = artifacts, configuration = configuration }
     cook.recipe("dotnet:build", { origin = "cook_dotnet.workspace" }, function()

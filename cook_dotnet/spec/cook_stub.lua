@@ -1,9 +1,9 @@
 local M = {}
 local json = require("cjson.safe")
-local probes, units, exported, gathered, gather_count, current_recipe, recipes, commands, resolved, materialized, materialized_value
+local probes, units, exported, gathered, gathers, gather_count, current_recipe, recipes, commands, resolved, materialized, materialized_value
 
 function M.reset()
-    probes, units, exported, gathered, gather_count, current_recipe = {}, {}, {}, nil, 0, nil
+    probes, units, exported, gathered, gathers, gather_count, current_recipe = {}, {}, {}, nil, {}, 0, nil
     recipes, commands, materialized, materialized_value = {}, {}, nil, nil
     resolved = { "src/App.csproj", "src/Program.cs" }
     _G.recipe = nil
@@ -19,6 +19,7 @@ function M.reset()
         resolve_gather = function(globs, excludes)
             gather_count = gather_count + 1
             gathered = { globs = globs, excludes = excludes }
+            gathers[#gathers + 1] = gathered
             return type(resolved) == "function" and resolved(globs, excludes) or resolved
         end,
         add_unit = function(unit) units[#units + 1] = unit end,
@@ -40,6 +41,11 @@ function M.reset()
         recipe = function(name, opts, body)
             recipes[name] = { opts = opts, body = body }
         end,
+        tools = {
+            id = function(name)
+                return { hash = (name .. string.rep("0", 64)):sub(1, 64), path = "/stub/bin/" .. name }
+            end,
+        },
     }
     _G.fs = {}
 end
@@ -56,11 +62,17 @@ function M.probe(key) return probes[key] end
 function M.units() return units end
 function M.export(name) return exported[name] end
 function M.gathered() return gathered end
+function M.gathers() return gathers end
 function M.gather_count() return gather_count end
 function M.recipes() return recipes end
 function M.command(prefix, response) commands[prefix] = response end
 function M.resolved(files) resolved = files end
-function M.materialize_as(value) materialized_value = value end
+function M.materialize_as(value)
+    value.toolchain = value.toolchain or {
+        dotnet_id = string.rep("d", 64), sdk = "10.0.302", netcore_ref = "10.0.10", aspnetcore_ref = "10.0.10",
+    }
+    materialized_value = value
+end
 function M.materialized() return materialized end
 function M.execute(name)
     local entry = assert(recipes[name], "unknown recipe " .. name)

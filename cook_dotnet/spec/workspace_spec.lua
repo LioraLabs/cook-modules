@@ -23,7 +23,9 @@ local function load_workspace(duplicate)
         and { project("App", "src/A/App.csproj"), project("App", "src/B/App.csproj") }
         or { project("App", "src/App/App.csproj", "src/Lib/Lib.csproj", "Exe"),
             project("Lib", "src/Lib/Lib.csproj") }
-    stub.materialize_as({ configuration = "Debug", projects = projects })
+    stub.materialize_as({ configuration = "Debug", toolchain = {
+        dotnet_id = string.rep("d", 64), sdk = "10.0.302", netcore_ref = "10.0.10", aspnetcore_ref = "10.0.10",
+    }, projects = projects })
     stub.resolved({ "src/Graph.slnx", "src/App/App.csproj", "src/App/App.cs",
         "src/Lib/Lib.csproj", "src/Lib/Lib.cs", "src/Directory.Build.props" })
     return require("cook_dotnet"), projects
@@ -46,6 +48,7 @@ describe("cook_dotnet.workspace", function()
         local materialized = stub.materialized()
         assert.equal("graph", materialized.name)
         assert.same({ "dotnet" }, materialized.spec.tools)
+        assert.same({ "dotnet:toolchain" }, materialized.spec.seals)
         assert.is_function(materialized.produce)
         local by_output = {}
         for _, unit in ipairs(units) do
@@ -60,8 +63,8 @@ describe("cook_dotnet.workspace", function()
         assert.is_truthy(app.command:find("--use-lock-file --locked-mode", 1, true))
         assert.is_truthy(app.command:find("--no-dependencies", 1, true))
         assert.is_truthy(app.command:find("UseCommonOutputDirectory=true", 1, true))
-        assert.is_truthy(app.command:find("-p:AllowMissingPrunePackageData=true", 1, true))
-        assert.same({ "dotnet:toolchain" }, app.probes)
+        assert.is_falsy(app.command:find("AllowMissingPrunePackageData", 1, true))
+        assert.same({ "dotnet:tool", "dotnet:toolchain" }, app.probes)
 
         assert.same("src/App/App.csproj", stub.export("dotnet:App").project)
         assert.same("net8.0", stub.export("dotnet:App").framework)
@@ -166,6 +169,36 @@ describe("cook_dotnet.workspace", function()
         assert.is_falsy(inputs:find("src/App/obj/", 1, true))
         assert.is_truthy(inputs:find("src/App/assets/kept.txt", 1, true))
         assert.is_truthy(inputs:find("src/Shared/bin/kept.txt", 1, true))
+    end)
+
+    it("scopes lockfiles and applies the Web workaround only to evaluated Web SDK projects", function()
+        local dotnet, projects = load_workspace()
+        projects[1].value.Properties.UsingMicrosoftNETSdkWeb = "true"
+        stub.resolved({ "src/Graph.slnx", "global.json", "NuGet.config", "src/Directory.Build.props",
+            "src/App/App.csproj", "src/App/App.cs", "src/App/packages.lock.json",
+            "src/Lib/Lib.csproj", "src/Lib/Lib.cs", "src/Lib/packages.lock.json" })
+        dotnet.workspace({ solution = "src/Graph.slnx" })
+        stub.execute("dotnet:build")
+        local by_output = {}; for _, unit in ipairs(stub.units()) do by_output[unit.outputs[1]] = unit end
+        local app, lib = by_output["build/dotnet/bin/App/**"], by_output["build/dotnet/bin/Lib/**"]
+        assert.is_truthy(app.command:find("AllowMissingPrunePackageData=true", 1, true))
+        assert.is_falsy(lib.command:find("AllowMissingPrunePackageData=true", 1, true))
+        assert.is_truthy(table.concat(app.inputs, "\n"):find("src/App/packages.lock.json", 1, true))
+        assert.is_falsy(table.concat(app.inputs, "\n"):find("src/Lib/packages.lock.json", 1, true))
+        assert.is_truthy(table.concat(lib.inputs, "\n"):find("src/Lib/packages.lock.json", 1, true))
+        assert.is_falsy(table.concat(lib.inputs, "\n"):find("src/App/packages.lock.json", 1, true))
+
+        package.loaded.cook_dotnet = nil
+        stub.reset()
+        stub.materialize_as({ configuration = "Debug", toolchain = {
+            dotnet_id = string.rep("d", 64), sdk = "10.0.302", netcore_ref = "10.0.10", aspnetcore_ref = "<missing>",
+        }, projects = { projects[1], projects[2] } })
+        stub.resolved({ "src/Graph.slnx", "src/App/App.csproj", "src/Lib/Lib.csproj" })
+        dotnet = require("cook_dotnet")
+        dotnet.workspace({ solution = "src/Graph.slnx" })
+        local ok, err = pcall(stub.execute, "dotnet:build")
+        assert.is_false(ok)
+        assert.is_truthy(err:find("Web SDK project", 1, true))
     end)
 
     it("rejects duplicate recipe names and use inside a recipe", function()
