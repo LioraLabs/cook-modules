@@ -63,7 +63,7 @@ describe("cook_dotnet.workspace", function()
         assert.is_truthy(table.concat(app.inputs, "\n")
             :find("build/dotnet/obj/Lib/%*%*/ref/%*%.dll"))
         assert.is_truthy(app.command:find("RestoreRecursive=false", 1, true))
-        assert.is_truthy(app.command:find("--use-lock-file --locked-mode", 1, true))
+        assert.is_falsy(app.command:find("--use-lock-file", 1, true))
         assert.is_truthy(app.command:find("--no-dependencies", 1, true))
         assert.is_truthy(app.command:find("UseCommonOutputDirectory=true", 1, true))
         assert.is_falsy(app.command:find("AllowMissingPrunePackageData", 1, true))
@@ -195,6 +195,8 @@ describe("cook_dotnet.workspace", function()
         assert.is_falsy(table.concat(app.inputs, "\n"):find("src/Lib/packages.lock.json", 1, true))
         assert.is_truthy(table.concat(lib.inputs, "\n"):find("src/Lib/packages.lock.json", 1, true))
         assert.is_falsy(table.concat(lib.inputs, "\n"):find("src/App/packages.lock.json", 1, true))
+        assert.is_truthy(app.command:find("--use-lock-file --locked-mode", 1, true))
+        assert.is_truthy(lib.command:find("--use-lock-file --locked-mode", 1, true))
 
         package.loaded.cook_dotnet = nil
         stub.reset()
@@ -212,6 +214,7 @@ describe("cook_dotnet.workspace", function()
             if unit.outputs[1] == "build/dotnet/bin/App/**" then web_unit = unit end
         end
         assert.is_truthy(web_unit.command:find("AllowMissingPrunePackageData=true", 1, true))
+        assert.is_falsy(web_unit.command:find("--use-lock-file", 1, true))
     end)
 
     it("rejects duplicate recipe names and use inside a recipe", function()

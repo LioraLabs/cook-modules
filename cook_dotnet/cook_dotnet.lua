@@ -116,7 +116,8 @@ function M.build(opts)
         .. " && " .. environment
         .. dotnet .. " restore " .. quote(opts.project)
         .. " --artifacts-path " .. quote(artifacts)
-        .. " --use-lock-file --locked-mode --verbosity quiet $prune"
+        .. (#locks > 0 and " --use-lock-file --locked-mode" or "")
+        .. " --verbosity quiet $prune"
         .. " && " .. environment
         .. dotnet .. " build " .. quote(opts.project)
         .. " --artifacts-path " .. quote(artifacts)
@@ -342,6 +343,7 @@ local function mint_graph(opts, mode, context_files, graph)
             end
         end
         table.sort(inputs); table.sort(requires)
+        local locked = input_set[join(project_dir, "packages.lock.json")]
         local suffix = output_suffix(project, framework)
         local bin = artifacts .. "/bin/" .. project.name .. suffix
         local obj = artifacts .. "/obj/" .. project.name .. suffix
@@ -351,7 +353,8 @@ local function mint_graph(opts, mode, context_files, graph)
         local command = "rm -rf -- " .. quote(bin) .. " " .. quote(obj)
             .. " && " .. environment .. '"$<dotnet:tool.dotnet.path>" restore ' .. quote(project.path)
             .. " --artifacts-path " .. quote(artifacts)
-            .. " -p:RestoreRecursive=false --use-lock-file --locked-mode"
+            .. " -p:RestoreRecursive=false"
+            .. (locked and " --use-lock-file --locked-mode" or "")
             .. web_workaround(project, graph.toolchain) .. " --verbosity quiet"
             .. " && " .. environment .. '"$<dotnet:tool.dotnet.path>" build ' .. quote(project.path)
             .. " --artifacts-path " .. quote(artifacts)
