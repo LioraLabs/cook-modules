@@ -10,7 +10,7 @@ describe("cook_dotnet.build", function()
     it("builds from a fresh isolated artifacts tree", function()
         local dotnet = load_module()
         stub.resolved(function(globs)
-            if globs[1] == "src/**/packages.lock.json" then return {} end
+            if globs[1] == "src/packages.lock.json" then return {} end
             return { "src/App.csproj", "src/Program.cs" }
         end)
         stub.in_recipe("app", function()
@@ -89,7 +89,7 @@ describe("cook_dotnet.build", function()
     it("adds the lockfile even when callers choose explicit inputs", function()
         local dotnet = load_module()
         stub.resolved(function(globs)
-            if globs[1] == "source/**/packages.lock.json" then return { "source/packages.lock.json" } end
+            if globs[1] == "source/packages.lock.json" then return { "source/packages.lock.json" } end
             return { "source/App.csproj", "source/App.cs" }
         end)
         stub.in_recipe("app", function()
@@ -97,6 +97,18 @@ describe("cook_dotnet.build", function()
         end)
         assert.same({ "source/App.cs", "source/App.csproj", "source/packages.lock.json" }, stub.units()[1].inputs)
         assert.is_truthy(stub.units()[1].command:find("--use-lock-file --locked-mode", 1, true))
+    end)
+
+    it("does not lock a project from a sibling lockfile", function()
+        local dotnet = load_module()
+        stub.resolved(function(globs)
+            if globs[1] == "source/App/packages.lock.json" then return {} end
+            return { "source/App/App.csproj", "source/App/App.cs", "source/Lib/packages.lock.json" }
+        end)
+        stub.in_recipe("app", function()
+            dotnet.build({ project = "source/App/App.csproj", root = "source" })
+        end)
+        assert.is_falsy(stub.units()[1].command:find("--use-lock-file", 1, true))
     end)
 
     it("refuses unsafe cleanup paths and calls outside recipes", function()

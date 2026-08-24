@@ -92,10 +92,12 @@ function M.build(opts)
     }
     for _, pattern in ipairs(opts.excludes or {}) do excludes[#excludes + 1] = pattern end
     local inputs = cook.resolve_gather(globs, excludes)
-    local lock_root = root
-    local locks = cook.resolve_gather({ join(lock_root, "**/packages.lock.json") }, {
-        join(lock_root, "bin/**"), join(lock_root, "obj/**"), join(lock_root, ".git/**"),
-        join(lock_root, ".cook/**"), artifacts .. "/**",
+    local lock_glob = project_lower:match("%.csproj$")
+        and join(directory(opts.project), "packages.lock.json")
+        or join(root, "**/packages.lock.json")
+    local locks = cook.resolve_gather({ lock_glob }, {
+        join(root, "bin/**"), join(root, "obj/**"), join(root, ".git/**"),
+        join(root, ".cook/**"), artifacts .. "/**",
     })
     local seen = {}; for _, input in ipairs(inputs) do seen[input] = true end
     for _, lock in ipairs(locks) do if not seen[lock] then inputs[#inputs + 1], seen[lock] = lock, true end end
