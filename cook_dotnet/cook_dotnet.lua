@@ -315,7 +315,7 @@ local function mint_graph(opts, mode, context_files, graph)
             and "/" .. configuration:lower() .. "_" .. framework or ""
     end
 
-    local roots = {}
+    local roots, aggregate_outputs = {}, {}
     for _, project in ipairs(ordered) do
       for _, framework in ipairs(project.framework_list) do
         local requires, inputs, input_set = {}, {}, {}
@@ -366,6 +366,8 @@ local function mint_graph(opts, mode, context_files, graph)
         if framework ~= "" then command = command .. " --framework " .. quote(framework) end
         local project_recipe = recipe_for(project, framework)
         roots[#roots + 1] = project_recipe
+        aggregate_outputs[#aggregate_outputs + 1] = bin .. "/**"
+        aggregate_outputs[#aggregate_outputs + 1] = obj .. "/**"
         cook.recipe(project_recipe, { requires = requires, origin = "cook_dotnet.workspace" }, function()
             cook.add_unit({
                 inputs = inputs,
@@ -441,6 +443,8 @@ local function mint_graph(opts, mode, context_files, graph)
         end
     else
         for _, root in ipairs(roots) do cook.require_recipe(root) end
+        table.sort(aggregate_outputs)
+        cook.step_group(function() cook.passthrough(aggregate_outputs) end)
     end
 end
 

@@ -1,4 +1,12 @@
 local stub = require("spec.cook_stub")
+local passthrough
+
+local function reset()
+    stub.reset()
+    passthrough = nil
+    cook.step_group = function(body) body() end
+    cook.passthrough = function(outputs) passthrough = outputs end
+end
 
 local function project(name, path, reference, output_type)
     return { path = path, value = { Properties = { MSBuildProjectName = name, TargetFramework = "net8.0",
@@ -18,7 +26,7 @@ end
 
 local function load_workspace(duplicate)
     package.loaded.cook_dotnet = nil
-    stub.reset()
+    reset()
     local projects = duplicate
         and { project("App", "src/A/App.csproj"), project("App", "src/B/App.csproj") }
         or { project("App", "src/App/App.csproj", "src/Lib/Lib.csproj", "Exe"),
@@ -34,6 +42,17 @@ local function load_workspace(duplicate)
 end
 
 describe("cook_dotnet.workspace", function()
+    it("forwards generated project terminal outputs through dotnet:build", function()
+        local dotnet = load_workspace()
+        dotnet.workspace({ solution = "src/Graph.slnx" })
+        stub.execute("dotnet:build")
+
+        assert.same({
+            "build/dotnet/bin/App/**", "build/dotnet/bin/Lib/**",
+            "build/dotnet/obj/App/**", "build/dotnet/obj/Lib/**",
+        }, passthrough)
+    end)
+
     it("mints one ordered recipe per evaluated project", function()
         local dotnet, projects = load_workspace()
         assert.same({ "dotnet:build", "dotnet:run" }, dotnet.workspace({ solution = "src/Graph.slnx" }))
@@ -199,7 +218,7 @@ describe("cook_dotnet.workspace", function()
         assert.is_truthy(lib.command:find("--use-lock-file --locked-mode", 1, true))
 
         package.loaded.cook_dotnet = nil
-        stub.reset()
+        reset()
         stub.materialize_as({ configuration = "Debug", toolchain = {
             dotnet_id = string.rep("d", 64), sdk = "10.0.302",
             netcore_ref = { versions = "8.0.10", digest = string.rep("n", 64) },
