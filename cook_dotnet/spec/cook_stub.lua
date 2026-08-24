@@ -1,10 +1,10 @@
 local M = {}
 local json = require("cjson.safe")
-local probes, units, exported, gathered, gathers, gather_count, current_recipe, recipes, commands, resolved, materialized, materialized_value
+local probes, units, exported, gathered, gathers, gather_count, current_recipe, recipes, commands, resolved, files, materialized, materializations, materialized_value
 
 function M.reset()
     probes, units, exported, gathered, gathers, gather_count, current_recipe = {}, {}, {}, nil, {}, 0, nil
-    recipes, commands, materialized, materialized_value = {}, {}, nil, nil
+    recipes, commands, files, materialized, materializations, materialized_value = {}, {}, {}, nil, {}, nil
     resolved = { "src/App.csproj", "src/Program.cs" }
     _G.recipe = nil
     _G.cook = {
@@ -27,6 +27,7 @@ function M.reset()
         json_decode = function(value) return assert(json.decode(value)) end,
         materialize = function(name, spec, produce)
             materialized = { name = name, spec = spec, produce = produce }
+            materializations[#materializations + 1] = materialized
             return assert(materialized_value, "no materialized value configured")
         end,
         require_recipe = function(name) M.execute(name) end,
@@ -47,7 +48,7 @@ function M.reset()
             end,
         },
     }
-    _G.fs = {}
+    _G.fs = { read = function(path) return files[path] or "" end }
 end
 
 function M.in_recipe(name, fn)
@@ -67,6 +68,7 @@ function M.gather_count() return gather_count end
 function M.recipes() return recipes end
 function M.command(prefix, response) commands[prefix] = response end
 function M.resolved(files) resolved = files end
+function M.files(value) files = value end
 function M.materialize_as(value)
     value.toolchain = value.toolchain or {
         dotnet_id = string.rep("d", 64), sdk = "10.0.302",
@@ -75,7 +77,12 @@ function M.materialize_as(value)
     }
     materialized_value = value
 end
-function M.materialized() return materialized end
+function M.materialized(name)
+    if name then
+        for _, value in ipairs(materializations) do if value.name == name then return value end end
+    end
+    return materialized
+end
 function M.execute(name)
     local entry = assert(recipes[name], "unknown recipe " .. name)
     if entry.executed then return end

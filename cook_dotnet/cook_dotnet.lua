@@ -249,6 +249,78 @@ local function workspace_globs(solution, locks)
     return globs
 end
 
+local function decode_xml(value)
+    return value:gsub("&quot;", '"'):gsub("&apos;", "'"):gsub("&lt;", "<")
+        :gsub("&gt;", ">"):gsub("&amp;", "&")
+end
+
+local function xml_attribute(tag, name)
+    return tag:match(name .. '%s*=%s*"([^"]+)"')
+        or tag:match(name .. "%s*=%s*'([^']+)'")
+end
+
+local function referenced_projects(solution)
+    local projects, queued, queue = {}, {}, {}
+    local function add(pathname, base)
+        local path = normalize(join(base or ".", decode_xml(pathname)))
+        if path:lower():match("%.csproj$") and not queued[path] then
+            queued[path], queue[#queue + 1] = true, path
+        end
+    end
+    local source = fs.read(solution)
+    if solution:lower():match("%.csproj$") then
+        add(solution)
+    elseif solution:lower():match("%.slnx$") then
+        for tag in source:gmatch("<[Pp]roject[^>]*>") do
+            local path = xml_attribute(tag, "[Pp]ath")
+            if path then add(path, directory(solution)) end
+        end
+    else
+        for path in source:gmatch('[Pp]roject%b() *= *[^,]+, *"([^"]+%.csproj)"') do
+            add(path, directory(solution))
+        end
+    end
+    local index = 1
+    while queue[index] do
+        local project = queue[index]
+        projects[#projects + 1] = project
+        for tag in fs.read(project):gmatch("<[Pp]roject[Rr]eference[^>]*>") do
+            local path = xml_attribute(tag, "[Ii]nclude")
+            if path then add(path, directory(project)) end
+        end
+        index = index + 1
+    end
+    table.sort(projects)
+    return projects
+end
+
+local function graph_globs(solution, projects, locks)
+    local globs, seen = {}, {}
+    local function add(pathname)
+        if not seen[pathname] then seen[pathname], globs[#globs + 1] = true, pathname end
+    end
+    local function add_context(pathname)
+        local current = directory(pathname)
+        while true do
+            for _, name in ipairs({ "Directory.Build.props", "Directory.Build.targets",
+                "Directory.Packages.props", "global.json", "NuGet.config", "nuget.config", ".editorconfig" }) do
+                add(join(current, name))
+            end
+            if current == "." then break end
+            current = directory(current)
+        end
+    end
+    add(solution)
+    add_context(solution)
+    for _, project in ipairs(projects) do
+        add(project)
+        add_context(project)
+        if locks then add(join(directory(project), "packages.lock.json")) end
+    end
+    table.sort(globs)
+    return globs
+end
+
 local function target_frameworks(project)
     if project.framework and project.framework ~= "" then return { project.framework } end
     local result = {}
@@ -493,9 +565,10 @@ function M.workspace(opts)
     end
 
     ensure_toolchain()
-    local graph_inputs = cook.resolve_gather(workspace_globs(solution, false),
+    local projects = referenced_projects(solution)
+    local graph_inputs = cook.resolve_gather(graph_globs(solution, projects, false),
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
-    local inputs = cook.resolve_gather(workspace_globs(solution, true),
+    local inputs = cook.resolve_gather(graph_globs(solution, projects, true),
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
     local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
         discovery.producer(solution, configuration))

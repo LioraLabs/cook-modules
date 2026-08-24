@@ -38,6 +38,11 @@ local function load_workspace(duplicate)
     }, projects = projects })
     stub.resolved({ "src/Graph.slnx", "src/App/App.csproj", "src/App/App.cs",
         "src/Lib/Lib.csproj", "src/Lib/Lib.cs", "src/Directory.Build.props" })
+    stub.files({
+        ["src/Graph.slnx"] = '<Solution><Project Path="App/App.csproj"/><Project Path=\'Lib/Lib.csproj\'/></Solution>',
+        ["src/App/App.csproj"] = '<Project><ProjectReference Include=\'../Lib/Lib.csproj\'/></Project>',
+        ["src/Lib/Lib.csproj"] = "<Project/>",
+    })
     return require("cook_dotnet"), projects
 end
 
@@ -177,6 +182,9 @@ describe("cook_dotnet.workspace", function()
 
     it("scopes discovery to the solution subtree and inherits ancestor configuration", function()
         local dotnet = load_workspace()
+        stub.files({ ["apps/radarr/src/Graph.slnx"] =
+            '<Solution><Project Path="App/App.csproj"/></Solution>',
+            ["apps/radarr/src/App/App.csproj"] = "<Project/>" })
         dotnet.workspace({ solution = "apps/radarr/src/Graph.slnx" })
 
         local graph, inputs = stub.gathers()[1].globs, stub.gathers()[2].globs
@@ -184,16 +192,39 @@ describe("cook_dotnet.workspace", function()
             for _, item in ipairs(list) do if item == value then return true end end
             return false
         end
-        assert.is_truthy(table.concat(graph, "\n"):find("apps/radarr/src/**/*.csproj", 1, true))
-        assert.is_false(contains(graph, "**/*.csproj"))
+        assert.is_true(contains(graph, "apps/radarr/src/App/App.csproj"))
+        assert.is_false(contains(graph, "apps/radarr/src/**/*.csproj"))
         for _, file in ipairs({ "Directory.Build.props", "Directory.Build.targets",
             "Directory.Packages.props", "global.json", "NuGet.config", "nuget.config", ".editorconfig",
             "apps/Directory.Build.props", "apps/radarr/Directory.Build.targets" }) do
-            assert.is_truthy(table.concat(graph, "\n"):find(file, 1, true), file)
+            assert.is_true(contains(graph, file), file)
         end
-        assert.is_falsy(table.concat(graph, "\n"):find("packages.lock.json", 1, true))
-        assert.is_truthy(table.concat(inputs, "\n"):find("apps/radarr/src/**/packages.lock.json", 1, true))
+        assert.is_false(contains(graph, "apps/radarr/src/App/packages.lock.json"))
+        assert.is_true(contains(inputs, "apps/radarr/src/App/packages.lock.json"))
         assert.is_false(contains(inputs, "sibling/**/*.csproj"))
+    end)
+
+    it("keys discovery on exact external projects and their inherited configuration", function()
+        local dotnet, projects = load_workspace()
+        projects[1].value.Items.ProjectReference[1].FullPath = "shared/Lib/Lib.csproj"
+        projects[2].path = "shared/Lib/Lib.csproj"
+        projects[2].value.Properties.MSBuildAllProjects = "shared/Lib/Lib.csproj"
+        stub.resolved({ "apps/App/App.csproj", "shared/Lib/Lib.csproj",
+            "Directory.Build.props", "shared/Directory.Build.targets" })
+        stub.files({ ["apps/App/App.csproj"] =
+            '<Project><ProjectReference Include="../../shared/Lib/Lib.csproj"/></Project>',
+            ["shared/Lib/Lib.csproj"] = "<Project/>" })
+        dotnet.workspace({ solution = "apps/App/App.csproj" })
+
+        local files = stub.materialized("graph").spec.files
+        local function has(value)
+            for _, file in ipairs(files) do if file == value then return true end end
+            return false
+        end
+        assert.is_true(has("shared/Lib/Lib.csproj"))
+        assert.is_true(has("shared/Directory.Build.targets"))
+        assert.is_true(has("Directory.Build.props"))
+        assert.is_false(has("shared/**/*.csproj"))
     end)
 
     it("keeps evaluated project bin and obj items out of build inputs", function()
