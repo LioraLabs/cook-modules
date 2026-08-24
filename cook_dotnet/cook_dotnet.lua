@@ -195,6 +195,26 @@ local function is_ancestor(parent, child)
     return parent == "." or child == parent or child:sub(1, #parent + 1) == parent .. "/"
 end
 
+local function workspace_globs(root, solution, locks)
+    local prefix = root == "." and "" or root .. "/"
+    local globs = { solution,
+        prefix .. "**/*.csproj", prefix .. "**/*.props", prefix .. "**/*.targets",
+        prefix .. "**/global.json", prefix .. "**/NuGet.config", prefix .. "**/nuget.config",
+        prefix .. "**/.editorconfig",
+    }
+    if locks then globs[#globs + 1] = prefix .. "**/packages.lock.json" end
+
+    local current = "."
+    for part in root:gmatch("[^/]+") do
+        for _, name in ipairs({ "Directory.Build.props", "Directory.Build.targets",
+            "Directory.Packages.props", "global.json", "NuGet.config", "nuget.config", ".editorconfig" }) do
+            globs[#globs + 1] = join(current, name)
+        end
+        current = join(current, part)
+    end
+    return globs
+end
+
 local function project_context(project, context)
     local dir, nearest, inherited = directory(project.path), {}, {}
     for file in pairs(context) do
@@ -248,7 +268,7 @@ local function web_workaround(project, toolchain)
 end
 
 local function mint_graph(opts, mode, context_files, graph)
-    local artifacts, configuration = opts.artifacts, opts.configuration
+    local artifacts, configuration, root = opts.artifacts, opts.configuration, opts.root
     local context = {}
     for _, file in ipairs(context_files) do
         local base = file:match("([^/]+)$") or file
@@ -262,16 +282,16 @@ local function mint_graph(opts, mode, context_files, graph)
     local projects = {}
     for _, entry in ipairs(graph.projects) do
         local info = discover_project(entry.path, entry.value)
+        if not is_ancestor(root, info.path) then
+            error("[cook_dotnet.workspace] MSBuild discovered project '" .. info.path
+                .. "' outside root '" .. root .. "'; expand root to include it", 2)
+        end
         projects[info.path] = info
     end
-    local workspace_files, roots = {}, {}
-    for path in pairs(projects) do roots[path:match("^([^/]+)/") or "."] = true end
-    for root in pairs(roots) do
-        local glob = root == "." and "**" or root .. "/**"
-        for _, file in ipairs(cook.resolve_gather({ glob }, {
-            "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**",
-        })) do workspace_files[#workspace_files + 1] = file end
-    end
+    local glob = root == "." and "**" or root .. "/**"
+    local workspace_files = cook.resolve_gather({ glob }, {
+        "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**",
+    })
 
     local by_name = {}
     for _, project in pairs(projects) do
@@ -460,6 +480,11 @@ function M.workspace(opts)
         error("[cook_dotnet.workspace] solution must end in .sln, .slnx, or .csproj", 2)
     end
     check_relative("solution", solution)
+    local root = opts.root or "."
+    check_relative("root", root, true)
+    if not is_ancestor(root, solution) then
+        error("[cook_dotnet.workspace] solution must be inside root '" .. root .. "'", 2)
+    end
     local artifacts = opts.artifacts or "build/dotnet"
     check_relative("artifacts", artifacts)
     local configuration = opts.configuration or "Debug"
@@ -468,15 +493,13 @@ function M.workspace(opts)
     end
 
     ensure_toolchain()
-    local graph_inputs = cook.resolve_gather({ solution, "**/*.csproj", "**/*.props", "**/*.targets",
-        "**/global.json", "**/NuGet.config", "**/nuget.config", "**/.editorconfig" },
+    local graph_inputs = cook.resolve_gather(workspace_globs(root, solution, false),
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
-    local inputs = cook.resolve_gather({ solution, "**/*.csproj", "**/*.props", "**/*.targets",
-        "**/global.json", "**/NuGet.config", "**/nuget.config", "**/packages.lock.json", "**/.editorconfig" },
+    local inputs = cook.resolve_gather(workspace_globs(root, solution, true),
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
     local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
         discovery.producer(solution, configuration))
-    local settings = { artifacts = artifacts, configuration = configuration }
+    local settings = { artifacts = artifacts, configuration = configuration, root = root }
     cook.recipe("dotnet:build", { origin = "cook_dotnet.workspace" }, function()
         mint_graph(settings, "build", inputs, graph)
     end)

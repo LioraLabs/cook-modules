@@ -175,6 +175,37 @@ describe("cook_dotnet.workspace", function()
         assert.equal(3, stub.gather_count())
     end)
 
+    it("scopes workspace inputs to an explicit root and includes ancestor configuration", function()
+        local dotnet = load_workspace()
+        dotnet.workspace({ solution = "apps/radarr/src/Graph.slnx", root = "apps/radarr/src" })
+
+        local graph, inputs = stub.gathers()[1].globs, stub.gathers()[2].globs
+        local function has(list, value)
+            for _, item in ipairs(list) do if item == value then return true end end
+            return false
+        end
+        assert.is_true(has(graph, "apps/radarr/src/**/*.csproj"))
+        assert.is_false(has(graph, "**/*.csproj"))
+        assert.is_true(has(graph, "Directory.Build.props"))
+        assert.is_true(has(graph, "apps/NuGet.config"))
+        assert.is_true(has(graph, "apps/radarr/Directory.Build.targets"))
+        assert.is_false(has(graph, "apps/**/*.props"))
+        assert.is_false(has(graph, "apps/radarr/src/**/packages.lock.json"))
+        assert.is_true(has(inputs, "apps/radarr/src/**/packages.lock.json"))
+    end)
+
+    it("rejects projects MSBuild discovers outside an explicit root", function()
+        local dotnet = load_workspace()
+        stub.materialize_as({ configuration = "Debug", projects = {
+            project("App", "src/App/App.csproj", "shared/$(Flavor)/Lib.csproj"),
+            project("Lib", "shared/$(Flavor)/Lib.csproj"),
+        } })
+        dotnet.workspace({ solution = "src/App/App.csproj", root = "src" })
+
+        assert.has_error(function() stub.execute("dotnet:build") end,
+            "[cook_dotnet.workspace] MSBuild discovered project 'shared/$(Flavor)/Lib.csproj' outside root 'src'; expand root to include it")
+    end)
+
     it("keeps evaluated project bin and obj items out of build inputs", function()
         local dotnet, projects = load_workspace()
         projects[1].value.Properties.OutputType = "Library"
