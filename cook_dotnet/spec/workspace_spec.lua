@@ -175,27 +175,6 @@ describe("cook_dotnet.workspace", function()
         assert.equal(3, stub.gather_count())
     end)
 
-    it("scopes discovery to the solution subtree and inherits ancestor configuration", function()
-        local dotnet = load_workspace()
-        dotnet.workspace({ solution = "apps/radarr/src/Graph.slnx" })
-
-        local graph, inputs = stub.gathers()[1].globs, stub.gathers()[2].globs
-        local function contains(list, value)
-            for _, item in ipairs(list) do if item == value then return true end end
-            return false
-        end
-        assert.is_truthy(table.concat(graph, "\n"):find("apps/radarr/src/**/*.csproj", 1, true))
-        assert.is_false(contains(graph, "**/*.csproj"))
-        for _, file in ipairs({ "Directory.Build.props", "Directory.Build.targets",
-            "Directory.Packages.props", "global.json", "NuGet.config", "nuget.config", ".editorconfig",
-            "apps/Directory.Build.props", "apps/radarr/Directory.Build.targets" }) do
-            assert.is_truthy(table.concat(graph, "\n"):find(file, 1, true), file)
-        end
-        assert.is_falsy(table.concat(graph, "\n"):find("packages.lock.json", 1, true))
-        assert.is_truthy(table.concat(inputs, "\n"):find("apps/radarr/src/**/packages.lock.json", 1, true))
-        assert.is_false(contains(inputs, "sibling/**/*.csproj"))
-    end)
-
     it("keeps evaluated project bin and obj items out of build inputs", function()
         local dotnet, projects = load_workspace()
         projects[1].value.Properties.OutputType = "Library"

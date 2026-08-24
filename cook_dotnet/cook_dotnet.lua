@@ -224,31 +224,6 @@ local function framework_segment(framework)
     return "tfm-" .. framework:gsub(".", function(byte) return ("%02x"):format(byte:byte()) end)
 end
 
-local function workspace_globs(solution, locks)
-    local root = directory(solution)
-    local prefix = root == "." and "" or root .. "/"
-    local globs = { solution,
-        prefix .. "**/*.csproj", prefix .. "**/*.props", prefix .. "**/*.targets",
-        prefix .. "**/global.json", prefix .. "**/NuGet.config", prefix .. "**/nuget.config",
-        prefix .. "**/.editorconfig",
-    }
-    if locks then globs[#globs + 1] = prefix .. "**/packages.lock.json" end
-
-    local ancestors, current, parts = { "." }, "", {}
-    for part in root:gmatch("[^/]+") do parts[#parts + 1] = part end
-    for index = 1, #parts - 1 do
-        current = current == "" and parts[index] or current .. "/" .. parts[index]
-        ancestors[#ancestors + 1] = current
-    end
-    for _, ancestor in ipairs(ancestors) do
-        for _, name in ipairs({ "Directory.Build.props", "Directory.Build.targets",
-            "Directory.Packages.props", "global.json", "NuGet.config", "nuget.config", ".editorconfig" }) do
-            globs[#globs + 1] = join(ancestor, name)
-        end
-    end
-    return globs
-end
-
 local function target_frameworks(project)
     if project.framework and project.framework ~= "" then return { project.framework } end
     local result = {}
@@ -493,9 +468,11 @@ function M.workspace(opts)
     end
 
     ensure_toolchain()
-    local graph_inputs = cook.resolve_gather(workspace_globs(solution, false),
+    local graph_inputs = cook.resolve_gather({ solution, "**/*.csproj", "**/*.props", "**/*.targets",
+        "**/global.json", "**/NuGet.config", "**/nuget.config", "**/.editorconfig" },
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
-    local inputs = cook.resolve_gather(workspace_globs(solution, true),
+    local inputs = cook.resolve_gather({ solution, "**/*.csproj", "**/*.props", "**/*.targets",
+        "**/global.json", "**/NuGet.config", "**/nuget.config", "**/packages.lock.json", "**/.editorconfig" },
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
     local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
         discovery.producer(solution, configuration))
