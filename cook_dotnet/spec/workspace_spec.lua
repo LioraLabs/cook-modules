@@ -217,6 +217,50 @@ describe("cook_dotnet.workspace", function()
         assert.is_falsy(web_unit.command:find("--use-lock-file", 1, true))
     end)
 
+    it("treats single-entry TargetFrameworks executables as runnable", function()
+        local dotnet = load_workspace()
+        local app = multi_target("App", "src/App/App.csproj", "net8.0")
+        app.value.Properties.OutputType = "Exe"
+        app.value.Items.ProjectReference = { { FullPath = "src/Lib/Lib.csproj" } }
+        stub.materialize_as({ configuration = "Debug", projects = {
+            app, multi_target("Lib", "src/Lib/Lib.csproj", "net8.0"),
+        } })
+        dotnet.workspace({ solution = "src/Graph.slnx" })
+        stub.execute("dotnet:build")
+        stub.execute("dotnet:run")
+
+        local recipes = stub.recipes()
+        assert.is_table(recipes["dotnet:App:run"])
+        assert.same({ "dotnet:App" }, recipes["dotnet:App:run"].opts.requires)
+        local run_unit
+        for _, unit in ipairs(stub.units()) do
+            if unit.command:find("run/App/App.dll'", 1, true) then run_unit = unit end
+        end
+        assert.is_table(run_unit)
+        assert.is_false(run_unit.cache)
+    end)
+
+    it("defers run-target validation until dotnet:run is dispatched", function()
+        local dotnet = load_workspace()
+        stub.materialize_as({ configuration = "Debug", projects = {
+            project("Lib", "src/Lib/Lib.csproj"),
+        } })
+        dotnet.workspace({ solution = "src/Lib/Lib.csproj" })
+        stub.execute("dotnet:build")
+        for _, unit in ipairs(stub.units()) do
+            assert.is_falsy(unit.command:find("dotnet:run requires", 1, true))
+        end
+
+        stub.execute("dotnet:run")
+        local failing
+        for _, unit in ipairs(stub.units()) do
+            if unit.command:find("found 0", 1, true) then failing = unit end
+        end
+        assert.is_table(failing)
+        assert.is_false(failing.cache)
+        assert.is_truthy(failing.command:find("exit 1", 1, true))
+    end)
+
     it("rejects duplicate recipe names and use inside a recipe", function()
         local dotnet = load_workspace(true)
         dotnet.workspace({ solution = "src/Graph.slnx" })

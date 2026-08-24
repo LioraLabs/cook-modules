@@ -84,6 +84,16 @@ while next_index <= #queue do
         local props, compact = value.Properties or {}, { Properties = {}, Items = {} }
         for _, name in ipairs({ "MSBuildProjectName", "TargetFramework", "TargetFrameworks",
             "OutputType", "TargetFileName", "UsingMicrosoftNETSdkWeb" }) do compact.Properties[name] = props[name] end
+        local plural = compact.Properties.TargetFrameworks or ""
+        if (compact.Properties.TargetFileName or "") == "" and plural ~= ""
+            and not plural:find(";", 1, true)
+            and (compact.Properties.OutputType == "Exe" or compact.Properties.OutputType == "WinExe")
+        then
+            compact.Properties.TargetFileName = trim(dotnet(" msbuild " .. quote(project) .. " -nologo"
+                .. " -property:Configuration=" .. quote(configuration)
+                .. " -property:TargetFramework=" .. quote(plural)
+                .. " -getProperty:TargetFileName"))
+        end
         local imports = {}
         for imported in (props.MSBuildAllProjects or ""):gmatch("[^;]+") do
             local path = relative(imported, cwd)

@@ -395,7 +395,8 @@ local function mint_graph(opts, mode, context_files, graph)
     end
     for _, project in ipairs(ordered) do
         if (project.output_type == "Exe" or project.output_type == "WinExe")
-            and project.framework ~= "" and project.frameworks == "" and project.target_file ~= ""
+            and #project.framework_list == 1 and project.framework_list[1] ~= ""
+            and project.target_file ~= ""
         then
             local closure = {}; transitive(project, {}, closure)
             local run_dir = artifacts .. "/run/" .. project.name
@@ -428,9 +429,16 @@ local function mint_graph(opts, mode, context_files, graph)
 
     table.sort(roots)
     if mode == "run" then
-        if #executables ~= 1 then error("[cook_dotnet.workspace] dotnet:run requires exactly one single-target executable; found "
-            .. #executables, 2) end
-        cook.require_recipe(executables[1])
+        if #executables == 1 then
+            cook.require_recipe(executables[1])
+        else
+            cook.add_unit({
+                command = "echo " .. quote("[cook_dotnet.workspace] dotnet:run requires exactly one"
+                    .. " single-target executable; found " .. #executables) .. " >&2; exit 1",
+                cache = false,
+                sharing = "local",
+            })
+        end
     else
         for _, root in ipairs(roots) do cook.require_recipe(root) end
     end
