@@ -48,6 +48,9 @@ use cook_dotnet
 cook_dotnet.workspace({ solution = "src/Product.slnx" })
 ```
 
+`root` defaults to `.` and scopes discovery and build inputs. A discovered project
+outside it is rejected; expand `root` to include every project in the solution.
+
 `cook dotnet:build` builds the whole solution. Discovery uses Cook's registration-time
 `cook.materialize` cache and returns the structured graph directly, so warm runs
 do not start MSBuild just to rediscover the graph. Each project restores and builds
