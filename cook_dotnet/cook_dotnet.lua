@@ -172,6 +172,7 @@ local function discover_project(project, value)
             end
             references[#references + 1] = {
                 path = path,
+                framework = item.NearestTargetFramework,
                 generator = item.OutputItemType == "Analyzer"
                     or item.ReferenceOutputAssembly == "false",
             }
@@ -286,12 +287,18 @@ local function mint_graph(opts, mode, context_files, graph)
             error("[cook_dotnet.workspace] MSBuild discovered project '" .. info.path
                 .. "' outside root '" .. root .. "'; expand root to include it", 2)
         end
+        info.builds = {}
+        for framework, value in pairs(entry.builds or {}) do
+            info.builds[framework] = discover_project(entry.path, value)
+        end
+        local only
+        for _, build in pairs(info.builds) do
+            if only then only = nil; break end
+            only = build
+        end
+        if only then info.target_file, info.output_type = only.target_file, only.output_type end
         projects[info.path] = info
     end
-    local glob = root == "." and "**" or root .. "/**"
-    local workspace_files = cook.resolve_gather({ glob }, {
-        "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**",
-    })
 
     local by_name = {}
     for _, project in pairs(projects) do
@@ -314,7 +321,13 @@ local function mint_graph(opts, mode, context_files, graph)
         if not project then error("[cook_dotnet.workspace] undiscovered project reference '"
             .. pathname .. "'", 2) end
         visiting[pathname] = true
-        for _, reference in ipairs(project.references) do visit(reference.path) end
+        if next(project.builds) then
+            for _, build in pairs(project.builds) do
+                for _, reference in ipairs(build.references) do visit(reference.path) end
+            end
+        else
+            for _, reference in ipairs(project.references) do visit(reference.path) end
+        end
         visiting[pathname], visited[pathname] = nil, true
         ordered[#ordered + 1] = project
     end
@@ -335,26 +348,43 @@ local function mint_graph(opts, mode, context_files, graph)
             and "/" .. configuration:lower() .. "_" .. framework or ""
     end
 
+    local environment = 'DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
+        .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
+        .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
+    local function restore_command(project, locked)
+        return environment .. '"$<dotnet:tool.dotnet.path>" restore ' .. quote(project.path)
+            .. " --artifacts-path " .. quote(artifacts)
+            .. " -p:RestoreRecursive=false -p:Configuration=" .. quote(configuration)
+            .. (locked and " --use-lock-file --locked-mode" or "")
+            .. web_workaround(project, graph.toolchain) .. " --verbosity quiet"
+    end
+
     local roots, aggregate_outputs = {}, {}
     for _, project in ipairs(ordered) do
+      local restore_recipe
+      if #project.framework_list > 1 then
+        restore_recipe = project.recipe .. ":restore"
+        local command = restore_command(project, context[join(directory(project.path), "packages.lock.json")])
+        local restore_outputs = { artifacts .. "/obj/" .. project.name .. "/*" }
+        cook.recipe(restore_recipe, { origin = "cook_dotnet.workspace" }, function()
+            cook.add_unit({ inputs = context_files, outputs = restore_outputs, command = command,
+                probes = { "dotnet:tool", "dotnet:toolchain" }, seal = { "dotnet:toolchain" } })
+        end)
+        aggregate_outputs[#aggregate_outputs + 1] = restore_outputs[1]
+      end
       for _, framework in ipairs(project.framework_list) do
+        local build = project.builds[framework] or project
         local requires, inputs, input_set = {}, {}, {}
         local function add_input(file)
             if not input_set[file] then input_set[file], inputs[#inputs + 1] = true, file end
         end
-        for file in pairs(project.files) do add_input(file) end
+        for file in pairs(build.files) do add_input(file) end
         for _, file in ipairs(project_context(project, context)) do add_input(file) end
         local project_dir = directory(project.path)
-        local prefix = project_dir == "." and "" or project_dir .. "/"
-        for _, file in ipairs(workspace_files) do
-            if file:sub(1, #prefix) == prefix
-                and (file:match("([^/]+)$") ~= "packages.lock.json" or directory(file) == project_dir)
-            then add_input(file) end
-        end
-        for _, reference in ipairs(project.references) do
+        for _, reference in ipairs(build.references) do
             local dependency = projects[reference.path]
-            local dependency_framework = #dependency.framework_list == 1
-                and dependency.framework_list[1] or framework
+            local dependency_framework = reference.framework or (#dependency.framework_list == 1
+                and dependency.framework_list[1] or framework)
             requires[#requires + 1] = recipe_for(dependency, dependency_framework)
             local suffix = output_suffix(dependency, dependency_framework)
             if reference.generator then
@@ -364,24 +394,18 @@ local function mint_graph(opts, mode, context_files, graph)
                     .. (suffix == "" and "/**/ref/*.dll" or "/ref/*.dll"))
             end
         end
+        if restore_recipe then requires[#requires + 1] = restore_recipe end
         table.sort(inputs); table.sort(requires)
         local locked = input_set[join(project_dir, "packages.lock.json")]
         local suffix = output_suffix(project, framework)
         local bin = artifacts .. "/bin/" .. project.name .. suffix
         local obj = artifacts .. "/obj/" .. project.name .. suffix
-        local environment = 'DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
-            .. ' NUGET_PACKAGES="$(pwd)/.cook/dotnet/packages"'
-            .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 "
         local command = "rm -rf -- " .. quote(bin) .. " " .. quote(obj)
-            .. " && " .. environment .. '"$<dotnet:tool.dotnet.path>" restore ' .. quote(project.path)
-            .. " --artifacts-path " .. quote(artifacts)
-            .. " -p:RestoreRecursive=false"
-            .. (locked and " --use-lock-file --locked-mode" or "")
-            .. web_workaround(project, graph.toolchain) .. " --verbosity quiet"
+            .. (restore_recipe and "" or " && " .. restore_command(project, locked))
             .. " && " .. environment .. '"$<dotnet:tool.dotnet.path>" build ' .. quote(project.path)
             .. " --artifacts-path " .. quote(artifacts)
             .. " --configuration " .. quote(configuration)
-            .. " --no-restore --no-dependencies -p:UseCommonOutputDirectory=true"
+            .. " --no-restore --no-dependencies -p:UseCommonOutputDirectory=true -p:ProduceReferenceAssembly=true"
             .. web_workaround(project, graph.toolchain)
         if framework ~= "" then command = command .. " --framework " .. quote(framework) end
         local project_recipe = recipe_for(project, framework)
@@ -399,7 +423,7 @@ local function mint_graph(opts, mode, context_files, graph)
             cook.export(project_recipe, {
                 project = project.path,
                 name = project.name,
-                framework = project.framework,
+                framework = framework,
                 frameworks = project.frameworks,
                 artifacts = artifacts,
                 outputs = { bin .. "/**", obj .. "/**" },
@@ -409,25 +433,38 @@ local function mint_graph(opts, mode, context_files, graph)
     end
 
     local executables = {}
-    local function transitive(project, seen, result)
-        if seen[project.path] then return end
-        seen[project.path] = true
-        for _, reference in ipairs(project.references) do transitive(projects[reference.path], seen, result) end
-        result[#result + 1] = project
+    local function transitive(project, framework, seen, result)
+        local key = recipe_for(project, framework)
+        if seen[key] then return end
+        seen[key] = true
+        local build = project.builds[framework] or project
+        for _, reference in ipairs(build.references) do
+            if not reference.generator then
+                local dependency = projects[reference.path]
+                transitive(dependency, reference.framework or (#dependency.framework_list == 1
+                    and dependency.framework_list[1] or framework), seen, result)
+            end
+        end
+        result[#result + 1] = { project = project, framework = framework }
     end
     for _, project in ipairs(ordered) do
         if (project.output_type == "Exe" or project.output_type == "WinExe")
             and #project.framework_list == 1 and project.framework_list[1] ~= ""
             and project.target_file ~= ""
         then
-            local closure = {}; transitive(project, {}, closure)
+            local closure = {}; transitive(project, project.framework_list[1], {}, closure)
             local run_dir = artifacts .. "/run/" .. project.name
             local projection_inputs, copy = {}, { "rm -rf -- " .. quote(run_dir), "mkdir -p -- " .. quote(run_dir) }
             for _, dependency in ipairs(closure) do
-                local source = artifacts .. "/bin/" .. dependency.name
+                local suffix = output_suffix(dependency.project, dependency.framework)
+                local source = artifacts .. "/bin/" .. dependency.project.name .. suffix
                 projection_inputs[#projection_inputs + 1] = source .. "/**"
-                copy[#copy + 1] = "for d in " .. quote(source) .. "/*; do [ ! -d \"$d\" ] || cp -a \"$d/.\" "
-                    .. quote(run_dir .. "/") .. "; done"
+                if suffix ~= "" then
+                    copy[#copy + 1] = "cp -a " .. quote(source .. "/.") .. " " .. quote(run_dir .. "/")
+                else
+                    copy[#copy + 1] = "for d in " .. quote(source) .. "/*; do [ ! -d \"$d\" ] || cp -a \"$d/.\" "
+                        .. quote(run_dir .. "/") .. "; done"
+                end
             end
             local run_recipe = project.recipe .. ":run"
             cook.recipe(run_recipe, { requires = { project.recipe }, origin = "cook_dotnet.workspace" }, function()
@@ -497,8 +534,12 @@ function M.workspace(opts)
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
     local inputs = cook.resolve_gather(workspace_globs(root, solution, true),
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
+    -- Membership refreshes SDK evaluation; source bytes key only the builds that consume them.
+    local inventory = cook.resolve_gather({ root == "." and "**" or root .. "/**" },
+        { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
+    table.sort(inventory)
     local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
-        discovery.producer(solution, configuration))
+        discovery.producer(solution, configuration, inventory))
     local settings = { artifacts = artifacts, configuration = configuration, root = root }
     cook.recipe("dotnet:build", { origin = "cook_dotnet.workspace" }, function()
         mint_graph(settings, "build", inputs, graph)

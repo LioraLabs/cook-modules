@@ -9,7 +9,18 @@ cp "$module_dir/cook_dotnet.lua" "$demo_dir/"
 cp -R "$module_dir/cook_dotnet" "$demo_dir/"
 cp -R "$module_dir/demo/." "$demo_dir/"
 cd "$demo_dir"
-export XDG_CACHE_HOME="$demo_dir/cache"
+mkdir -p .cook/proof
+export XDG_CACHE_HOME="$demo_dir/.cook/cache"
+export DOTNET_CLI_HOME="$demo_dir/.cook/dotnet/home" NUGET_PACKAGES="$demo_dir/.cook/dotnet/packages"
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1
+
+run() {
+    log=$1; shift
+    status=0
+    cook "$@" > "$log" 2>&1 || status=$?
+    cat "$log"
+    return "$status"
+}
 
 nonce=$(date +%s%N)
 sed -i "s/v1/baseline-$nonce/" Lib/Message.cs
@@ -18,40 +29,44 @@ echo "== cold graph build =="
 cook dotnet:build --color never
 
 echo "== unchanged graph: materializer restore without MSBuild =="
-cook dotnet:build --color never -v 2>&1 | tee warm.log
-grep -q "cook materialize cook_dotnet.graph restored" warm.log
+run .cook/proof/warm.log dotnet:build --color never -v
+grep -q "cook materialize cook_dotnet.graph restored" .cook/proof/warm.log
 
 echo "== project change: graph materializer invalidates =="
 printf '\n<!-- discovery-%s -->\n' "$nonce" >> Lib/Lib.csproj
-cook dotnet:build --color never -v 2>&1 | tee discovery-change.log
-grep -q "cook materialize cook_dotnet.graph ran" discovery-change.log
+run .cook/proof/discovery-change.log dotnet:build --color never -v
+grep -q "cook materialize cook_dotnet.graph ran" .cook/proof/discovery-change.log
 
 echo "== private implementation change: App stays cached =="
 sed -i "s/baseline-$nonce/private-$nonce/" Lib/Message.cs
-cook dotnet:build --color never -v 2>&1 | tee private.log
-grep -q "dotnet:App.*cached" private.log
+run .cook/proof/private.log dotnet:build --color never -v
+grep -q "dotnet:App.*cached" .cook/proof/private.log
 
 echo "== projected app uses the new library without recompiling App =="
-cook dotnet:run --color never --replay-logs 2>&1 | tee private-run.log
-grep -q "hello private-$nonce" private-run.log
+run .cook/proof/private-run.log dotnet:run --color never --replay-logs
+grep -q "hello private-$nonce" .cook/proof/private-run.log
 
 echo "== public API change: App rebuilds =="
 sed -i '/public static string Text/a\    public static int Version => 2;' Lib/Message.cs
-cook dotnet:build --color never -v 2>&1 | tee public.log
-grep -q "dotnet:App.*rebuild" public.log
+run .cook/proof/public.log dotnet:build --color never -v
+grep -q "dotnet:App.*rebuild" .cook/proof/public.log
 
 echo "== runnable projection after propagation =="
-cook dotnet:run --color never --replay-logs 2>&1 | tee run.log
-grep -q "hello private-$nonce" run.log
+run .cook/proof/run.log dotnet:run --color never --replay-logs
+grep -q "hello private-$nonce" .cook/proof/run.log
 
 echo "== configuration change: discovery key and conditional graph change =="
+cp App/packages.lock.json .cook/proof/debug-lock.json
+dotnet restore App/App.csproj -p:Configuration=Release --use-lock-file --force-evaluate \
+    --artifacts-path .cook/fixture-restore --verbosity quiet
 sed -i 's/configuration = "Debug"/configuration = "Release"/' Cookfile
-cook dotnet:build --color never -v 2>&1 | tee release.log
-grep -q "cook materialize cook_dotnet.graph ran" release.log
-grep -q "dotnet:ReleaseOnly" release.log
+run .cook/proof/release.log dotnet:build --color never -v
+grep -q "cook materialize cook_dotnet.graph ran" .cook/proof/release.log
+grep -q "dotnet:ReleaseOnly" .cook/proof/release.log
+cp .cook/proof/debug-lock.json App/packages.lock.json
 sed -i 's/configuration = "Release"/configuration = "Debug"/' Cookfile
-cook dotnet:build --color never -v 2>&1 | tee debug.log
-grep -q "cook materialize cook_dotnet.graph restored" debug.log
-if grep -q "dotnet:ReleaseOnly" debug.log; then exit 1; fi
+run .cook/proof/debug.log dotnet:build --color never -v
+grep -q "cook materialize cook_dotnet.graph restored" .cook/proof/debug.log
+if grep -q "dotnet:ReleaseOnly" .cook/proof/debug.log; then exit 1; fi
 
 echo "cook_dotnet demo passed"

@@ -33,9 +33,9 @@ return {
 ]]
 end
 
-function M.producer(solution, configuration)
+function M.producer(solution, configuration, inventory)
     local code = ([=[
-local solution, configuration, query_items = %q, %q, %q
+local solution, configuration, query_items, inventory = %q, %q, %q, %q
 local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
 local function trim(s) return (s:gsub("^%%s+", ""):gsub("%%s+$", "")) end
 local function normalize(p)
@@ -61,6 +61,11 @@ local env = "DOTNET_CLI_HOME=" .. quote(cwd .. "/.cook/dotnet/home")
 local function dotnet(args)
     return cook.sh(env .. quote(tool) .. args)
 end
+local function query(args)
+    local raw = dotnet(args)
+    -- The CLI may prepend a first-use workload notice to successful MSBuild JSON.
+    return cook.json_decode(raw:match("({.*})%%s*$") or raw)
+end
 local root, queue = directory(solution), {}
 if solution:lower():match("%%.csproj$") then queue[1] = solution else
     local listed = dotnet(" sln " .. quote(solution) .. " list")
@@ -76,56 +81,64 @@ while next_index <= #queue do
     local project = normalize(queue[next_index]); next_index = next_index + 1
     if not seen[project] then
         seen[project] = true
-        local raw = dotnet(" msbuild " .. quote(project) .. " -nologo"
+        local command = " msbuild " .. quote(project) .. " -nologo"
             .. " -property:Configuration=" .. quote(configuration)
-            .. " -getProperty:MSBuildProjectName,TargetFramework,TargetFrameworks,OutputType,TargetFileName,MSBuildAllProjects,UsingMicrosoftNETSdkWeb"
-            .. " -getItem:" .. query_items)
-        local value = cook.json_decode(raw)
-        local props, compact = value.Properties or {}, { Properties = {}, Items = {} }
-        for _, name in ipairs({ "MSBuildProjectName", "TargetFramework", "TargetFrameworks",
-            "OutputType", "TargetFileName", "UsingMicrosoftNETSdkWeb" }) do compact.Properties[name] = props[name] end
-        local plural = compact.Properties.TargetFrameworks or ""
-        if (compact.Properties.TargetFileName or "") == "" and plural ~= ""
-            and not plural:find(";", 1, true)
-            and (compact.Properties.OutputType == "Exe" or compact.Properties.OutputType == "WinExe")
-        then
-            compact.Properties.TargetFileName = trim(dotnet(" msbuild " .. quote(project) .. " -nologo"
-                .. " -property:Configuration=" .. quote(configuration)
-                .. " -property:TargetFramework=" .. quote(plural)
-                .. " -getProperty:TargetFileName"))
-        end
-        local imports = {}
-        for imported in (props.MSBuildAllProjects or ""):gmatch("[^;]+") do
-            local path = relative(imported, cwd)
-            if path:sub(1, 1) ~= "/" then imports[#imports + 1] = path end
-        end
-        compact.Properties.MSBuildAllProjects = table.concat(imports, ";")
-        for kind in query_items:gmatch("[^,]+") do
-            compact.Items[kind] = {}
-            for _, item in ipairs((value.Items or {})[kind] or {}) do
-                if item.FullPath then
-                    local path = relative(item.FullPath, cwd)
-                    if path:sub(1, 1) ~= "/" then
-                        local compact_item = { FullPath = path }
-                        if kind == "ProjectReference" then
-                            compact_item.OutputItemType = item.OutputItemType
-                            compact_item.ReferenceOutputAssembly = item.ReferenceOutputAssembly
+        local properties = "MSBuildProjectName,TargetFramework,TargetFrameworks,OutputType,TargetFileName,MSBuildAllProjects,UsingMicrosoftNETSdkWeb"
+        local function evaluate(framework)
+            local args = command .. (framework and " -property:TargetFramework=" .. quote(framework) or "")
+            local value = query(args .. " -getProperty:" .. properties
+                .. " -getItem:" .. query_items)
+            local props, compact = value.Properties or {}, { Properties = {}, Items = {} }
+            for _, name in ipairs({ "MSBuildProjectName", "TargetFramework", "TargetFrameworks",
+                "OutputType", "TargetFileName", "UsingMicrosoftNETSdkWeb" }) do compact.Properties[name] = props[name] end
+            local imports = {}
+            for imported in (props.MSBuildAllProjects or ""):gmatch("[^;]+") do
+                local path = relative(imported, cwd)
+                if path:sub(1, 1) ~= "/" then imports[#imports + 1] = path end
+            end
+            compact.Properties.MSBuildAllProjects = table.concat(imports, ";")
+            local selected = {}
+            if framework and #((value.Items or {}).ProjectReference or {}) > 0 then
+                -- Ask the SDK's compatibility resolver; DesignTimeBuild only avoids restore here.
+                -- Compile/items above remain ordinary build evaluation.
+                local refs = query(args .. " -property:DesignTimeBuild=true"
+                    .. " -target:AssignProjectConfiguration,_SplitProjectReferencesByFileExistence,_GetProjectReferenceTargetFrameworkProperties"
+                    .. " -getItem:_MSBuildProjectReferenceExistent")
+                for _, item in ipairs((refs.Items or {})._MSBuildProjectReferenceExistent or {}) do
+                    selected[normalize(item.FullPath)] = item.NearestTargetFramework
+                end
+            end
+            for kind in query_items:gmatch("[^,]+") do
+                compact.Items[kind] = {}
+                for _, item in ipairs((value.Items or {})[kind] or {}) do
+                    if item.FullPath then
+                        local path = relative(item.FullPath, cwd)
+                        if path:sub(1, 1) == "/" and kind == "ProjectReference" then
+                            error("[cook_dotnet.workspace] project reference outside the Cook workspace: " .. item.FullPath)
                         end
-                        compact.Items[kind][#compact.Items[kind] + 1] = compact_item
+                        if path:sub(1, 1) ~= "/" then
+                            local compact_item = { FullPath = path }
+                            if kind == "ProjectReference" then
+                                compact_item.OutputItemType = item.OutputItemType
+                                compact_item.ReferenceOutputAssembly = item.ReferenceOutputAssembly
+                                compact_item.NearestTargetFramework = selected[normalize(item.FullPath)]
+                                if not seen[path] then queue[#queue + 1] = path end
+                            end
+                            compact.Items[kind][#compact.Items[kind] + 1] = compact_item
+                        end
                     end
                 end
             end
+            return compact
         end
-        projects[#projects + 1] = { path = project, value = compact }
-        for _, item in ipairs((value.Items or {}).ProjectReference or {}) do
-            if item.FullPath then
-                local reference = relative(item.FullPath, cwd)
-                if reference:sub(1, 1) == "/" then
-                    error("[cook_dotnet.workspace] project reference outside the Cook workspace: " .. item.FullPath)
-                end
-                if not seen[reference] then queue[#queue + 1] = reference end
-            end
+        local outer = evaluate()
+        local frameworks = outer.Properties.TargetFrameworks or ""
+        if frameworks == "" then frameworks = outer.Properties.TargetFramework or "" end
+        local builds = {}
+        for framework in frameworks:gmatch("[^;]+") do
+            builds[framework] = evaluate(framework)
         end
+        projects[#projects + 1] = { path = project, value = outer, builds = builds }
     end
 end
 table.sort(projects, function(a, b) return a.path < b.path end)
@@ -133,7 +146,7 @@ local toolchain = (function()
 %s
 end)()
 return { configuration = configuration, toolchain = toolchain, projects = projects }
-]=]):format(solution, configuration, query_items, M.toolchain_producer())
+]=]):format(solution, configuration, query_items, table.concat(inventory or {}, "\n"), M.toolchain_producer())
     return assert(load(code, "@cook_dotnet.discovery", "t", _ENV))
 end
 
