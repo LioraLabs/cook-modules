@@ -82,9 +82,10 @@ it does not assume old absolute intermediate state is portable.
 Consumers fold dependency reference assemblies, so an implementation-only
 change can stop at the project whose public assembly surface did not change.
 
-`dotnet:run` works when the graph has exactly one single-target executable. It assembles
-a cached runnable tree from the current implementation outputs of every
-transitive project, then executes the app.
+`dotnet:run` builds the selected application and its dependencies, assembles a
+cached runnable tree from their current implementation outputs, then executes the
+app interactively every time. Private dependency edits refresh this tree even
+when unchanged reference assemblies keep consumer compilation cached.
 
 Select a project and framework through the workspace options:
 
@@ -93,9 +94,11 @@ config
     var.PROJECT = ""
     var.CONFIGURATION = "Debug"
     var.FRAMEWORK = ""
+    var.ARGS = "[]"
 
 cook_dotnet.workspace({ solution = "Demo.slnx", project = var.PROJECT,
-    configuration = var.CONFIGURATION, framework = var.FRAMEWORK })
+    configuration = var.CONFIGURATION, framework = var.FRAMEWORK,
+    args = cook.json_decode(var.ARGS) })
 ```
 
 ```sh
@@ -114,10 +117,31 @@ list available choices. Duplicate evaluated names or generated recipe-name
 collisions are rejected with both paths because their SDK artifact directories
 would collide; selecting by path does not make such a workspace safe.
 
-These selectors apply to `dotnet:build` and its `why` explanation. `dotnet:run`
-retains the existing single-executable behavior. `demo/selection.sh` exercises the
-commands, native output agreement, warm discovery reuse, and sibling preservation
-with SDK 10.0.111 (including net8.0 and net10.0 targets).
+The same selectors apply to `dotnet:run` and `cook why dotnet:run`. Run requires
+an executable project. With multiple applications, set `PROJECT`; a single
+application is selected automatically. A project with multiple frameworks requires
+an explicit `FRAMEWORK`. Runtime files are isolated by project, configuration,
+and framework. Switching frameworks preserves the sibling framework's runnable outputs.
+
+```sh
+cook dotnet:run --set PROJECT=App --set CONFIGURATION=Release --set FRAMEWORK=net8.0 \
+    --set 'ARGS=["space value","","single quote: '\''","$(literal)"]'
+cook why dotnet:run --set PROJECT=App --set FRAMEWORK=net8.0
+```
+
+`args` is a contiguous Lua list of strings, defaulting to `{}`. The example binds
+it to a JSON array through Cook's existing `--set` and `cook.json_decode` APIs;
+each argument is quoted separately, including empty strings and shell characters.
+No shell command string is accepted. Invalid JSON fails during registration.
+The native application inherits terminal input. Cook reports its failing exit
+code and returns Cook's failure status: an application exit of 37 is reported as
+37 while Cook returns 1. Ctrl-C interrupts the interactive process group, including
+spawned descendants; Cook returns a nonzero status.
+
+`demo/run.sh` proves selected execution, quoted arguments, current transitive
+implementation bytes, native output agreement, actual terminal input and Ctrl-C
+cleanup with SDK 10.0.111 (net8.0 and net10.0 targets). `demo/selection.sh` retains
+the build/why selection, warm discovery reuse, and sibling preservation proof.
 
 Project recipes are minted after `dotnet:build` or `dotnet:run` is dispatched.
 Until Cook gains discovery-aware name dispatch, those two static entry points are

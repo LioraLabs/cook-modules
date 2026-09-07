@@ -357,8 +357,37 @@ local function mint_graph(opts, mode, context_files, graph)
                 and dependency.framework_list[1] or framework))
         end
     end
+    local function reject_run(message)
+        cook.add_unit({ command = "echo " .. quote("[cook_dotnet.workspace] " .. message) .. " >&2; exit 1",
+            cache = false, sharing = "local" })
+    end
     local chosen
-    if mode == "build" and opts.project ~= "" then
+    local executable_choices = {}
+    for _, project in ipairs(ordered) do
+        for _, framework in ipairs(project.framework_list) do
+            local build = project.builds[framework] or project
+            if (build.output_type == "Exe" or build.output_type == "WinExe")
+                and framework ~= "" and build.target_file ~= "" then
+                executable_choices[#executable_choices + 1] = { project = project, framework = framework }
+            end
+        end
+    end
+    if mode == "run" and opts.project == "" then
+        local applications, names = {}, {}
+        for _, candidate in ipairs(executable_choices) do
+            if not applications[candidate.project.path] then
+                applications[candidate.project.path] = candidate.project
+                names[#names + 1] = candidate.project.name .. " (" .. candidate.project.path .. ")"
+                chosen = candidate.project
+            end
+        end
+        if #names ~= 1 then
+            table.sort(names)
+            return reject_run("dotnet:run requires PROJECT; found " .. #names
+                .. " executable projects; choose one of: " .. table.concat(names, ", "))
+        end
+    end
+    if opts.project ~= "" then
         local choices = {}
         for _, project in ipairs(ordered) do
             choices[#choices + 1] = project.name .. " (" .. project.path .. ")"
@@ -373,6 +402,16 @@ local function mint_graph(opts, mode, context_files, graph)
             error("[cook_dotnet.workspace] unknown project '" .. opts.project
                 .. "'; choose one of: " .. table.concat(choices, ", "), 2)
         end
+    end
+    local run_framework
+    if mode == "run" then
+        if opts.framework == "" and #chosen.framework_list ~= 1 then
+            return reject_run("dotnet:run requires FRAMEWORK for '" .. chosen.path
+                .. "'; choose one of: " .. table.concat(chosen.framework_list, ", "))
+        end
+        run_framework = opts.framework ~= "" and opts.framework or chosen.framework_list[1]
+    end
+    if chosen then
         if opts.framework ~= "" then
             local found = false
             for _, framework in ipairs(chosen.framework_list) do
@@ -482,7 +521,7 @@ local function mint_graph(opts, mode, context_files, graph)
       end
     end
 
-    local executables = {}
+    local run_recipe
     local function transitive(project, framework, seen, result)
         local key = recipe_for(project, framework)
         if seen[key] then return end
@@ -497,52 +536,52 @@ local function mint_graph(opts, mode, context_files, graph)
         end
         result[#result + 1] = { project = project, framework = framework }
     end
-    for _, project in ipairs(ordered) do
-        if (project.output_type == "Exe" or project.output_type == "WinExe")
-            and #project.framework_list == 1 and project.framework_list[1] ~= ""
-            and project.target_file ~= ""
-        then
-            local closure = {}; transitive(project, project.framework_list[1], {}, closure)
-            local run_dir = artifacts .. "/run/" .. project.name
-            local projection_inputs, copy = {}, { "rm -rf -- " .. quote(run_dir), "mkdir -p -- " .. quote(run_dir) }
-            for _, dependency in ipairs(closure) do
-                local suffix = output_suffix(dependency.project, dependency.framework)
-                local source = artifacts .. "/bin/" .. dependency.project.name .. suffix
-                projection_inputs[#projection_inputs + 1] = source .. "/**"
-                copy[#copy + 1] = "cp -a " .. quote(source .. "/.") .. " " .. quote(run_dir .. "/")
-            end
-            local run_recipe = project.recipe .. ":run"
-            cook.recipe(run_recipe, { requires = { project.recipe }, origin = "cook_dotnet.workspace" }, function()
-                cook.add_unit({
-                    inputs = projection_inputs,
-                    outputs = { run_dir .. "/**" },
-                    command = table.concat(copy, " && "),
-                })
-                cook.add_unit({
-                    inputs = { run_dir .. "/" .. project.target_file },
-                    command = '"$<dotnet:tool.dotnet.path>" ' .. quote(run_dir .. "/" .. project.target_file),
-                    probes = { "dotnet:tool", "dotnet:toolchain" },
-                    seal = { "dotnet:toolchain" },
-                    cache = false,
-                    sharing = "local",
-                })
-            end)
-            executables[#executables + 1] = run_recipe
+    for _, candidate in ipairs(executable_choices) do
+        local project, framework = candidate.project, candidate.framework
+        local build = project.builds[framework] or project
+        local closure = {}; transitive(project, framework, {}, closure)
+        local run_dir = artifacts .. "/run/" .. project.name .. output_suffix(project, framework)
+        local projection_inputs, copy = {}, { "rm -rf -- " .. quote(run_dir), "mkdir -p -- " .. quote(run_dir) }
+        -- Copy each dependency's current output last, after consumers that may carry older copies.
+        for i = #closure, 1, -1 do
+            local dependency = closure[i]
+            local source = artifacts .. "/bin/" .. dependency.project.name
+                .. output_suffix(dependency.project, dependency.framework)
+            projection_inputs[#projection_inputs + 1] = source .. "/**"
+            copy[#copy + 1] = "cp -a " .. quote(source .. "/.") .. " " .. quote(run_dir .. "/")
         end
+        local name = recipe_for(project, framework) .. ":run"
+        cook.recipe(name, { requires = { recipe_for(project, framework) }, origin = "cook_dotnet.workspace" }, function()
+            cook.add_unit({
+                inputs = projection_inputs,
+                outputs = { run_dir .. "/**" },
+                command = table.concat(copy, " && "),
+            })
+            cook.add_unit({
+                inputs = { run_dir .. "/" .. build.target_file },
+                command = 'exec "$<dotnet:tool.dotnet.path>" ' .. quote(run_dir .. "/" .. build.target_file)
+                    .. opts.arguments,
+                probes = { "dotnet:tool", "dotnet:toolchain" },
+                seal = { "dotnet:toolchain" },
+                interactive = true,
+                cache = false,
+                sharing = "local",
+            })
+        end)
+        if project == chosen and framework == run_framework then run_recipe = name end
     end
 
     table.sort(roots)
     if mode == "run" then
-        if #executables == 1 then
-            cook.require_recipe(executables[1])
-        else
-            cook.add_unit({
-                command = "echo " .. quote("[cook_dotnet.workspace] dotnet:run requires exactly one"
-                    .. " single-target executable; found " .. #executables) .. " >&2; exit 1",
-                cache = false,
-                sharing = "local",
-            })
+        if not run_recipe then
+            local choices = {}
+            for _, candidate in ipairs(executable_choices) do
+                choices[#choices + 1] = candidate.project.name .. " (" .. candidate.framework .. ")"
+            end
+            return reject_run("selected project/framework is not executable; choose one of: "
+                .. table.concat(choices, ", "))
         end
+        cook.require_recipe(run_recipe)
     else
         for _, root in ipairs(roots) do cook.require_recipe(root) end
         table.sort(aggregate_outputs)
@@ -584,6 +623,21 @@ function M.workspace(opts)
         error("[cook_dotnet.workspace] framework requires a project; set PROJECT and FRAMEWORK together", 2)
     end
 
+    local args = opts.args == nil and {} or opts.args
+    if type(args) ~= "table" then error("[cook_dotnet.workspace] args must be a list of strings", 2) end
+    local count, arguments = 0, {}
+    for key, value in pairs(args) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 or type(value) ~= "string" then
+            error("[cook_dotnet.workspace] args must be a list of strings", 2)
+        end
+        count = count + 1
+    end
+    for i = 1, count do
+        if args[i] == nil then error("[cook_dotnet.workspace] args must be a contiguous list of strings", 2) end
+        if args[i]:find("%z") then error("[cook_dotnet.workspace] args cannot contain NUL bytes", 2) end
+        arguments[i] = " " .. quote(args[i])
+    end
+
     ensure_toolchain()
     local graph_inputs = cook.resolve_gather(workspace_globs(root, solution, false),
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
@@ -596,7 +650,7 @@ function M.workspace(opts)
     local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
         discovery.producer(solution, configuration, inventory))
     local settings = { artifacts = artifacts, configuration = configuration, root = root,
-        project = project, framework = framework }
+        project = project, framework = framework, arguments = table.concat(arguments) }
     cook.recipe("dotnet:build", { origin = "cook_dotnet.workspace" }, function()
         mint_graph(settings, "build", inputs, graph)
     end)

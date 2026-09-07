@@ -4,6 +4,7 @@ config
     var.PROJECT = ""
     var.CONFIGURATION = "Debug"
     var.FRAMEWORK = ""
+    var.ARGS = "[]"
 
 cook_dotnet.workspace({ solution = "Demo.slnx", project = var.PROJECT,
-    configuration = var.CONFIGURATION, framework = var.FRAMEWORK })
+    configuration = var.CONFIGURATION, framework = var.FRAMEWORK, args = cook.json_decode(var.ARGS) })

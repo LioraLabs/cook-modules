@@ -293,7 +293,7 @@ describe("cook_dotnet.workspace", function()
         assert.same({ "dotnet:App" }, recipes["dotnet:App:run"].opts.requires)
         local run_unit
         for _, unit in ipairs(stub.units()) do
-            if unit.command:find("run/App/App.dll'", 1, true) then run_unit = unit end
+            if unit.command:find("run/App/debug_net8.0/App.dll'", 1, true) then run_unit = unit end
         end
         assert.is_table(run_unit)
         assert.is_false(run_unit.cache)
@@ -311,13 +311,9 @@ describe("cook_dotnet.workspace", function()
         end
 
         stub.execute("dotnet:run")
-        local failing
-        for _, unit in ipairs(stub.units()) do
-            if unit.command:find("found 0", 1, true) then failing = unit end
-        end
-        assert.is_table(failing)
-        assert.is_false(failing.cache)
-        assert.is_truthy(failing.command:find("exit 1", 1, true))
+        local failure = stub.units()[#stub.units()]
+        assert.is_false(failure.cache)
+        assert.is_truthy(failure.command:find("found 0 executable projects", 1, true))
     end)
 
     it("rejects duplicate recipe names and use inside a recipe", function()
@@ -382,6 +378,54 @@ describe("cook_dotnet.workspace", function()
         rejected({ framework = "net8.0" }, "framework requires a project")
         rejected({ project = 42 }, "project and framework must be strings")
         rejected({ project = "../Lib/Lib.csproj" }, "project must be a non-root relative path")
+    end)
+
+    it("runs the selected inner-build executable with quoted arguments and its compatible closure", function()
+        local dotnet = load_workspace()
+        local app = multi_target("App", "src/App/App.csproj", "net8.0;net10.0")
+        local inner = project("App", "src/App/App.csproj", "src/Lib/Lib.csproj", "Exe").value
+        inner.Properties.TargetFileName = "ActualTarget.dll"
+        inner.Items.ProjectReference[1].NearestTargetFramework = "net8.0"
+        app.builds = { ["net10.0"] = inner, ["net8.0"] = project("App", "src/App/App.csproj").value }
+        stub.materialize_as({ projects = { app, project("Lib", "src/Lib/Lib.csproj"),
+            project("Other", "src/Other/Other.csproj", nil, "Exe") } })
+        dotnet.workspace({ solution = "src/Graph.slnx", project = "App", framework = "net10.0",
+            args = { "space value", "", "$(echo literal)" } })
+        stub.execute("dotnet:run")
+        local units = stub.units()
+        local projection, execution = units[#units - 1], units[#units]
+        assert.same({ "build/dotnet/bin/App/debug_net10.0/**", "build/dotnet/bin/Lib/debug/**" }, projection.inputs)
+        assert.same({ "build/dotnet/run/App/debug_net10.0/ActualTarget.dll" }, execution.inputs)
+        assert.is_true(execution.interactive)
+        assert.is_false(execution.cache)
+        assert.is_truthy(execution.command:find(" 'space value' '' '$(echo literal)'", 1, true))
+        assert.is_nil(stub.recipes()["dotnet:Other"].executed)
+        assert.is_nil(passthrough)
+    end)
+
+    it("rejects ambiguous applications, multi-target runs, and invalid argument lists", function()
+        local function rejected(options, projects, message)
+            local dotnet = load_workspace()
+            if projects then stub.materialize_as({ projects = projects }) end
+            options.solution = "src/Graph.slnx"
+            local ok, err = pcall(function() dotnet.workspace(options); stub.execute("dotnet:run") end)
+            if ok then
+                local failure = stub.units()[#stub.units()]
+                assert.is_false(failure.cache)
+                assert.is_truthy(failure.command:find("exit 1", 1, true))
+                err = failure.command
+            end
+            assert.is_truthy(tostring(err):find(message, 1, true))
+        end
+        rejected({}, { project("A", "src/A/A.csproj", nil, "Exe"),
+            project("B", "src/B/B.csproj", nil, "Exe") }, "choose one of: A (src/A/A.csproj), B (src/B/B.csproj)")
+        rejected({ project = "App" }, { multi_target("App", "src/App/App.csproj", "net8.0;net10.0") },
+            "requires FRAMEWORK")
+        rejected({ project = "Lib" }, nil, "not executable")
+        rejected({ args = "shell string" }, nil, "args must be a list of strings")
+        rejected({ args = { 42 } }, nil, "args must be a list of strings")
+        rejected({ args = { [2] = "hole" } }, nil, "contiguous list")
+        rejected({ args = { "nul" .. string.char(0) } }, nil, "NUL bytes")
     end)
 
 end)

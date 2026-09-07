@@ -91,7 +91,7 @@ with tempfile.TemporaryDirectory(prefix='cook-dotnet-recovery.') as temporary:
     (candidate / 'Lib/data.txt').write_text('resource-current\n')
     stamp(candidate / 'Lib/data.txt', 946684800)
     build_run(candidate, value='old-timestamp-current-content')
-    assert (candidate / 'build/dotnet/run/App/data.txt').read_text() == 'resource-current\n'
+    assert (candidate / 'build/dotnet/run/App/debug/data.txt').read_text() == 'resource-current\n'
     edit(candidate, 'temporary-edit', old_time=True)
     build_run(candidate, value='temporary-edit')
     edit(candidate, 'old-timestamp-current-content', old_time=True)
@@ -117,7 +117,7 @@ with tempfile.TemporaryDirectory(prefix='cook-dotnet-recovery.') as temporary:
     cookfile.write_text(cookfile.read_text().replace('Release', 'Debug'))
     build_run(candidate, value='old-timestamp-current-content Debug')
     # Shared-cache recovery validates corrupt and missing owned outputs.
-    for relative in ('bin/Lib/debug/Lib.dll', 'obj/Lib/debug/Lib.dll', 'obj/Lib/project.assets.json', 'obj/Lib/Lib.csproj.nuget.g.props', 'run/App/Lib.dll'):
+    for relative in ('bin/Lib/debug/Lib.dll', 'obj/Lib/debug/Lib.dll', 'obj/Lib/project.assets.json', 'obj/Lib/Lib.csproj.nuget.g.props', 'run/App/debug/Lib.dll'):
         target = candidate / 'build/dotnet' / relative
         target.write_bytes(b'corrupt')
         stamp(target, 4102444800)
@@ -136,14 +136,14 @@ with tempfile.TemporaryDirectory(prefix='cook-dotnet-recovery.') as temporary:
     app_project.write_text(original_project.replace('<ProjectReference Include="../Lib/Lib.csproj" />', ''))
     (candidate / 'App/Program.cs').write_text('System.Console.WriteLine("no-dependency");\n')
     build_run(candidate, value='no-dependency')
-    assert not (candidate / 'build/dotnet/run/App/Lib.dll').exists(), 'removed dependency remained runnable'
+    assert not (candidate / 'build/dotnet/run/App/debug/Lib.dll').exists(), 'removed dependency remained runnable'
     app_project.write_text(original_project.replace('../Lib/Lib.csproj', '../Renamed/Renamed.csproj'))
     (candidate / 'Lib').rename(candidate / 'Renamed')
     (candidate / 'Renamed/Lib.csproj').rename(candidate / 'Renamed/Renamed.csproj')
     (candidate / 'App/Program.cs').write_text(original_program)
     build_run(candidate, value='recovered-after-failure')
-    assert not (candidate / 'build/dotnet/run/App/Lib.dll').exists(), 'renamed dependency remained runnable'
-    assert (candidate / 'build/dotnet/run/App/Renamed.dll').is_file()
+    assert not (candidate / 'build/dotnet/run/App/debug/Lib.dll').exists(), 'renamed dependency remained runnable'
+    assert (candidate / 'build/dotnet/run/App/debug/Renamed.dll').is_file()
     # Locked restore is explicit and remains authoritative after dependency changes.
     run(candidate, ['dotnet', 'restore', 'App/App.csproj', '--use-lock-file', '--force-evaluate', '--artifacts-path', '.cook/lock-restore'])
     build_run(candidate, value='recovered-after-failure')
