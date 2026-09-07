@@ -774,7 +774,10 @@ function M.workspace(opts)
     cook.recipe("__dotnet:test:restore", { origin = "cook_dotnet.workspace" }, function()
         mint_graph(settings, "test-restore", inputs, graph)
     end)
-    cook.recipe("dotnet:test", { requires = { "dotnet.test" }, origin = "cook_dotnet.workspace" }, function() end)
+    cook.recipe("dotnet:test", { requires = { "dotnet.test" }, origin = "cook_dotnet.workspace" }, function()
+        -- Generic test discovers ordinary recipe test units; the chore owns native execution.
+        cook.add_unit({ step_kind = "test", command = "echo '[cook_dotnet.test] selected native tests passed'", cache = false })
+    end)
     return { "dotnet:build", "dotnet:run", "dotnet:test" }
 end
 

@@ -143,6 +143,12 @@ implementation bytes, native output agreement, actual terminal input and Ctrl-C
 cleanup with SDK 10.0.111 (net8.0 and net10.0 targets). `demo/selection.sh` retains
 the build/why selection, warm discovery reuse, and sibling preservation proof.
 
+`cook test` includes the native .NET suite alongside other registered test suites.
+It discovers `dotnet:test`, whose uncached native chore prerequisite runs the selected
+tests before its completion step can pass. A native failure blocks that step and
+fails the generic command. No combined chore is required, and unchanged builds
+remain cached while tests execute on every invocation.
+
 `dotnet:test` (also `dotnet.test`) runs VSTest-compatible test projects using the
 same project/configuration/framework selectors. Empty project selects all native
 test projects; empty framework selects every framework of the chosen project.
@@ -177,7 +183,8 @@ work retains the actual executable, Cookfile, configuration overrides and cache
 policy.
 
 `demo/test.sh` retains package-only xUnit/Test SDK identity, native runner comparison,
-selected/all frameworks, filtering, failures, TRX output, warm restore/build reuse,
+generic and explicit entry points, selected/all frameworks, filtering, failures,
+TRX output, warm restore/build reuse,
 argument fidelity and private-dependency execution correctness, including SDK 10 → 8
 switches. Native cleanup ledgers are scoped to the evaluated SDK because SDK 8 and
 10 account for copied runtime files differently. Restore and compiler directories

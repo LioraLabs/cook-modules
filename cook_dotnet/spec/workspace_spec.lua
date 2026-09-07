@@ -42,6 +42,25 @@ local function load_workspace(duplicate)
 end
 
 describe("cook_dotnet.workspace", function()
+    it("registers one uncached generic test root over the native chore", function()
+        local dotnet = load_workspace()
+        dotnet.workspace({ solution = "src/Graph.slnx" })
+        assert.same({ "dotnet.test" }, stub.recipes()["dotnet:test"].opts.requires)
+        stub.execute("dotnet:test")
+        local units = stub.units()
+        assert.equals(1, #units)
+        assert.equals("test", units[1].step_kind)
+        assert.is_false(units[1].cache)
+        assert.is_nil(units[1].outputs)
+        stub.execute("dotnet:App:test")
+        stub.execute("dotnet.test")
+        local count = 0
+        for _, unit in ipairs(stub.units()) do
+            if unit.step_kind == "test" then count = count + 1 end
+        end
+        assert.equals(1, count)
+    end)
+
     it("stages cached restore before native identity and named test children", function()
         local dotnet = load_workspace()
         dotnet.workspace({ solution = "src/Graph.slnx", project = "App", test_filter = "Name~Pass",

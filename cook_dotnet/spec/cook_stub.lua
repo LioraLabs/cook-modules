@@ -25,6 +25,10 @@ function M.reset()
             return type(resolved) == "function" and resolved(globs, excludes) or resolved
         end,
         add_unit = function(unit)
+            if unit.step_kind == "test" then
+                assert(unit.suite == nil, "test units use their enclosing recipe, not suite")
+                assert(unit.outputs == nil or #unit.outputs == 0, "test units cannot declare outputs")
+            end
             if current_chore then unit.cache, unit.interactive = false, true end
             units[#units + 1] = unit
         end,

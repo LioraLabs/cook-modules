@@ -90,12 +90,23 @@ cook_dotnet.workspace({ solution = "Tests.sln", project = var.PROJECT, configura
     assert len([c for c in warm if c[0] == 'vstest']) == 3, warm
     assert not [c for c in warm if c[0] in ['restore', 'build']], warm
     assert len([c for c in warm if '-getProperty:IsTestProject' in c]) == 5, warm
+    # Generic test discovers the same selected native suite, once per project/framework.
+    start = len(calls())
+    generic = run([cook, 'test', '--no-publish', '--color', 'never'], 'generic-all')
+    assert len([c for c in calls()[start:] if c[0] == 'vstest']) == 3, generic
+    assert not [c for c in calls()[start:] if c[0] in ['restore', 'build']], generic
+    selected = command('Tests', 'net8.0', test_filter='FullyQualifiedName~Fail')
+    selected[1] = 'test'; start = len(calls())
+    generic_failure = run(selected, 'generic-failure', 1)
+    assert 'EXPECTED_NATIVE_FAILURE' in generic_failure, generic_failure
+    assert len([c for c in calls()[start:] if c[0] == 'vstest']) == 1, generic_failure
     # The test consumer stays compiled at its public-reference key; execution gets current Leaf bytes.
     consumer_files = [root / 'build/dotnet/bin/Tests/debug_net8.0/Tests.dll', root / 'build/dotnet/obj/Tests/debug_net8.0/ref/Tests.dll']
     consumer_hashes = [hashlib.sha256(p.read_bytes()).hexdigest() for p in consumer_files]
     leaf.write_text('public class Leaf { public static string Value() => "changed"; }')
     env['EXPECTED_VALUE'] = 'changed'; start = len(calls())
-    edited = run(command('Tests', 'net8.0'), 'private-edit')
+    selected = command('Tests', 'net8.0'); selected[1] = 'test'
+    edited = run(selected, 'private-edit')
     builds = [c for c in calls()[start:] if c[0] == 'build']
     assert len(builds) == 1 and builds[0][1] == 'Leaf/Leaf.csproj', (builds, edited)
     assert consumer_hashes == [hashlib.sha256(p.read_bytes()).hexdigest() for p in consumer_files]
