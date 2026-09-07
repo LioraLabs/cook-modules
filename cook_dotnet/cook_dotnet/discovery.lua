@@ -20,7 +20,7 @@ local function ref_pack(name)
     local versions = trim(cook.sh("if [ -d " .. quote(path) .. " ]; then for v in " .. quote(path)
         .. "/*; do [ ! -d \"$v\" ] || basename \"$v\"; done | LC_ALL=C sort; fi"))
     local digest = trim(cook.sh("if [ -d " .. quote(path) .. " ]; then cd " .. quote(path)
-        .. " && find . -type f -exec openssl dgst -sha256 {} \\; | LC_ALL=C sort"
+        .. " && find . -type f -exec openssl dgst -sha256 {} + | LC_ALL=C sort"
         .. " | openssl dgst -sha256; fi"))
     return { versions = versions, digest = digest ~= "" and digest or "<missing>" }
 end
@@ -66,6 +66,39 @@ local function query(args)
     -- The CLI may prepend a first-use workload notice to successful MSBuild JSON.
     return cook.json_decode(raw:match("({.*})%%s*$") or raw)
 end
+-- Bound native SDK processes; keep every outer/inner/compatibility evaluation.
+local function queries(jobs)
+    for first = 1, #jobs, 4 do
+        local last = math.min(first + 3, #jobs)
+        if first == last then jobs[first].value = query(jobs[first].args) else
+            local commands = { "set -eu", "work=$(mktemp -d)",
+                "trap 'rm -rf -- \"$work\"' EXIT", "failed=0" }
+            for index = first, last do
+                commands[#commands + 1] = env .. quote(tool) .. jobs[index].args
+                    .. ' >"$work/' .. index .. '" 2>&1 &'
+                commands[#commands + 1] = 'pid' .. index .. '=$!'
+            end
+            for index = first, last do
+                commands[#commands + 1] = 'if ! wait "$pid' .. index .. '"; then cat "$work/'
+                    .. index .. '" >&2; failed=1; fi'
+            end
+            commands[#commands + 1] = '[ "$failed" = 0 ] || exit 1'
+            for index = first, last do
+                commands[#commands + 1] = 'wc -c < "$work/' .. index .. '"; cat "$work/' .. index .. '"'
+            end
+            local output, offset = cook.sh(table.concat(commands, "\n")), 1
+            for index = first, last do
+                local line = assert(output:find("\n", offset, true), "missing SDK batch result length")
+                local length = assert(tonumber(output:sub(offset, line - 1)), "invalid SDK batch result length")
+                local raw = output:sub(line + 1, line + length)
+                assert(#raw == length, "truncated SDK batch result")
+                jobs[index].value = cook.json_decode(raw:match("({.*})%%s*$") or raw)
+                offset = line + length + 1
+            end
+            assert(offset == #output + 1, "unexpected SDK batch output")
+        end
+    end
+end
 local root, queue = directory(solution), {}
 if solution:lower():match("%%.csproj$") then queue[1] = solution else
     local listed = dotnet(" sln " .. quote(solution) .. " list")
@@ -77,68 +110,92 @@ end
 if #queue == 0 then error("[cook_dotnet.workspace] solution contains no .csproj projects") end
 
 local seen, projects, next_index = {}, {}, 1
-while next_index <= #queue do
-    local project = normalize(queue[next_index]); next_index = next_index + 1
-    if not seen[project] then
-        seen[project] = true
-        local command = " msbuild " .. quote(project) .. " -nologo"
-            .. " -property:Configuration=" .. quote(configuration)
-        local properties = "MSBuildProjectName,TargetFramework,TargetFrameworks,OutputType,TargetFileName,MSBuildAllProjects,UsingMicrosoftNETSdkWeb"
-        local function evaluate(framework)
-            local args = command .. (framework and " -property:TargetFramework=" .. quote(framework) or "")
-            local value = query(args .. " -getProperty:" .. properties
-                .. " -getItem:" .. query_items)
-            local props, compact = value.Properties or {}, { Properties = {}, Items = {} }
-            for _, name in ipairs({ "MSBuildProjectName", "TargetFramework", "TargetFrameworks",
-                "OutputType", "TargetFileName", "UsingMicrosoftNETSdkWeb" }) do compact.Properties[name] = props[name] end
-            local imports = {}
-            for imported in (props.MSBuildAllProjects or ""):gmatch("[^;]+") do
-                local path = relative(imported, cwd)
-                if path:sub(1, 1) ~= "/" then imports[#imports + 1] = path end
-            end
-            compact.Properties.MSBuildAllProjects = table.concat(imports, ";")
-            local selected = {}
-            if framework and #((value.Items or {}).ProjectReference or {}) > 0 then
-                -- Ask the SDK's compatibility resolver; DesignTimeBuild only avoids restore here.
-                -- Compile/items above remain ordinary build evaluation.
-                local refs = query(args .. " -property:DesignTimeBuild=true"
-                    .. " -target:AssignProjectConfiguration,_SplitProjectReferencesByFileExistence,_GetProjectReferenceTargetFrameworkProperties"
-                    .. " -getItem:_MSBuildProjectReferenceExistent")
-                for _, item in ipairs((refs.Items or {})._MSBuildProjectReferenceExistent or {}) do
-                    selected[normalize(item.FullPath)] = item.NearestTargetFramework
+local properties = "MSBuildProjectName,TargetFramework,TargetFrameworks,OutputType,TargetFileName,MSBuildAllProjects,UsingMicrosoftNETSdkWeb"
+local function compact(value, refs)
+    local props, compact = value.Properties or {}, { Properties = {}, Items = {} }
+    for _, name in ipairs({ "MSBuildProjectName", "TargetFramework", "TargetFrameworks",
+        "OutputType", "TargetFileName", "UsingMicrosoftNETSdkWeb" }) do compact.Properties[name] = props[name] end
+    local imports = {}
+    for imported in (props.MSBuildAllProjects or ""):gmatch("[^;]+") do
+        local path = relative(imported, cwd)
+        if path:sub(1, 1) ~= "/" then imports[#imports + 1] = path end
+    end
+    compact.Properties.MSBuildAllProjects = table.concat(imports, ";")
+    local selected = {}
+    for _, item in ipairs(((refs or {}).Items or {})._MSBuildProjectReferenceExistent or {}) do
+        selected[normalize(item.FullPath)] = item.NearestTargetFramework
+    end
+    for kind in query_items:gmatch("[^,]+") do
+        compact.Items[kind] = {}
+        for _, item in ipairs((value.Items or {})[kind] or {}) do
+            if item.FullPath then
+                local path = relative(item.FullPath, cwd)
+                if path:sub(1, 1) == "/" and kind == "ProjectReference" then
+                    error("[cook_dotnet.workspace] project reference outside the Cook workspace: " .. item.FullPath)
                 end
-            end
-            for kind in query_items:gmatch("[^,]+") do
-                compact.Items[kind] = {}
-                for _, item in ipairs((value.Items or {})[kind] or {}) do
-                    if item.FullPath then
-                        local path = relative(item.FullPath, cwd)
-                        if path:sub(1, 1) == "/" and kind == "ProjectReference" then
-                            error("[cook_dotnet.workspace] project reference outside the Cook workspace: " .. item.FullPath)
-                        end
-                        if path:sub(1, 1) ~= "/" then
-                            local compact_item = { FullPath = path }
-                            if kind == "ProjectReference" then
-                                compact_item.OutputItemType = item.OutputItemType
-                                compact_item.ReferenceOutputAssembly = item.ReferenceOutputAssembly
-                                compact_item.NearestTargetFramework = selected[normalize(item.FullPath)]
-                                if not seen[path] then queue[#queue + 1] = path end
-                            end
-                            compact.Items[kind][#compact.Items[kind] + 1] = compact_item
-                        end
+                if path:sub(1, 1) ~= "/" then
+                    local compact_item = { FullPath = path }
+                    if kind == "ProjectReference" then
+                        compact_item.OutputItemType = item.OutputItemType
+                        compact_item.ReferenceOutputAssembly = item.ReferenceOutputAssembly
+                        compact_item.NearestTargetFramework = selected[normalize(item.FullPath)]
+                        if not seen[path] then queue[#queue + 1] = path end
                     end
+                    compact.Items[kind][#compact.Items[kind] + 1] = compact_item
                 end
             end
-            return compact
         end
-        local outer = evaluate()
-        local frameworks = outer.Properties.TargetFrameworks or ""
-        if frameworks == "" then frameworks = outer.Properties.TargetFramework or "" end
-        local builds = {}
+    end
+    return compact
+end
+while next_index <= #queue do
+    local outer_jobs, entries = {}, {}
+    local last = #queue
+    while next_index <= last do
+        local project = normalize(queue[next_index]); next_index = next_index + 1
+        if not seen[project] then
+            seen[project] = true
+            local command = " msbuild " .. quote(project) .. " -nologo"
+                .. " -property:Configuration=" .. quote(configuration)
+            local job = { args = command .. " -getProperty:" .. properties .. " -getItem:" .. query_items }
+            outer_jobs[#outer_jobs + 1] = job
+            entries[#entries + 1] = { path = project, command = command, outer = job, builds = {} }
+        end
+    end
+    queries(outer_jobs)
+    local inner_jobs = {}
+    for _, entry in ipairs(entries) do
+        -- Reject outer references outside the workspace before SDK compatibility work.
+        entry.value = compact(entry.outer.value)
+        local props = entry.outer.value.Properties or {}
+        local frameworks = props.TargetFrameworks or ""
+        if frameworks == "" then frameworks = props.TargetFramework or "" end
         for framework in frameworks:gmatch("[^;]+") do
-            builds[framework] = evaluate(framework)
+            local args = entry.command .. " -property:TargetFramework=" .. quote(framework)
+            local job = { args = args .. " -getProperty:" .. properties .. " -getItem:" .. query_items, command = args }
+            entry.builds[framework] = job
+            inner_jobs[#inner_jobs + 1] = job
         end
-        projects[#projects + 1] = { path = project, value = outer, builds = builds }
+    end
+    queries(inner_jobs)
+    local reference_jobs = {}
+    for _, job in ipairs(inner_jobs) do
+        if #((job.value.Items or {}).ProjectReference or {}) > 0 then
+            -- DesignTimeBuild only avoids restore for native compatibility selection.
+            -- Compile/items above remain ordinary build evaluation.
+            job.refs = { args = job.command .. " -property:DesignTimeBuild=true"
+                .. " -target:AssignProjectConfiguration,_SplitProjectReferencesByFileExistence,_GetProjectReferenceTargetFrameworkProperties"
+                .. " -getItem:_MSBuildProjectReferenceExistent" }
+            reference_jobs[#reference_jobs + 1] = job.refs
+        end
+    end
+    queries(reference_jobs)
+    for _, entry in ipairs(entries) do
+        local builds = {}
+        for framework, job in pairs(entry.builds) do
+            builds[framework] = compact(job.value, job.refs and job.refs.value)
+        end
+        projects[#projects + 1] = { path = entry.path, value = entry.value, builds = builds }
     end
 end
 table.sort(projects, function(a, b) return a.path < b.path end)

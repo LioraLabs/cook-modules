@@ -106,3 +106,19 @@ pre-change `9a92715` revision, and native incremental MSBuild using SDK 10.0.111
 Run it from a repository checkout containing that baseline revision. The default
 invocation is the full gate; `--matrix-only` or `--benchmark-only` isolates a phase.
 `--fresh-timestamps` is diagnostic only and does not prove preserved-timestamp recovery.
+
+`demo/discovery.sh` checks the reference-pack fingerprint against the original
+per-file OpenSSL command, including installed packs, unusual filenames, missing
+and empty packs, and content changes. It requires Python 3, Lua 5.4, OpenSSL, and
+SDK packs under `/usr/share/dotnet`. Hashing uses native `find -exec ... +` batches;
+it still reads every reference file and sorts the same filename/digest records.
+
+Graph discovery runs at most four native SDK evaluations concurrently. It retains
+each outer build, each explicitly selected framework's ordinary item evaluation,
+and the SDK's separate project-reference compatibility query.
+
+`demo/discovery.sh --graph-proof` compares the normalized graph with the sequential
+producer on SDK 8.0.424, observes the process bound, and checks global-framework
+imports, configuration-specific references, and native query errors. It requires
+the existing LuaRocks `lua-cjson` test dependency and repository history containing
+`9b0f642`. SDK 8 and 10 build/generator behavior is covered by `demo/graph.sh`.

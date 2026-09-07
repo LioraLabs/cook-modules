@@ -37,4 +37,25 @@ describe("cook_dotnet discovery", function()
         assert.has_error(function() run_query(json, true) end, "SDK query failed")
         assert.has_error(function() run_query("notice\n{broken}") end)
     end)
+    it("rejects outer references outside the workspace before compatibility queries", function()
+        local stub = require("spec.cook_stub")
+        stub.reset()
+        local compatibility_queries = 0
+        cook.sh = function(command)
+            if command == "pwd" then return "/workspace" end
+            if command:find("-getProperty:", 1, true) then
+                return [[{"Properties":{"TargetFramework":"net8.0"},"Items":{"ProjectReference":[{"FullPath":"/outside/Lib.csproj"}]}}]]
+            end
+            if command:find("-getItem:_MSBuildProjectReferenceExistent", 1, true) then
+                compatibility_queries = compatibility_queries + 1
+                error("compatibility query must not precede workspace rejection", 0)
+            end
+            return ""
+        end
+        local ok, message = pcall(discovery.producer("App.csproj", "Debug"))
+        assert.is_false(ok)
+        assert.is_truthy(tostring(message):find("project reference outside the Cook workspace: /outside/Lib.csproj", 1, true))
+        assert.equal(0, compatibility_queries)
+    end)
+
 end)
