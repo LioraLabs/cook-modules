@@ -344,8 +344,8 @@ local function mint_graph(opts, mode, context_files, graph)
     end
 
     local function output_suffix(project, framework)
-        return #project.framework_list > 1
-            and "/" .. configuration:lower() .. "_" .. framework or ""
+        return "/" .. configuration:lower()
+            .. ((project.frameworks or "") ~= "" and "_" .. framework or "")
     end
 
     local environment = 'DOTNET_CLI_HOME="$(pwd)/.cook/dotnet/home"'
@@ -361,17 +361,20 @@ local function mint_graph(opts, mode, context_files, graph)
 
     local roots, aggregate_outputs = {}, {}
     for _, project in ipairs(ordered) do
-      local restore_recipe
-      if #project.framework_list > 1 then
-        restore_recipe = project.recipe .. ":restore"
-        local command = restore_command(project, context[join(directory(project.path), "packages.lock.json")])
-        local restore_outputs = { artifacts .. "/obj/" .. project.name .. "/*" }
-        cook.recipe(restore_recipe, { origin = "cook_dotnet.workspace" }, function()
-            cook.add_unit({ inputs = context_files, outputs = restore_outputs, command = command,
-                probes = { "dotnet:tool", "dotnet:toolchain" }, seal = { "dotnet:toolchain" } })
-        end)
-        aggregate_outputs[#aggregate_outputs + 1] = restore_outputs[1]
-      end
+      local restore_recipe = "__dotnet:restore:" .. recipe_segment(project.name)
+      local restore_dir = artifacts .. "/obj/" .. project.name
+      -- Malformed assets/props can prevent native restore itself from evaluating.
+      -- Clear only this restore unit's files on a miss, retaining framework directories.
+      local command = "mkdir -p -- " .. quote(restore_dir)
+          .. " && find " .. quote(restore_dir) .. " -mindepth 1 -maxdepth 1 ! -type d -delete && "
+          .. restore_command(project, context[join(directory(project.path), "packages.lock.json")])
+      -- NuGet metadata embeds checkout paths; do not fetch it from another workspace.
+      local restore_outputs = { artifacts .. "/obj/" .. project.name .. "/*" }
+      cook.recipe(restore_recipe, { origin = "cook_dotnet.workspace" }, function()
+          cook.add_unit({ inputs = context_files, outputs = restore_outputs, command = command, sharing = "local",
+              probes = { "dotnet:tool", "dotnet:toolchain" }, seal = { "dotnet:toolchain" } })
+      end)
+      aggregate_outputs[#aggregate_outputs + 1] = restore_outputs[1]
       for _, framework in ipairs(project.framework_list) do
         local build = project.builds[framework] or project
         local requires, inputs, input_set = {}, {}, {}
@@ -379,8 +382,8 @@ local function mint_graph(opts, mode, context_files, graph)
             if not input_set[file] then input_set[file], inputs[#inputs + 1] = true, file end
         end
         for file in pairs(build.files) do add_input(file) end
+        add_input(restore_outputs[1])
         for _, file in ipairs(project_context(project, context)) do add_input(file) end
-        local project_dir = directory(project.path)
         for _, reference in ipairs(build.references) do
             local dependency = projects[reference.path]
             local dependency_framework = reference.framework or (#dependency.framework_list == 1
@@ -390,22 +393,19 @@ local function mint_graph(opts, mode, context_files, graph)
             if reference.generator then
                 add_input(artifacts .. "/bin/" .. dependency.name .. suffix .. "/**")
             else
-                add_input(artifacts .. "/obj/" .. dependency.name .. suffix
-                    .. (suffix == "" and "/**/ref/*.dll" or "/ref/*.dll"))
+                add_input(artifacts .. "/obj/" .. dependency.name .. suffix .. "/ref/*.dll")
             end
         end
-        if restore_recipe then requires[#requires + 1] = restore_recipe end
+        requires[#requires + 1] = restore_recipe
         table.sort(inputs); table.sort(requires)
-        local locked = input_set[join(project_dir, "packages.lock.json")]
         local suffix = output_suffix(project, framework)
         local bin = artifacts .. "/bin/" .. project.name .. suffix
         local obj = artifacts .. "/obj/" .. project.name .. suffix
-        local command = "rm -rf -- " .. quote(bin) .. " " .. quote(obj)
-            .. (restore_recipe and "" or " && " .. restore_command(project, locked))
-            .. " && " .. environment .. '"$<dotnet:tool.dotnet.path>" build ' .. quote(project.path)
+        -- Force SDK-tracked compiler outputs, retaining restore and unaffected framework outputs.
+        local command = environment .. '"$<dotnet:tool.dotnet.path>" build ' .. quote(project.path)
             .. " --artifacts-path " .. quote(artifacts)
             .. " --configuration " .. quote(configuration)
-            .. " --no-restore --no-dependencies -p:UseCommonOutputDirectory=true -p:ProduceReferenceAssembly=true"
+            .. " --no-restore --no-dependencies --no-incremental -p:UseCommonOutputDirectory=true -p:ProduceReferenceAssembly=true"
             .. web_workaround(project, graph.toolchain)
         if framework ~= "" then command = command .. " --framework " .. quote(framework) end
         local project_recipe = recipe_for(project, framework)
@@ -459,12 +459,7 @@ local function mint_graph(opts, mode, context_files, graph)
                 local suffix = output_suffix(dependency.project, dependency.framework)
                 local source = artifacts .. "/bin/" .. dependency.project.name .. suffix
                 projection_inputs[#projection_inputs + 1] = source .. "/**"
-                if suffix ~= "" then
-                    copy[#copy + 1] = "cp -a " .. quote(source .. "/.") .. " " .. quote(run_dir .. "/")
-                else
-                    copy[#copy + 1] = "for d in " .. quote(source) .. "/*; do [ ! -d \"$d\" ] || cp -a \"$d/.\" "
-                        .. quote(run_dir .. "/") .. "; done"
-                end
+                copy[#copy + 1] = "cp -a " .. quote(source .. "/.") .. " " .. quote(run_dir .. "/")
             end
             local run_recipe = project.recipe .. ":run"
             cook.recipe(run_recipe, { requires = { project.recipe }, origin = "cook_dotnet.workspace" }, function()

@@ -48,8 +48,9 @@ describe("cook_dotnet.workspace", function()
         stub.execute("dotnet:build")
 
         assert.same({
-            "build/dotnet/bin/App/**", "build/dotnet/bin/Lib/**",
-            "build/dotnet/obj/App/**", "build/dotnet/obj/Lib/**",
+            "build/dotnet/bin/App/debug/**", "build/dotnet/bin/Lib/debug/**",
+            "build/dotnet/obj/App/*", "build/dotnet/obj/App/debug/**",
+            "build/dotnet/obj/Lib/*", "build/dotnet/obj/Lib/debug/**",
         }, passthrough)
     end)
 
@@ -60,8 +61,8 @@ describe("cook_dotnet.workspace", function()
         assert.is_nil(recipes["dotnet:discover"])
         stub.execute("dotnet:build")
 
-        assert.same({}, recipes["dotnet:Lib"].opts.requires)
-        assert.same({ "dotnet:Lib" }, recipes["dotnet:App"].opts.requires)
+        assert.same({ "__dotnet:restore:Lib" }, recipes["dotnet:Lib"].opts.requires)
+        assert.same({ "__dotnet:restore:App", "dotnet:Lib" }, recipes["dotnet:App"].opts.requires)
         assert.same({ "dotnet:App" }, recipes["dotnet:App:run"].opts.requires)
 
         local units = stub.units()
@@ -76,13 +77,18 @@ describe("cook_dotnet.workspace", function()
         for _, unit in ipairs(units) do
             if unit.outputs then by_output[unit.outputs[1]] = unit end
         end
-        local lib, app = by_output["build/dotnet/bin/Lib/**"], by_output["build/dotnet/bin/App/**"]
-        assert.same({ "build/dotnet/bin/Lib/**", "build/dotnet/obj/Lib/**" }, lib.outputs)
-        assert.same({ "build/dotnet/bin/App/**", "build/dotnet/obj/App/**" }, app.outputs)
+        local lib, app = by_output["build/dotnet/bin/Lib/debug/**"], by_output["build/dotnet/bin/App/debug/**"]
+        assert.same({ "build/dotnet/bin/Lib/debug/**", "build/dotnet/obj/Lib/debug/**" }, lib.outputs)
+        assert.same({ "build/dotnet/bin/App/debug/**", "build/dotnet/obj/App/debug/**" }, app.outputs)
         assert.is_truthy(table.concat(app.inputs, "\n")
-            :find("build/dotnet/obj/Lib/%*%*/ref/%*%.dll"))
-        assert.is_truthy(app.command:find("RestoreRecursive=false", 1, true))
-        assert.is_falsy(app.command:find("--use-lock-file", 1, true))
+            :find("build/dotnet/obj/Lib/debug/ref/%*%.dll"))
+        stub.execute("__dotnet:restore:App")
+        local restore = stub.units()[#stub.units()]
+        assert.same({ "build/dotnet/obj/App/*" }, restore.outputs)
+        assert.equal("local", restore.sharing)
+        assert.is_truthy(restore.command:find("RestoreRecursive=false", 1, true))
+        assert.is_falsy(restore.command:find("--use-lock-file", 1, true))
+        assert.is_truthy(app.command:find("--no-incremental", 1, true))
         assert.is_truthy(app.command:find("--no-dependencies", 1, true))
         assert.is_truthy(app.command:find("UseCommonOutputDirectory=true", 1, true))
         assert.is_falsy(app.command:find("AllowMissingPrunePackageData", 1, true))
@@ -128,13 +134,13 @@ describe("cook_dotnet.workspace", function()
 
         local inputs
         for _, unit in ipairs(stub.units()) do
-            if unit.outputs[1] == "build/dotnet/bin/App/**" then
+            if unit.outputs[1] == "build/dotnet/bin/App/debug/**" then
                 inputs = table.concat(unit.inputs, "\n")
             end
         end
         assert.is_string(inputs)
-        assert.is_truthy(inputs:find("build/dotnet/bin/Lib/**", 1, true))
-        assert.is_falsy(inputs:find("build/dotnet/obj/Lib/%*%*/ref/%*%.dll"))
+        assert.is_truthy(inputs:find("build/dotnet/bin/Lib/debug/**", 1, true))
+        assert.is_falsy(inputs:find("build/dotnet/obj/Lib/debug/ref/%*%.dll"))
     end)
 
     it("isolates reference and generator inputs by target framework", function()
@@ -238,15 +244,18 @@ describe("cook_dotnet.workspace", function()
         dotnet.workspace({ solution = "src/Graph.slnx" })
         stub.execute("dotnet:build")
         local by_output = {}; for _, unit in ipairs(stub.units()) do by_output[unit.outputs[1]] = unit end
-        local app, lib = by_output["build/dotnet/bin/App/**"], by_output["build/dotnet/bin/Lib/**"]
+        local app, lib = by_output["build/dotnet/bin/App/debug/**"], by_output["build/dotnet/bin/Lib/debug/**"]
         assert.is_truthy(app.command:find("AllowMissingPrunePackageData=true", 1, true))
         assert.is_falsy(lib.command:find("AllowMissingPrunePackageData=true", 1, true))
         assert.is_truthy(table.concat(app.inputs, "\n"):find("src/App/packages.lock.json", 1, true))
         assert.is_falsy(table.concat(app.inputs, "\n"):find("src/Lib/packages.lock.json", 1, true))
         assert.is_truthy(table.concat(lib.inputs, "\n"):find("src/Lib/packages.lock.json", 1, true))
         assert.is_falsy(table.concat(lib.inputs, "\n"):find("src/App/packages.lock.json", 1, true))
-        assert.is_truthy(app.command:find("--use-lock-file --locked-mode", 1, true))
-        assert.is_truthy(lib.command:find("--use-lock-file --locked-mode", 1, true))
+        stub.execute("__dotnet:restore:App")
+        stub.execute("__dotnet:restore:Lib")
+        local restore_units = stub.units()
+        assert.is_truthy(restore_units[#restore_units - 1].command:find("--use-lock-file --locked-mode", 1, true))
+        assert.is_truthy(restore_units[#restore_units].command:find("--use-lock-file --locked-mode", 1, true))
 
         package.loaded.cook_dotnet = nil
         reset()
@@ -261,7 +270,7 @@ describe("cook_dotnet.workspace", function()
         stub.execute("dotnet:build")
         local web_unit
         for _, unit in ipairs(stub.units()) do
-            if unit.outputs[1] == "build/dotnet/bin/App/**" then web_unit = unit end
+            if unit.outputs[1] == "build/dotnet/bin/App/debug/**" then web_unit = unit end
         end
         assert.is_truthy(web_unit.command:find("AllowMissingPrunePackageData=true", 1, true))
         assert.is_falsy(web_unit.command:find("--use-lock-file", 1, true))

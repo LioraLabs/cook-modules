@@ -1,7 +1,9 @@
 # cook_dotnet
 
-`cook_dotnet` makes stale .NET build state disposable. Each build starts with
-an empty, recipe-owned artifacts tree; Cook then caches the exact result.
+`cook_dotnet` delegates project evaluation and compilation to the .NET SDK.
+`workspace` caches restore separately and rebuilds only changed projects and target
+frameworks. The coarse `build` maker below retains a conservative empty-artifacts
+build on each Cook cache miss; use `workspace` for project-level reuse.
 
 ```cook
 use cook_dotnet
@@ -25,13 +27,13 @@ recipe app-release
     })
 ```
 
-This first version intentionally leaves project evaluation and compilation to
-the .NET SDK. It replaces mutable `bin/obj` state, not MSBuild's target model.
 The CLI home and NuGet package cache live under `.cook/dotnet/`; they are tool
 state, excluded from project inputs and build artifacts.
 
-Builds restore explicitly with `--use-lock-file --locked-mode` and then build with
-`--no-restore`; commit each generated `packages.lock.json`. The sealed toolchain
+Builds restore explicitly, then compile with `--no-restore`. When a project has
+`packages.lock.json`, restore uses `--use-lock-file --locked-mode`; without a lockfile,
+restore is unlocked. Commit lockfiles appropriate to each evaluated configuration;
+a changed dependency graph must update its lockfile before locked restore can pass. The sealed toolchain
 probe carries the chosen SDK, canonical `dotnet` identity, and paired reference-pack
 versions without sealing a machine path. The Web-SDK-only ref-pack workaround is
 applied from MSBuild's evaluated `UsingMicrosoftNETSdkWeb` property.
@@ -55,6 +57,28 @@ outside it is rejected; expand `root` to include every project in the solution.
 `cook.materialize` cache and returns the structured graph directly, so warm runs
 do not start MSBuild just to rediscover the graph. Each project restores and builds
 inside `build/dotnet/{bin,obj}/<project>` with MSBuild's recursive build disabled.
+Restore metadata has its own cached recipe. A private source edit reuses those
+assets without starting restore. On a restore miss, only the owned metadata
+files directly inside `obj/<project>/` are removed before native restore: malformed
+assets or generated props can prevent NuGet itself from restoring. Configuration/framework subdirectories
+remain intact; a private edit never performs this recovery.
+Compile outputs belong to their SDK configuration
+and framework directory, preserving unaffected frameworks in the active graph.
+
+On a compile miss, `dotnet build --no-incremental` invokes the SDK's project-local
+Rebuild target. This deliberately cleans and regenerates that project's tracked
+compiler outputs: old source timestamps must not preserve stale code or resources.
+It does not delete the whole artifacts tree or shared restore metadata, and it does
+not rebuild project references. This is restore reuse, not timestamp-based skipping
+of a changed project's compiler. The runnable projection is still recreated when
+its implementation inputs change.
+
+Restore work uses `sharing = "local"`: assets and generated NuGet props contain
+absolute checkout and package-cache paths. Compiler units fold that restored
+metadata into their input keys. They may share exact matching artifacts, but moving
+to a fresh checkout regenerates restore metadata and changes the compiler keys;
+it does not assume old absolute intermediate state is portable.
+
 Consumers fold dependency reference assemblies, so an implementation-only
 change can stop at the project whose public assembly surface did not change.
 
@@ -70,6 +94,15 @@ Discovery requires MSBuild 17.8 or newer because it uses the supported JSON
 `-getProperty`/`-getItem` evaluation interface. Project references outside the
 Cook workspace and duplicate MSBuild project names are rejected.
 
-Run `demo/demo.sh` for the complete proof: cold build, unchanged cache hit,
-private-change cutoff, public-API propagation, and execution of the projected
-application. The demo works in a temporary directory and checks each claim.
+Run `demo/demo.sh` for cold/warm builds, private-change cutoff, public-API propagation,
+and projected execution. `demo/graph.sh` compares evaluated framework and generator
+behavior with native MSBuild on SDKs 8.0.424 and 10.0.111.
+
+`COOK=/path/to/cook demo/recovery.sh` exercises edit/revert, preserved timestamps,
+branch and configuration changes, corrupt/missing outputs, dependency changes,
+locked restore failures, and fresh-checkout recovery in isolated temporary trees.
+It also reports five private-edit build/run samples for this module, the
+pre-change `9a92715` revision, and native incremental MSBuild using SDK 10.0.111.
+Run it from a repository checkout containing that baseline revision. The default
+invocation is the full gate; `--matrix-only` or `--benchmark-only` isolates a phase.
+`--fresh-timestamps` is diagnostic only and does not prove preserved-timestamp recovery.
