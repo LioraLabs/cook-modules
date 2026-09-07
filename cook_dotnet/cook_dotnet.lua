@@ -335,12 +335,60 @@ local function mint_graph(opts, mode, context_files, graph)
     for _, path in ipairs(paths) do visit(path) end
 
     local function recipe_for(project, framework)
-        if #project.framework_list == 1 then return project.recipe end
         for _, candidate in ipairs(project.framework_list) do
-            if candidate == framework then return project.recipe .. ":" .. framework_segment(candidate) end
+            if candidate == framework then
+                return #project.framework_list == 1 and project.recipe
+                    or project.recipe .. ":" .. framework_segment(candidate)
+            end
         end
         error("[cook_dotnet.workspace] project '" .. project.path
             .. "' does not target framework '" .. framework .. "'", 2)
+    end
+
+    local selected, selected_projects = {}, {}
+    local function select(project, framework)
+        local key = recipe_for(project, framework)
+        if selected[key] then return end
+        selected[key], selected_projects[project.path] = true, true
+        local build = project.builds[framework] or project
+        for _, reference in ipairs(build.references) do
+            local dependency = projects[reference.path]
+            select(dependency, reference.framework or (#dependency.framework_list == 1
+                and dependency.framework_list[1] or framework))
+        end
+    end
+    local chosen
+    if mode == "build" and opts.project ~= "" then
+        local choices = {}
+        for _, project in ipairs(ordered) do
+            choices[#choices + 1] = project.name .. " (" .. project.path .. ")"
+            if opts.project == project.name or normalize(opts.project) == project.path then
+                if chosen then error("[cook_dotnet.workspace] ambiguous project '" .. opts.project
+                    .. "': '" .. chosen.path .. "' and '" .. project.path .. "'", 2) end
+                chosen = project
+            end
+        end
+        if not chosen then
+            table.sort(choices)
+            error("[cook_dotnet.workspace] unknown project '" .. opts.project
+                .. "'; choose one of: " .. table.concat(choices, ", "), 2)
+        end
+        if opts.framework ~= "" then
+            local found = false
+            for _, framework in ipairs(chosen.framework_list) do
+                if framework == opts.framework then found = true end
+            end
+            if not found then error("[cook_dotnet.workspace] project '" .. chosen.path
+                .. "' does not target framework '" .. opts.framework .. "'; choose one of: "
+                .. table.concat(chosen.framework_list, ", "), 2) end
+            select(chosen, opts.framework)
+        else
+            for _, framework in ipairs(chosen.framework_list) do select(chosen, framework) end
+        end
+    else
+        for _, project in ipairs(ordered) do
+            for _, framework in ipairs(project.framework_list) do select(project, framework) end
+        end
     end
 
     local function output_suffix(project, framework)
@@ -374,7 +422,7 @@ local function mint_graph(opts, mode, context_files, graph)
           cook.add_unit({ inputs = context_files, outputs = restore_outputs, command = command, sharing = "local",
               probes = { "dotnet:tool", "dotnet:toolchain" }, seal = { "dotnet:toolchain" } })
       end)
-      aggregate_outputs[#aggregate_outputs + 1] = restore_outputs[1]
+      if selected_projects[project.path] then aggregate_outputs[#aggregate_outputs + 1] = restore_outputs[1] end
       for _, framework in ipairs(project.framework_list) do
         local build = project.builds[framework] or project
         local requires, inputs, input_set = {}, {}, {}
@@ -409,9 +457,11 @@ local function mint_graph(opts, mode, context_files, graph)
             .. web_workaround(project, graph.toolchain)
         if framework ~= "" then command = command .. " --framework " .. quote(framework) end
         local project_recipe = recipe_for(project, framework)
-        roots[#roots + 1] = project_recipe
-        aggregate_outputs[#aggregate_outputs + 1] = bin .. "/**"
-        aggregate_outputs[#aggregate_outputs + 1] = obj .. "/**"
+        if selected[project_recipe] then
+            roots[#roots + 1] = project_recipe
+            aggregate_outputs[#aggregate_outputs + 1] = bin .. "/**"
+            aggregate_outputs[#aggregate_outputs + 1] = obj .. "/**"
+        end
         cook.recipe(project_recipe, { requires = requires, origin = "cook_dotnet.workspace" }, function()
             cook.add_unit({
                 inputs = inputs,
@@ -524,6 +574,16 @@ function M.workspace(opts)
         error("[cook_dotnet.workspace] configuration must be a non-empty string", 2)
     end
 
+    local project = opts.project == nil and "" or opts.project
+    local framework = opts.framework == nil and "" or opts.framework
+    if type(project) ~= "string" or type(framework) ~= "string" then
+        error("[cook_dotnet.workspace] project and framework must be strings", 2)
+    end
+    if project ~= "" then check_relative("project", project:gsub("\\", "/")) end
+    if framework ~= "" and project == "" then
+        error("[cook_dotnet.workspace] framework requires a project; set PROJECT and FRAMEWORK together", 2)
+    end
+
     ensure_toolchain()
     local graph_inputs = cook.resolve_gather(workspace_globs(root, solution, false),
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
@@ -535,7 +595,8 @@ function M.workspace(opts)
     table.sort(inventory)
     local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
         discovery.producer(solution, configuration, inventory))
-    local settings = { artifacts = artifacts, configuration = configuration, root = root }
+    local settings = { artifacts = artifacts, configuration = configuration, root = root,
+        project = project, framework = framework }
     cook.recipe("dotnet:build", { origin = "cook_dotnet.workspace" }, function()
         mint_graph(settings, "build", inputs, graph)
     end)

@@ -336,4 +336,52 @@ describe("cook_dotnet.workspace", function()
         assert.is_false(ok)
         assert.is_truthy(err:find("top level", 1, true))
     end)
+    it("selects only the native framework closure and its passthrough outputs", function()
+        local dotnet = load_workspace()
+        local app = multi_target("App", "src/App/App.csproj", "net8.0;net10.0")
+        app.value.Items.ProjectReference = { { FullPath = "src/Lib/Lib.csproj", NearestTargetFramework = "netstandard2.1" } }
+        local lib = project("Lib", "src/Lib/Lib.csproj")
+        lib.value.Properties.TargetFramework = "netstandard2.1"
+        stub.materialize_as({ projects = { app, lib, project("Other", "src/Other/Other.csproj") } })
+        dotnet.workspace({ solution = "src/Graph.slnx", project = "App", framework = "net8.0" })
+        stub.execute("dotnet:build")
+        assert.is_nil(stub.recipes()["dotnet:Other"].executed)
+        local commands = {}
+        for _, unit in ipairs(stub.units()) do commands[#commands + 1] = unit.command end
+        local text = table.concat(commands, "\n")
+        assert.is_truthy(text:find("--framework 'netstandard2.1'", 1, true))
+        assert.is_truthy(text:find("--framework 'net8.0'", 1, true))
+        assert.is_nil(text:find("--framework 'net10.0'", 1, true))
+        assert.same({ "build/dotnet/bin/App/debug_net8.0/**", "build/dotnet/bin/Lib/debug/**",
+            "build/dotnet/obj/App/*", "build/dotnet/obj/App/debug_net8.0/**",
+            "build/dotnet/obj/Lib/*", "build/dotnet/obj/Lib/debug/**" }, passthrough)
+    end)
+
+    it("keeps project and framework selection out of discovery identity", function()
+        local dotnet = load_workspace()
+        dotnet.workspace({ solution = "src/Graph.slnx", project = "App", framework = "net8.0" })
+        local first = string.dump(stub.materialized().produce)
+        dotnet = load_workspace()
+        dotnet.workspace({ solution = "src/Graph.slnx", project = "src/Lib/./Lib.csproj" })
+        assert.equal(first, string.dump(stub.materialized().produce))
+        stub.execute("dotnet:build")
+        assert.is_nil(stub.recipes()["dotnet:App"].executed)
+        assert.is_true(stub.recipes()["dotnet:Lib"].executed)
+    end)
+
+    it("reports selector choices and validates even single-target framework requests", function()
+        local function rejected(options, message)
+            local dotnet = load_workspace()
+            options.solution = "src/Graph.slnx"
+            local ok, err = pcall(function() dotnet.workspace(options); stub.execute("dotnet:build") end)
+            assert.is_false(ok)
+            assert.is_truthy(tostring(err):find(message, 1, true))
+        end
+        rejected({ project = "Missing" }, "choose one of: App (src/App/App.csproj)")
+        rejected({ project = "Lib", framework = "net9.0" }, "choose one of: net8.0")
+        rejected({ framework = "net8.0" }, "framework requires a project")
+        rejected({ project = 42 }, "project and framework must be strings")
+        rejected({ project = "../Lib/Lib.csproj" }, "project must be a non-root relative path")
+    end)
+
 end)

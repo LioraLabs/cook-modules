@@ -59,13 +59,11 @@ echo "== configuration change: discovery key and conditional graph change =="
 cp App/packages.lock.json .cook/proof/debug-lock.json
 dotnet restore App/App.csproj -p:Configuration=Release --use-lock-file --force-evaluate \
     --artifacts-path .cook/fixture-restore --verbosity quiet
-sed -i 's/configuration = "Debug"/configuration = "Release"/' Cookfile
-run .cook/proof/release.log dotnet:build --color never -v
+run .cook/proof/release.log dotnet:build --set CONFIGURATION=Release --color never -v
 grep -q "cook materialize cook_dotnet.graph ran" .cook/proof/release.log
 grep -q "dotnet:ReleaseOnly" .cook/proof/release.log
 cp .cook/proof/debug-lock.json App/packages.lock.json
-sed -i 's/configuration = "Release"/configuration = "Debug"/' Cookfile
-run .cook/proof/debug.log dotnet:build --color never -v
+run .cook/proof/debug.log dotnet:build --set CONFIGURATION=Debug --color never -v
 grep -q "cook materialize cook_dotnet.graph restored" .cook/proof/debug.log
 if grep -q "dotnet:ReleaseOnly" .cook/proof/debug.log; then exit 1; fi
 

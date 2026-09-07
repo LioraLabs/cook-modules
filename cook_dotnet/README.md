@@ -86,6 +86,39 @@ change can stop at the project whose public assembly surface did not change.
 a cached runnable tree from the current implementation outputs of every
 transitive project, then executes the app.
 
+Select a project and framework through the workspace options:
+
+```cook
+config
+    var.PROJECT = ""
+    var.CONFIGURATION = "Debug"
+    var.FRAMEWORK = ""
+
+cook_dotnet.workspace({ solution = "Demo.slnx", project = var.PROJECT,
+    configuration = var.CONFIGURATION, framework = var.FRAMEWORK })
+```
+
+```sh
+cook dotnet:build --set PROJECT=App --set CONFIGURATION=Release --set FRAMEWORK=net8.0
+cook why dotnet:build --set PROJECT=App --set CONFIGURATION=Release --set FRAMEWORK=net8.0
+```
+
+`project` accepts an exact evaluated project name or a workspace-relative `.csproj`
+path. Empty project builds the whole workspace. Empty framework builds every
+framework of the selected project; an explicit framework requires a project.
+Dependencies use the SDK's compatible framework selection. Switching project or
+framework reuses the discovered graph and preserves unrelated built outputs.
+Configuration is a nonempty native MSBuild name, including custom configurations;
+changing it selects a separately evaluated graph. Unknown project/framework errors
+list available choices. Duplicate evaluated names or generated recipe-name
+collisions are rejected with both paths because their SDK artifact directories
+would collide; selecting by path does not make such a workspace safe.
+
+These selectors apply to `dotnet:build` and its `why` explanation. `dotnet:run`
+retains the existing single-executable behavior. `demo/selection.sh` exercises the
+commands, native output agreement, warm discovery reuse, and sibling preservation
+with SDK 10.0.111 (including net8.0 and net10.0 targets).
+
 Project recipes are minted after `dotnet:build` or `dotnet:run` is dispatched.
 Until Cook gains discovery-aware name dispatch, those two static entry points are
 the public workspace surface; `cook dotnet:App` is intentionally unavailable.

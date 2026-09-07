@@ -1,3 +1,9 @@
 use cook_dotnet ./cook_dotnet.lua
 
-cook_dotnet.workspace({ solution = "Demo.slnx", configuration = "Debug" })
+config
+    var.PROJECT = ""
+    var.CONFIGURATION = "Debug"
+    var.FRAMEWORK = ""
+
+cook_dotnet.workspace({ solution = "Demo.slnx", project = var.PROJECT,
+    configuration = var.CONFIGURATION, framework = var.FRAMEWORK })
