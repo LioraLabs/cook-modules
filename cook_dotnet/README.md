@@ -143,9 +143,51 @@ implementation bytes, native output agreement, actual terminal input and Ctrl-C
 cleanup with SDK 10.0.111 (net8.0 and net10.0 targets). `demo/selection.sh` retains
 the build/why selection, warm discovery reuse, and sibling preservation proof.
 
-Project recipes are minted after `dotnet:build` or `dotnet:run` is dispatched.
-Until Cook gains discovery-aware name dispatch, those two static entry points are
-the public workspace surface; `cook dotnet:App` is intentionally unavailable.
+`dotnet:test` (also `dotnet.test`) runs VSTest-compatible test projects using the
+same project/configuration/framework selectors. Empty project selects all native
+test projects; empty framework selects every framework of the chosen project.
+Set `test_filter` to a native VSTest filter string and `test_args` to a contiguous
+list of separately quoted strings, independent of application `args`. The demo
+binds these to `TEST_FILTER` and JSON `TEST_ARGS`:
+
+```sh
+cook dotnet:test --set PROJECT=Tests --set FRAMEWORK=net8.0 \
+    --set 'TEST_FILTER=FullyQualifiedName~Pass' \
+    --set 'TEST_ARGS=["--logger:console;verbosity=minimal"]'
+```
+
+Testing first runs the existing cached restore recipes for the candidate project
+closure, then evaluates native `IsTestProject` against that restored metadata.
+This includes ordinary projects whose Test SDK package supplies their identity;
+no authored flag or package-name heuristic is required. Default selection may
+restore metadata for application projects, but it never compiles them. Warm tests
+still perform the identity queries; restore and unchanged builds remain cached.
+Build, run, and menu do not perform this test classification.
+
+Each selected test runs `dotnet vstest` against a cached projection containing
+current dependency implementation bytes. The runner performs no build or restore
+and executes every time, even when the build stays cached. Native failures remain
+visible with project/configuration/framework context, and Cook returns its failure
+status (1). TRX files are written under
+`build/dotnet/test-results/<project>/<configuration[_framework]>/`; they are native
+results, not cached recipe outputs. Runner arguments may add native loggers/options.
+This interface targets VSTest-compatible adapters, not Microsoft.Testing.Platform's
+separate runner protocol. It requires Cook's `cook.child_command` API so nested
+work retains the actual executable, Cookfile, configuration overrides and cache
+policy.
+
+`demo/test.sh` retains package-only xUnit/Test SDK identity, native runner comparison,
+selected/all frameworks, filtering, failures, TRX output, warm restore/build reuse,
+argument fidelity and private-dependency execution correctness, including SDK 10 → 8
+switches. Native cleanup ledgers are scoped to the evaluated SDK because SDK 8 and
+10 account for copied runtime files differently. Restore and compiler directories
+remain reusable. On a compilation miss, only that project/configuration/framework
+`bin` directory is reset, so SDK 8 cannot leave removed CopyLocal dependencies in
+runnable output. Cache hits preserve it; restore, `obj`, and sibling outputs remain.
+
+Canonical generated project targets such as `cook dotnet:App` are directly
+invocable, including before an aggregate build. Their names need not have appeared
+in a prior menu listing.
 
 Discovery requires MSBuild 17.8 or newer because it uses the supported JSON
 `-getProperty`/`-getItem` evaluation interface. Project references outside the

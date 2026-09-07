@@ -1,11 +1,13 @@
 local M = {}
 local json = require("cjson.safe")
+local current_chore
 local probes, units, exported, gathered, gathers, gather_count, current_recipe, recipes, commands, resolved, materialized, materialized_value
 
 function M.reset()
     probes, units, exported, gathered, gathers, gather_count, current_recipe = {}, {}, {}, nil, {}, 0, nil
     recipes, commands, materialized, materialized_value = {}, {}, nil, nil
     resolved = { "src/App.csproj", "src/Program.cs" }
+    current_chore = false
     _G.recipe = nil
     _G.cook = {
         probe = function(key, opts)
@@ -22,7 +24,10 @@ function M.reset()
             gathers[#gathers + 1] = gathered
             return type(resolved) == "function" and resolved(globs, excludes) or resolved
         end,
-        add_unit = function(unit) units[#units + 1] = unit end,
+        add_unit = function(unit)
+            if current_chore then unit.cache, unit.interactive = false, true end
+            units[#units + 1] = unit
+        end,
         export = function(name, value) exported[name] = value end,
         json_decode = function(value) return assert(json.decode(value)) end,
         materialize = function(name, spec, produce)
@@ -37,6 +42,16 @@ function M.reset()
                 end
             end
             error("unexpected cook.sh: " .. command)
+        end,
+        chore = function(name, opts, body)
+            assert(debug.getinfo(2, "S").what == "main", "cook.chore requires module evaluation")
+            assert(name:match("^dotnet%.") or name:match("^cook_dotnet%."), "invalid module chore namespace")
+            recipes[name] = { opts = opts, body = body, chore = true }
+        end,
+        child_command = function(name)
+            assert(current_chore, "cook.child_command requires an active chore")
+            assert(type(name) == "string" and name ~= "" and not name:find("%z"), "invalid child recipe")
+            return "(cook '" .. ("+" .. name):gsub("'", "'\\''") .. "')"
         end,
         recipe = function(name, opts, body)
             recipes[name] = { opts = opts, body = body }
@@ -80,10 +95,11 @@ function M.execute(name)
     local entry = assert(recipes[name], "unknown recipe " .. name)
     if entry.executed then return end
     entry.executed = true
-    local prior_name, prior_recipe = current_recipe, _G.recipe
+    local prior_name, prior_recipe, prior_chore = current_recipe, _G.recipe, current_chore
     current_recipe, _G.recipe = name, { name = name }
+    current_chore = entry.chore or false
     entry.body()
-    current_recipe, _G.recipe = prior_name, prior_recipe
+    current_recipe, _G.recipe, current_chore = prior_name, prior_recipe, prior_chore
 end
 
 return M

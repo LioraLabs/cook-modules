@@ -7,6 +7,28 @@ local function quote(s)
     return "'" .. s:gsub("'", "'\\''") .. "'"
 end
 
+local function test_options(opts)
+    local filter = opts.test_filter == nil and "" or opts.test_filter
+    if type(filter) ~= "string" or filter:find("%z") then
+        return nil, "test_filter must be a string without NUL bytes"
+    end
+    local args = opts.test_args == nil and {} or opts.test_args
+    if type(args) ~= "table" then return nil, "test_args must be a list of strings" end
+    local count, quoted = 0, {}
+    for key, value in pairs(args) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 or type(value) ~= "string"
+            or value:find("%z") then
+            return nil, "test_args must be a contiguous list of strings without NUL bytes"
+        end
+        count = count + 1
+    end
+    for i = 1, count do
+        if args[i] == nil then return nil, "test_args must be a contiguous list of strings" end
+        quoted[#quoted + 1] = " " .. quote(args[i])
+    end
+    return (filter ~= "" and " " .. quote("--TestCaseFilter:" .. filter) or "") .. table.concat(quoted)
+end
+
 local function directory(pathname)
     return pathname:match("^(.*)/[^/]+$") or "."
 end
@@ -268,7 +290,14 @@ local function web_workaround(project, toolchain)
     return ""
 end
 
-local function mint_graph(opts, mode, context_files, graph)
+local function project_recipe(project, framework)
+    local name = "dotnet:" .. recipe_segment(project.name)
+    return #target_frameworks(project) > 1 and name .. ":" .. framework_segment(framework) or name
+end
+
+local function mint_graph(opts, mode, context_files, graph, target)
+    local project_selector = target and target.project or opts.project
+    local framework_selector = target and target.framework or opts.framework
     local artifacts, configuration, root = opts.artifacts, opts.configuration, opts.root
     local context = {}
     for _, file in ipairs(context_files) do
@@ -337,8 +366,7 @@ local function mint_graph(opts, mode, context_files, graph)
     local function recipe_for(project, framework)
         for _, candidate in ipairs(project.framework_list) do
             if candidate == framework then
-                return #project.framework_list == 1 and project.recipe
-                    or project.recipe .. ":" .. framework_segment(candidate)
+                return project_recipe(project, candidate)
             end
         end
         error("[cook_dotnet.workspace] project '" .. project.path
@@ -372,7 +400,7 @@ local function mint_graph(opts, mode, context_files, graph)
             end
         end
     end
-    if mode == "run" and opts.project == "" then
+    if mode == "run" and project_selector == "" then
         local applications, names = {}, {}
         for _, candidate in ipairs(executable_choices) do
             if not applications[candidate.project.path] then
@@ -387,40 +415,40 @@ local function mint_graph(opts, mode, context_files, graph)
                 .. " executable projects; choose one of: " .. table.concat(names, ", "))
         end
     end
-    if opts.project ~= "" then
+    if project_selector ~= "" then
         local choices = {}
         for _, project in ipairs(ordered) do
             choices[#choices + 1] = project.name .. " (" .. project.path .. ")"
-            if opts.project == project.name or normalize(opts.project) == project.path then
-                if chosen then error("[cook_dotnet.workspace] ambiguous project '" .. opts.project
+            if project_selector == project.name or normalize(project_selector) == project.path then
+                if chosen then error("[cook_dotnet.workspace] ambiguous project '" .. project_selector
                     .. "': '" .. chosen.path .. "' and '" .. project.path .. "'", 2) end
                 chosen = project
             end
         end
         if not chosen then
             table.sort(choices)
-            error("[cook_dotnet.workspace] unknown project '" .. opts.project
+            error("[cook_dotnet.workspace] unknown project '" .. project_selector
                 .. "'; choose one of: " .. table.concat(choices, ", "), 2)
         end
     end
     local run_framework
     if mode == "run" then
-        if opts.framework == "" and #chosen.framework_list ~= 1 then
+        if framework_selector == "" and #chosen.framework_list ~= 1 then
             return reject_run("dotnet:run requires FRAMEWORK for '" .. chosen.path
                 .. "'; choose one of: " .. table.concat(chosen.framework_list, ", "))
         end
-        run_framework = opts.framework ~= "" and opts.framework or chosen.framework_list[1]
+        run_framework = framework_selector ~= "" and framework_selector or chosen.framework_list[1]
     end
     if chosen then
-        if opts.framework ~= "" then
+        if framework_selector ~= "" then
             local found = false
             for _, framework in ipairs(chosen.framework_list) do
-                if framework == opts.framework then found = true end
+                if framework == framework_selector then found = true end
             end
             if not found then error("[cook_dotnet.workspace] project '" .. chosen.path
-                .. "' does not target framework '" .. opts.framework .. "'; choose one of: "
+                .. "' does not target framework '" .. framework_selector .. "'; choose one of: "
                 .. table.concat(chosen.framework_list, ", "), 2) end
-            select(chosen, opts.framework)
+            select(chosen, framework_selector)
         else
             for _, framework in ipairs(chosen.framework_list) do select(chosen, framework) end
         end
@@ -446,7 +474,7 @@ local function mint_graph(opts, mode, context_files, graph)
             .. web_workaround(project, graph.toolchain) .. " --verbosity quiet"
     end
 
-    local roots, aggregate_outputs = {}, {}
+    local roots, aggregate_outputs, restore_roots = {}, {}, {}
     for _, project in ipairs(ordered) do
       local restore_recipe = "__dotnet:restore:" .. recipe_segment(project.name)
       local restore_dir = artifacts .. "/obj/" .. project.name
@@ -461,7 +489,10 @@ local function mint_graph(opts, mode, context_files, graph)
           cook.add_unit({ inputs = context_files, outputs = restore_outputs, command = command, sharing = "local",
               probes = { "dotnet:tool", "dotnet:toolchain" }, seal = { "dotnet:toolchain" } })
       end)
-      if selected_projects[project.path] then aggregate_outputs[#aggregate_outputs + 1] = restore_outputs[1] end
+      if selected_projects[project.path] then
+          aggregate_outputs[#aggregate_outputs + 1] = restore_outputs[1]
+          restore_roots[#restore_roots + 1] = restore_recipe
+      end
       for _, framework in ipairs(project.framework_list) do
         local build = project.builds[framework] or project
         local requires, inputs, input_set = {}, {}, {}
@@ -489,10 +520,16 @@ local function mint_graph(opts, mode, context_files, graph)
         local bin = artifacts .. "/bin/" .. project.name .. suffix
         local obj = artifacts .. "/obj/" .. project.name .. suffix
         -- Force SDK-tracked compiler outputs, retaining restore and unaffected framework outputs.
-        local command = environment .. '"$<dotnet:tool.dotnet.path>" build ' .. quote(project.path)
+        -- SDK 8 cannot clean removed CopyLocal files outside the project directory.
+        -- Reset only this compile unit's bin output; keep restore and compiler state.
+        local command = "rm -rf -- " .. quote(bin) .. " && "
+            .. environment .. '"$<dotnet:tool.dotnet.path>" build ' .. quote(project.path)
             .. " --artifacts-path " .. quote(artifacts)
             .. " --configuration " .. quote(configuration)
-            .. " --no-restore --no-dependencies --no-incremental -p:UseCommonOutputDirectory=true -p:ProduceReferenceAssembly=true"
+            .. " --no-restore --no-dependencies --no-incremental -p:ProduceReferenceAssembly=true"
+            -- SDK 8 and 10 track CopyLocal files differently; sharing their clean ledger
+            -- can make SDK 8 delete DLLs it just copied during an SDK 10 -> 8 Rebuild.
+            .. " -p:CleanFile=" .. quote("cook-" .. graph.toolchain.sdk .. ".FileListAbsolute.txt")
             .. web_workaround(project, graph.toolchain)
         if framework ~= "" then command = command .. " --framework " .. quote(framework) end
         local project_recipe = recipe_for(project, framework)
@@ -536,11 +573,10 @@ local function mint_graph(opts, mode, context_files, graph)
         end
         result[#result + 1] = { project = project, framework = framework }
     end
-    for _, candidate in ipairs(executable_choices) do
-        local project, framework = candidate.project, candidate.framework
+    local function execution_body(project, framework, kind)
         local build = project.builds[framework] or project
         local closure = {}; transitive(project, framework, {}, closure)
-        local run_dir = artifacts .. "/run/" .. project.name .. output_suffix(project, framework)
+        local run_dir = artifacts .. "/" .. kind .. "/" .. project.name .. output_suffix(project, framework)
         local projection_inputs, copy = {}, { "rm -rf -- " .. quote(run_dir), "mkdir -p -- " .. quote(run_dir) }
         -- Copy each dependency's current output last, after consumers that may carry older copies.
         for i = #closure, 1, -1 do
@@ -550,29 +586,77 @@ local function mint_graph(opts, mode, context_files, graph)
             projection_inputs[#projection_inputs + 1] = source .. "/**"
             copy[#copy + 1] = "cp -a " .. quote(source .. "/.") .. " " .. quote(run_dir .. "/")
         end
-        local name = recipe_for(project, framework) .. ":run"
-        cook.recipe(name, { requires = { recipe_for(project, framework) }, origin = "cook_dotnet.workspace" }, function()
+        return function()
+            local arguments, problem = opts.arguments
+            if kind == "test" then
+                arguments, problem = test_options(opts)
+                if not arguments then return reject_run(problem) end
+            end
             cook.add_unit({
                 inputs = projection_inputs,
                 outputs = { run_dir .. "/**" },
                 command = table.concat(copy, " && "),
             })
+            local command = 'exec "$<dotnet:tool.dotnet.path>" ' .. quote(run_dir .. "/" .. build.target_file)
+                .. arguments
+            if kind == "test" then
+                local results = artifacts .. "/test-results/" .. project.name .. output_suffix(project, framework)
+                command = "echo " .. quote("[cook_dotnet.test] " .. project.path .. " (" .. configuration
+                    .. ", " .. framework .. ")") .. " && " .. environment
+                    .. '"$<dotnet:tool.dotnet.path>" vstest ' .. quote(run_dir .. "/" .. build.target_file)
+                    .. " " .. quote("--logger:trx") .. " " .. quote("--ResultsDirectory:" .. results) .. arguments
+            end
             cook.add_unit({
                 inputs = { run_dir .. "/" .. build.target_file },
-                command = 'exec "$<dotnet:tool.dotnet.path>" ' .. quote(run_dir .. "/" .. build.target_file)
-                    .. opts.arguments,
+                command = command,
                 probes = { "dotnet:tool", "dotnet:toolchain" },
                 seal = { "dotnet:toolchain" },
                 interactive = true,
                 cache = false,
                 sharing = "local",
             })
-        end)
-        if project == chosen and framework == run_framework then run_recipe = name end
+        end
+    end
+    for _, candidate in ipairs(executable_choices) do
+        local name = recipe_for(candidate.project, candidate.framework) .. ":run"
+        cook.recipe(name, { requires = { recipe_for(candidate.project, candidate.framework) }, origin = "cook_dotnet.workspace" },
+            execution_body(candidate.project, candidate.framework, "run"))
+        if candidate.project == chosen and candidate.framework == run_framework then run_recipe = name end
     end
 
     table.sort(roots)
-    if mode == "run" then
+    if mode == "test-execute" then
+        cook.require_recipe(recipe_for(chosen, framework_selector))
+        execution_body(chosen, framework_selector, "test")()
+    elseif mode == "test-restore" then
+        for _, name in ipairs(restore_roots) do cook.require_recipe(name) end
+    elseif mode == "test" then
+        local _, problem = test_options(opts)
+        if problem then return reject_run(problem) end
+        local commands = { "set -eu", cook.child_command("__dotnet:test:restore"), "found=0" }
+        for _, project in ipairs(ordered) do
+            if not chosen or project == chosen then
+                for _, framework in ipairs(project.framework_list) do
+                    if framework_selector == "" or framework_selector == framework then
+                        local query = environment .. quote(assert(cook.tools.id("dotnet"), "dotnet not on PATH").path) .. ' msbuild ' .. quote(project.path)
+                            .. " -nologo -p:Configuration=" .. quote(configuration)
+                            .. ' -p:UseArtifactsOutput=true -p:ArtifactsPath="$(pwd)/"' .. quote(artifacts)
+                            .. " -p:TargetFramework=" .. quote(framework) .. " -getProperty:IsTestProject"
+                        commands[#commands + 1] = "identity=$(" .. query
+                            .. ") || { status=$?; printf '%s\\n' \"$identity\" >&2; exit \"$status\"; }"
+                        commands[#commands + 1] = 'case "$identity" in [Tt][Rr][Uu][Ee]) '
+                            .. cook.child_command(recipe_for(project, framework) .. ":test")
+                            .. '; found=1 ;; [Ff][Aa][Ll][Ss][Ee]|"") ;; *) echo '
+                            .. quote("[cook_dotnet.test] invalid IsTestProject for " .. project.path .. " (" .. framework .. "): ")
+                            .. '"$identity" >&2; exit 1 ;; esac'
+                    end
+                end
+            end
+        end
+        commands[#commands + 1] = '[ "$found" = 1 ] || { echo '
+            .. quote("[cook_dotnet.test] no test projects matched the selected project/framework") .. ' >&2; exit 1; }'
+        cook.add_unit({ command = table.concat(commands, "\n"), cache = false, interactive = true, sharing = "local" })
+    elseif mode == "run" then
         if not run_recipe then
             local choices = {}
             for _, candidate in ipairs(executable_choices) do
@@ -588,6 +672,16 @@ local function mint_graph(opts, mode, context_files, graph)
         cook.step_group(function() cook.passthrough(aggregate_outputs) end)
     end
 end
+
+local test_workspace
+cook.chore("dotnet.test", { origin = "cook_dotnet.workspace" }, function()
+    if not test_workspace then
+        cook.add_unit({ command = "echo '[cook_dotnet.test] call cook_dotnet.workspace first' >&2; exit 1",
+            cache = false, interactive = true })
+        return
+    end
+    test_workspace()
+end)
 
 function M.workspace(opts)
     opts = opts or {}
@@ -650,14 +744,38 @@ function M.workspace(opts)
     local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
         discovery.producer(solution, configuration, inventory))
     local settings = { artifacts = artifacts, configuration = configuration, root = root,
-        project = project, framework = framework, arguments = table.concat(arguments) }
+        project = project, framework = framework, arguments = table.concat(arguments),
+        test_filter = opts.test_filter, test_args = opts.test_args }
+    test_workspace = function() mint_graph(settings, "test", inputs, graph) end
+    -- Register only the new test names here. Their build/projection bodies remain deferred.
+    local test_names = {}
+    for _, entry in ipairs(graph.projects) do
+        local info = discover_project(entry.path, entry.value)
+        local frameworks = target_frameworks(info)
+        if #frameworks == 0 then frameworks[1] = "" end
+        for _, framework in ipairs(frameworks) do
+            local name = project_recipe(info, framework) .. ":test"
+            if test_names[name] then
+                error("[cook_dotnet.workspace] projects '" .. test_names[name] .. "' and '"
+                    .. entry.path .. "' map to the same recipe '" .. name .. "'", 2)
+            end
+            test_names[name] = entry.path
+            cook.recipe(name, { origin = "cook_dotnet.workspace" }, function()
+                mint_graph(settings, "test-execute", inputs, graph, { project = entry.path, framework = framework })
+            end)
+        end
+    end
     cook.recipe("dotnet:build", { origin = "cook_dotnet.workspace" }, function()
         mint_graph(settings, "build", inputs, graph)
     end)
     cook.recipe("dotnet:run", { origin = "cook_dotnet.workspace" }, function()
         mint_graph(settings, "run", inputs, graph)
     end)
-    return { "dotnet:build", "dotnet:run" }
+    cook.recipe("__dotnet:test:restore", { origin = "cook_dotnet.workspace" }, function()
+        mint_graph(settings, "test-restore", inputs, graph)
+    end)
+    cook.recipe("dotnet:test", { requires = { "dotnet.test" }, origin = "cook_dotnet.workspace" }, function() end)
+    return { "dotnet:build", "dotnet:run", "dotnet:test" }
 end
 
 return M

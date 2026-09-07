@@ -5,6 +5,9 @@ config
     var.CONFIGURATION = "Debug"
     var.FRAMEWORK = ""
     var.ARGS = "[]"
+    var.TEST_FILTER = ""
+    var.TEST_ARGS = "[]"
 
 cook_dotnet.workspace({ solution = "Demo.slnx", project = var.PROJECT,
-    configuration = var.CONFIGURATION, framework = var.FRAMEWORK, args = cook.json_decode(var.ARGS) })
+    configuration = var.CONFIGURATION, framework = var.FRAMEWORK, args = cook.json_decode(var.ARGS),
+    test_filter = var.TEST_FILTER, test_args = cook.json_decode(var.TEST_ARGS) })
