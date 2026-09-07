@@ -737,8 +737,15 @@ function M.workspace(opts)
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
     local inputs = cook.resolve_gather(workspace_globs(root, solution, true),
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
+    -- Cache native membership roots independently from the files currently beneath them.
+    local relevance = cook.materialize("inventory", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
+        discovery.inventory_producer(solution, configuration, root, artifacts))
+    local inventory_globs = {}
+    for _, directory in ipairs(relevance.roots) do
+        inventory_globs[#inventory_globs + 1] = directory == "." and "**" or directory .. "/**"
+    end
     -- Membership refreshes SDK evaluation; source bytes key only the builds that consume them.
-    local inventory = cook.resolve_gather({ root == "." and "**" or root .. "/**" },
+    local inventory = cook.resolve_gather(inventory_globs,
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
     table.sort(inventory)
     local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },

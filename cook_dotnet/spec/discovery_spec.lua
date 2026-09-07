@@ -1,6 +1,24 @@
 local discovery = require("cook_dotnet.discovery")
 
 describe("cook_dotnet discovery", function()
+    it("retains native inventory roots and rejects failed native queries", function()
+        local stub = require("spec.cook_stub")
+        stub.reset()
+        cook.sh = function(command)
+            if command == "pwd" then return "/workspace\n" end
+            return [[SDK notice
+{"Items":{"CookInventoryRoots":[{"Identity":"/workspace/shared"},{"Identity":"/workspace/App/deep"},{"Identity":"/workspace/App"}]}}]]
+        end
+        local query = discovery.inventory_producer("App/App.csproj", "Debug", ".", "build/dotnet")
+        assert.same({ roots = { "App", "shared" } }, query())
+        assert.not_equal(string.dump(query), string.dump(discovery.inventory_producer("App/App.csproj", "Release", ".", "build/dotnet")))
+        cook.sh = function(command)
+            if command == "pwd" then return "/workspace" end
+            error("native inventory failed", 0)
+        end
+        assert.has_error(query, "native inventory failed")
+    end)
+
     it("keys and evaluates MSBuild queries by configuration", function()
         local debug_code = string.dump(discovery.producer("src/App.csproj", "Debug"))
         local release = string.dump(discovery.producer("src/App.csproj", "Release"))

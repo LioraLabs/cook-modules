@@ -219,6 +219,24 @@ and empty packs, and content changes. It requires Python 3, Lua 5.4, OpenSSL, an
 SDK packs under `/usr/share/dotnet`. Hashing uses native `find -exec ... +` batches;
 it still reads every reference file and sorts the same filename/digest records.
 
+Graph membership is scanned beneath native MSBuild include roots and literal-item
+parent directories, including initially empty custom globs and missing literal
+files. A cached native inventory query discovers those roots before the existing
+graph query; unrelated frontend output directories no longer change graph identity.
+Explicit authored imports, conditions, and property/item/metadata expressions,
+including those in imported project and NuGet package documents, conservatively retain the previous whole-root inventory because they
+can depend on filesystem state outside the currently evaluated items. No filename
+extension or frontend-tool allowlist is used. Source bytes still key compilation,
+while source additions/removals refresh discovery. Native NuGet package-folder
+properties identify package-authored build rules even in an external cache;
+generated restore wrappers remain excluded from the authored-document scan.
+
+`demo/inventory.sh` proves the frontend cutoff and native source, custom extension,
+empty content glob, missing literal, conditional/wildcard imports, configured-root
+intersection, package-supplied conditional inputs on SDK 8/10, and project membership changes. Set `COOK_DOTNET_INVENTORY_BASELINE` to a repository revision to run the
+same proof against its module sources; the prior whole-root inventory fails the
+frontend-add check.
+
 Graph discovery runs at most four native SDK evaluations concurrently. It retains
 each outer build, each explicitly selected framework's ordinary item evaluation,
 and the SDK's separate project-reference compatibility query.

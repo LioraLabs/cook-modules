@@ -3,6 +3,11 @@ local passthrough
 
 local function reset()
     stub.reset()
+    local materialize = cook.materialize
+    cook.materialize = function(name, spec, produce)
+        if name == "inventory" then return { roots = { "src" } } end
+        return materialize(name, spec, produce)
+    end
     passthrough = nil
     cook.step_group = function(body) body() end
     cook.passthrough = function(outputs) passthrough = outputs end
@@ -42,6 +47,12 @@ local function load_workspace(duplicate)
 end
 
 describe("cook_dotnet.workspace", function()
+    it("gathers native inventory roots rather than every workspace filename", function()
+        local dotnet = load_workspace()
+        dotnet.workspace({ solution = "src/Graph.slnx" })
+        assert.same({ "src/**" }, stub.gathers()[3].globs)
+    end)
+
     it("registers one uncached generic test root over the native chore", function()
         local dotnet = load_workspace()
         dotnet.workspace({ solution = "src/Graph.slnx" })

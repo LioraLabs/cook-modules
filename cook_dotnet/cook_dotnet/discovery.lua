@@ -33,6 +33,161 @@ return {
 ]]
 end
 
+-- ponytail: scan native root subtrees; retain full glob predicates only if intra-project noise becomes costly.
+-- MSBuild owns include expansion. Keep its native glob roots, with the old broad
+-- inventory when authored imports, conditions, or expressions hide filesystem reads.
+function M.inventory_producer(solution, configuration, root, artifacts)
+    local project = [=[
+<Project>
+  <UsingTask TaskName="CookInventory" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Solution ParameterType="System.String" Required="true" />
+      <Configuration ParameterType="System.String" Required="true" />
+      <WorkspaceRoot ParameterType="System.String" Required="true" />
+      <ScanRoot ParameterType="System.String" Required="true" />
+      <Artifacts ParameterType="System.String" Required="true" />
+      <Roots ParameterType="Microsoft.Build.Framework.ITaskItem[]" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.Collections" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Reflection" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        // The factory targets netstandard; the installed MSBuild assembly targets
+        // the selected runtime. Reflection bridges that SDK boundary without a helper build.
+        var assembly = Assembly.Load("Microsoft.Build");
+        var collectionType = assembly.GetType("Microsoft.Build.Evaluation.ProjectCollection");
+        var collection = Activator.CreateInstance(collectionType);
+        Func<object, string, object> get = (value, name) => value.GetType().GetProperty(name).GetValue(value);
+        var roots = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<KeyValuePair<string, string>>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        bool fallback = false;
+        Action<string> addRoot = path => {
+          path = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+          if (ScanRoot.StartsWith(path + "/", StringComparison.Ordinal)) path = ScanRoot;
+          if (path == ScanRoot || path.StartsWith(ScanRoot + "/", StringComparison.Ordinal)) roots.Add(path);
+        };
+        try {
+          if (Solution.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) pending.Enqueue(new KeyValuePair<string, string>(Solution, ""));
+          else {
+            var solutionType = assembly.GetType("Microsoft.Build.Construction.SolutionFile");
+            var parsed = solutionType.GetMethod("Parse").Invoke(null, new object[] { Solution });
+            foreach (var entry in (IEnumerable)get(parsed, "ProjectsInOrder")) {
+              var path = (string)get(entry, "AbsolutePath");
+              if (path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) pending.Enqueue(new KeyValuePair<string, string>(path, ""));
+            }
+          }
+          while (pending.Count > 0 && !fallback) {
+            var next = pending.Dequeue();
+            var path = Path.GetFullPath(next.Key);
+            if (!seen.Add(path + "\n" + next.Value)) continue;
+            var globals = new Dictionary<string, string> { { "Configuration", Configuration } };
+            if (next.Value != "") globals["TargetFramework"] = next.Value;
+            var evaluated = collectionType.GetMethod("LoadProject", new[] { typeof(string), typeof(IDictionary<string, string>), typeof(string) })
+              .Invoke(collection, new object[] { path, globals, null });
+            var type = evaluated.GetType();
+            var directory = (string)get(evaluated, "DirectoryPath");
+            addRoot(directory);
+            var documents = new List<object> { get(evaluated, "Xml") };
+            foreach (var imported in (IEnumerable)get(evaluated, "Imports"))
+              documents.Add(get(imported, "ImportedProject"));
+            var packageFolders = ((string)type.GetMethod("GetPropertyValue").Invoke(evaluated, new object[] { "NuGetPackageFolders" })
+                + ";" + (string)type.GetMethod("GetPropertyValue").Invoke(evaluated, new object[] { "NuGetPackageRoot" })).Split(';');
+            foreach (var document in documents) {
+              var defining = (string)get(document, "FullPath");
+              // Package build props are authored inputs, even inside an excluded or external cache.
+              bool packageDocument = Array.Exists(packageFolders, folder => folder != ""
+                  && defining.StartsWith(Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + "/", StringComparison.Ordinal));
+              if (!packageDocument && (!defining.StartsWith(WorkspaceRoot + "/", StringComparison.Ordinal)
+                  || defining.StartsWith(WorkspaceRoot + "/.cook/", StringComparison.Ordinal)
+                  || defining.IndexOf("/obj/", StringComparison.Ordinal) >= 0
+                  || defining.IndexOf("/bin/", StringComparison.Ordinal) >= 0
+                  || defining.StartsWith(Artifacts + "/", StringComparison.Ordinal))) continue;
+              foreach (var element in (IEnumerable)get(document, "AllChildren")) {
+                var condition = (string)get(element, "Condition");
+                var text = (string)get(element, "OuterElement");
+                if ((string)get(element, "ElementName") == "Import" || !string.IsNullOrEmpty(condition)
+                    || (text != null && (text.Contains("$(") || text.Contains("@(") || text.Contains("%(")))) { fallback = true; break; }
+              }
+              if (fallback) break;
+            }
+            if (fallback) break;
+            var globType = assembly.GetType("Microsoft.Build.Globbing.MSBuildGlob");
+            foreach (var glob in (IEnumerable)type.GetMethod("GetAllGlobs", Type.EmptyTypes).Invoke(evaluated, null)) {
+              foreach (string include in (IEnumerable)get(glob, "IncludeGlobs")) {
+                var parsed = globType.GetMethod("Parse", new[] { typeof(string), typeof(string) }).Invoke(null, new object[] { directory, include });
+                addRoot((string)get(parsed, "FixedDirectoryPart"));
+              }
+            }
+            foreach (string kind in new[] { "ProjectReference", "Compile", "Content", "EmbeddedResource", "None", "AdditionalFiles", "Analyzer", "EditorConfigFiles", "RazorComponent" }) {
+              foreach (var item in (IEnumerable)type.GetMethod("GetItems").Invoke(evaluated, new object[] { kind })) {
+                var file = (string)item.GetType().GetMethod("GetMetadataValue").Invoke(item, new object[] { "FullPath" });
+                if (file == "") continue;
+                addRoot(Path.GetDirectoryName(file));
+                // Leave the established graph query to diagnose out-of-workspace references.
+                if (kind == "ProjectReference" && file.StartsWith(WorkspaceRoot + "/", StringComparison.Ordinal))
+                  pending.Enqueue(new KeyValuePair<string, string>(file, ""));
+              }
+            }
+            if (next.Value == "") {
+              var frameworks = (string)type.GetMethod("GetPropertyValue").Invoke(evaluated, new object[] { "TargetFrameworks" });
+              if (frameworks == "") frameworks = (string)type.GetMethod("GetPropertyValue").Invoke(evaluated, new object[] { "TargetFramework" });
+              foreach (var framework in frameworks.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)) pending.Enqueue(new KeyValuePair<string, string>(path, framework));
+            }
+          }
+        } finally { ((IDisposable)collection).Dispose(); }
+        if (fallback) { roots.Clear(); roots.Add(ScanRoot); }
+        var result = new List<Microsoft.Build.Framework.ITaskItem>();
+        foreach (var path in roots) result.Add(new Microsoft.Build.Utilities.TaskItem(path));
+        Roots = result.ToArray();
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="CookInventory">
+    <CookInventory Solution="$(Solution)" Configuration="$(Configuration)" WorkspaceRoot="$(WorkspaceRoot)" ScanRoot="$(ScanRoot)" Artifacts="$(Artifacts)">
+      <Output TaskParameter="Roots" ItemName="CookInventoryRoots" />
+    </CookInventory>
+  </Target>
+</Project>
+]=]
+    local code = ([=[
+local solution, configuration, root, artifacts, project = %q, %q, %q, %q, %q
+local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+local cwd = cook.sh("pwd"):gsub("%%s+$", "")
+local dotnet = assert(cook.tools.id("dotnet"), "[cook_dotnet] dotnet not on PATH").path
+local environment = "DOTNET_CLI_HOME=" .. quote(cwd .. "/.cook/dotnet/home")
+    .. " NUGET_PACKAGES=" .. quote(cwd .. "/.cook/dotnet/packages")
+    .. " DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 DOTNET_CLI_UI_LANGUAGE=en "
+local command = 'work=$(mktemp -d); trap \'rm -rf -- "$work"\' EXIT; printf %%s '
+    .. quote(project) .. ' >"$work/inventory.proj"; ' .. environment .. quote(dotnet)
+    .. ' msbuild "$work/inventory.proj" -nologo -target:CookInventory -getItem:CookInventoryRoots'
+    .. " -property:Solution=" .. quote(cwd .. "/" .. solution)
+    .. " -property:Configuration=" .. quote(configuration)
+    .. " -property:WorkspaceRoot=" .. quote(cwd)
+    .. " -property:ScanRoot=" .. quote(root == "." and cwd or cwd .. "/" .. root)
+    .. " -property:Artifacts=" .. quote(cwd .. "/" .. artifacts)
+local raw = cook.sh(command)
+local value = cook.json_decode(raw:match("({.*})%%s*$") or raw)
+local roots = {}
+for _, item in ipairs(assert(value.Items, "missing native inventory items").CookInventoryRoots or {}) do
+    local path = item.Identity
+    if path == cwd then roots[#roots + 1] = "."
+    elseif path:sub(1, #cwd + 1) == cwd .. "/" then roots[#roots + 1] = path:sub(#cwd + 2) end
+end
+table.sort(roots)
+-- A parent root already covers every child, without duplicating scans.
+local compact = {}
+for _, path in ipairs(roots) do
+    local prior = compact[#compact]
+    if not prior or (prior ~= "." and path:sub(1, #prior + 1) ~= prior .. "/") then compact[#compact + 1] = path end
+end
+return { roots = compact }
+]=]):format(solution, configuration, root, artifacts, project)
+    return assert(load(code, "@cook_dotnet.inventory", "t", _ENV))
+end
+
 function M.producer(solution, configuration, inventory)
     local code = ([=[
 local solution, configuration, query_items, inventory = %q, %q, %q, %q
