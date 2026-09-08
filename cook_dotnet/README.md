@@ -5,6 +5,15 @@
 frameworks. The coarse `build` maker below retains a conservative empty-artifacts
 build on each Cook cache miss; use `workspace` for project-level reuse.
 
+Version `0.5.0-1` provides the daily `workspace` workflow: select a project, build
+it, inspect reuse with `cook why`, then run or test against current dependency
+outputs. Missing restore/build state is recovered automatically; ordinary edits
+do not require a manual clean. MSBuild remains responsible for project semantics
+and compilation, while Cook decides which work and artifacts can be reused.
+Native test failures also propagate through generic `cook test`. The examples and
+regression proofs below cover Linux with .NET SDK 8 and 10; other platforms have
+not been validated by this release.
+
 ```cook
 use cook_dotnet
 
