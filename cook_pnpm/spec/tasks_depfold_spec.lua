@@ -9,8 +9,8 @@
 --          (make format) — dep content folds with zero settle runs.
 --   CHECK  gains a defaulted {"^build"} edge (strict: batch-minted
 --          targets only) and the dep dirs as ready-time glob inputs.
---   ENV    cfg.env / workspace env lower to consulted_env_keys on build
---          units (§17.1.2.1 auto-fold); env on a check is an error.
+--   ENV    cfg.env / workspace env seal one pnpm:env:<NAME> probe per
+--          variable on build AND check units (unset / empty / value).
 
 local stub = require("cook_stub")
 
@@ -125,33 +125,82 @@ describe("cook_pnpm 0.4 dependency-output folding + env", function()
         assert.same({}, r.opts.requires)
     end)
 
-    it("lowers workspace env + task env to consulted_env_keys on builds", function()
+    it("seals declared env vars on builds AND checks, registered before any recipe body", function()
+        -- A probe first registered inside a recipe body is not scheduled
+        -- for another recipe's unit that seals it.
+        local in_body, in_body_probes = false, {}
+        local recipe, probe = cook.recipe, cook.probe
+        cook.recipe = function(name, opts, body)
+            return recipe(name, opts, function(...)
+                in_body = true
+                local ok, err = pcall(body, ...)
+                in_body = false
+                if not ok then error(err, 0) end
+            end)
+        end
+        cook.probe = function(key, opts)
+            if in_body then in_body_probes[key] = true end
+            return probe(key, opts)
+        end
         bootstrap_two_pkg_workspace()
-        workspace.bootstrap({})
+        local result = workspace.bootstrap({})
         tasks.mint_from_workspace({
             env    = { "CI" },
             tasks  = {
                 build = { outputs = { "dist/**" } },
                 ["@scope/app#build"] = { outputs = { "dist/**" },
-                                         env = { "API_URL" } },
+                                         env = { "API_URL", "CI" } },
+                typecheck = { kind = "check", env = { "NODE_ENV" } },
             },
             checks = false,
         })
 
-        assert.same({ "CI" },
-            unit_for("--filter @scope/lib run build").consulted_env_keys)
-        assert.same({ "CI", "API_URL" },
-            unit_for("--filter @scope/app run build").consulted_env_keys)
+        local id = "pnpm:toolchain:auto:identity"
+        assert.same({ id, result.install_key, "pnpm:env:CI" },
+            unit_for("--filter @scope/lib run build").seal)
+        assert.same({ id, result.install_key, "pnpm:env:CI", "pnpm:env:API_URL" },
+            unit_for("--filter @scope/app run build").seal, "duplicates collapse")
+        assert.same({ id, "pnpm:env:CI", "pnpm:env:NODE_ENV" },
+            test_for("--filter @scope/app run typecheck").seal)
+        assert.is_nil(unit_for("--filter @scope/app run build").consulted_env_keys)
+        for _, k in ipairs({ "pnpm:env:CI", "pnpm:env:API_URL", "pnpm:env:NODE_ENV" }) do
+            assert.is_not_nil(stub.probe_opts(k), k .. " registered")
+            assert.is_nil(in_body_probes[k], k .. " must be registered outside any recipe body")
+        end
     end)
 
-    it("rejects env on a check at register time", function()
+    it("keys unset, empty, and a value apart, reading only the declared name", function()
+        bootstrap_two_pkg_workspace()
+        workspace.bootstrap({})
+        tasks.mint_from_workspace({
+            env = { "NODE_ENV" }, tasks = { build = { outputs = { "dist/**" } } }, checks = false,
+        })
+        local produce = stub.probe_opts("pnpm:env:NODE_ENV").produce
+        local function value_with(envtbl)
+            local asked = {}
+            local fake_os = { getenv = function(n) asked[#asked + 1] = n; return envtbl[n] end }
+            local chunk = assert(load("return (function()\n" .. produce .. "\nend)()",
+                "produce", "t", { os = fake_os }))
+            local v = chunk()
+            assert.same({ "NODE_ENV" }, asked, "reads the declared name and nothing else")
+            return v
+        end
+        local unset = value_with({})
+        local empty = value_with({ NODE_ENV = "" })
+        local dev   = value_with({ NODE_ENV = "development" })
+        assert.same({ set = false, value = "" }, unset)
+        assert.same({ set = true,  value = "" }, empty)
+        assert.same({ set = true,  value = "development" }, dev)
+    end)
+
+    it("rejects an env entry that is not a variable name", function()
         bootstrap_two_pkg_workspace()
         workspace.bootstrap({})
         assert.error_matches(function()
             tasks.mint_from_workspace({
-                tasks  = { typecheck = { kind = "check", env = { "CI" } } },
+                tasks  = { build = { outputs = { "dist/**" }, env = { "X\"); os.exit(1) --" } } },
                 checks = false,
             })
-        end, "consulted%-env surface")
+        end, "not an environment variable name")
     end)
 end)

@@ -22,13 +22,13 @@
 --                                     -- minted task's inputs (tool-written
 --                                     -- files in source dirs must not self-invalidate;
 --                                     -- also on task cfg, package-relative)
---       env      = { "CI" },          -- env keys folded into every BUILD unit's
---                                     -- key (consulted_env_keys auto-fold)
+--       env      = { "CI" },          -- env vars whose values (or unset-ness)
+--                                     -- key every minted task, builds and checks
 --       tasks    = {                  -- the task map, minted as one batch
 --           build = { outputs = { "dist/**" } },
 --           ["@scope/web#build"] =    -- per-package override: REPLACES the base
 --               { outputs = { ".next/**" },    -- cfg for that package (no merge)
---                 env = { "API_URL" } },       -- per-task consulted env
+--                 env = { "API_URL" } },       -- per-task keyed env vars
 --       },
 --       checks   = "auto",            -- auto-mint test/lint/typecheck/check-types
 --       install  = "install",         -- opt-in: mint the install recipe under

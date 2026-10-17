@@ -15,7 +15,8 @@ configured task (with Turbo-spelled
 defaults inputs safely, folds dependency-output CONTENT into every
 consumer's key — filtered to the artifact classes a task actually reads
 (discovered-inputs depfiles on builds, ready-time glob inputs on
-checks) — and lowers declared `env` keys to consulted-env folds. Shaped
+checks) — and keys every minted task on the values of its declared
+`env` variables (unset, empty and set are distinct). Shaped
 by the Cap port (Turborepo replaced on a 25-project workspace) and by
 refinedev/refine. Surface may still shift before the Standard chapter
 §29 lands. Tracked in cliban under project `COOK`, milestone
@@ -44,6 +45,7 @@ register
         pm       = "pnpm@10",
         requires = { "wasm" },      -- non-pnpm producer recipes (see below)
         inputs   = { ".env" },      -- root-relative extras, every task (see below)
+        env      = { "NODE_ENV" },  -- env vars whose values key every task
         tasks    = {
             build = {
                 depends_on = { "^build" },      -- ^X = X in workspace deps

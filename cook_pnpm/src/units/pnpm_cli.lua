@@ -23,7 +23,7 @@ function M.install(opts)
     if not snap.install_key then
         error("[pnpm.install] pnpm.workspace(...) must be called first", 2)
     end
-    local seal = toolchain.seals({ snap.install_key })   -- outside the body (units.tasks)
+    local seal = toolchain.seals({ snap.install_key })   -- outside the body (COOK-587)
     cook.recipe(opts.name or "pnpm:install", { requires = opts.requires or {} }, function()
         cook.add_unit({
             inputs  = { (snap.root_dir or ".") .. "/pnpm-lock.yaml" },
@@ -54,7 +54,7 @@ function M.run(pkg_name, script, opts)
 
     -- Solo workspace (0.8): no --filter — there is no workspace to filter.
     local filter = pkg.solo and "" or ("--filter " .. pkg.name .. " ")
-    local seal = toolchain.seals({ snap.install_key })   -- outside the body (units.tasks)
+    local seal = toolchain.seals({ snap.install_key })   -- outside the body (COOK-587)
     cook.recipe(r_name, { requires = opts.requires or {} }, function()
         cook.add_unit({
             inputs  = inputs,

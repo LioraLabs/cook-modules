@@ -113,8 +113,13 @@ end
 
 -- The seal set of EVERY unit cook_pnpm mints (task builds and checks,
 -- install, run): the toolchain identity, then the unit's own sealed
--- determinants (`extra`, e.g. the install probe). One function so an
--- observed determinant reaches every minted unit or none.
+-- determinants (`extra`: the install probe, declared `pnpm:env:<NAME>`
+-- probes from units.tasks). One function so an observed determinant
+-- reaches every minted unit or none. It lives here because the identity
+-- is the one seal every unit shares; the per-unit probes stay with their
+-- owners. Call it OUTSIDE recipe bodies: a probe first registered inside
+-- one recipe's body is not scheduled for another recipe's unit that
+-- seals it, and the seal keys on nothing (COOK-587).
 function M.seals(extra)
     local out = { M.ensure_identity_registered() }
     for _, k in ipairs(extra or {}) do out[#out + 1] = k end

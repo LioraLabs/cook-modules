@@ -53,13 +53,15 @@
 -- a "!" entry would resolve as a literal path and silently match
 -- nothing. The inputs-side counterpart lives in units.excludes.
 --
--- Env (0.4): `env = { "VAR", ... }` on a BUILD task cfg (and/or
--- workspace-level `env`, folded into every build unit) lowers to
--- `consulted_env_keys` — the auto-fold path §17.1.2.1 prescribes for
--- variables the command consumes; no probe needed. Test units have no
--- consulted-env surface (CS-0127), so `env` on a check is a
--- register-time error and workspace-level env skips checks.
---
+-- Env: `env = { "VAR", ... }` on a task cfg (and/or workspace-level
+-- `env`, applied to every minted task) keys the unit on each declared
+-- variable's value — builds and checks alike. The engine folds no ambient
+-- environment into a key (only `var.*` config), so each name becomes a
+-- shell probe `pnpm:env:<NAME>` = { set, value } (CS-0244's replacement
+-- for probe-level env inputs) sealed through toolchain.seals(). `set`
+-- keeps "unset" and "set to empty" apart. Only declared names are read,
+-- never the whole environment.
+
 -- `consumes` (0.7): basename globs naming the dependency artifact
 -- classes this task actually reads, filtering the dep-output content
 -- fold — see units.depfold for why a whole-directory fold silently
@@ -154,6 +156,28 @@ local function build_command_for(pkg, task_name)
     return "$<" .. key .. ".pnpm> " .. filter_arg(pkg) .. "run " .. task_name
 end
 
+-- One probe per declared variable, so the probe and its key are shared by
+-- every unit that names it. The name is spliced into a produce body, so
+-- anything but a POSIX identifier is refused.
+local env_registered = {}
+local function env_probe_key(name)
+    if type(name) ~= "string" or not name:match("^[A-Za-z_][A-Za-z0-9_]*$") then
+        error("[pnpm.task] env entry " .. string.format("%q", tostring(name))
+              .. " is not an environment variable name ([A-Za-z_][A-Za-z0-9_]*)", 4)
+    end
+    local key = "pnpm:env:" .. name
+    if not env_registered[key] then
+        cook.probe(key, {
+            produce = string.format([[
+                local v = os.getenv(%q)
+                return { set = v ~= nil, value = v or "" }
+            ]], name),
+        })
+        env_registered[key] = true
+    end
+    return key
+end
+
 -- Mint one (pkg, task) recipe. `cfg` is the per-task opts; `ctx` carries
 -- the batch-wide knowledge: by_name, install_key, lockfile, workspace
 -- requires, and the union of this package's declared outputs.
@@ -168,13 +192,6 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
         error("[pnpm.task] task '" .. task_name .. "' declares outputs but kind "
               .. "= \"check\"; a check unit produces no artifacts — drop the "
               .. "outputs or use kind = \"build\"", 3)
-    end
-    if kind == "check" and cfg.env then
-        error("[pnpm.task] task '" .. task_name .. "' declares env but is a "
-              .. "check — engine test units (step_kind = \"test\", CS-0127/"
-              .. "CS-0185) have no "
-              .. "consulted-env surface; make it a build (declare outputs) or "
-              .. "drop env", 3)
     end
     -- `consumes` on a check lowers onto the test unit (§17.4 rule
     -- 1, CS-0175). It was a register-time error while no engine could
@@ -235,8 +252,16 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
     -- Resolved HERE, outside the recipe body: a probe first registered
     -- inside one recipe's body is not scheduled for another recipe's unit
     -- that seals it (`cook test` may never run the registering body), and
-    -- the seal then silently keys on nothing.
-    local seal = toolchain.seals(kind == "build" and { ctx.install_key } or nil)
+    -- the seal then silently keys on nothing (COOK-587).
+    local extra, seen = {}, {}
+    if kind == "build" then extra[1] = ctx.install_key end
+    for _, list in ipairs({ ctx.workspace_env or {}, cfg.env or {} }) do
+        for _, name in ipairs(list) do
+            local key = env_probe_key(name)
+            if not seen[key] then seen[key] = true; extra[#extra + 1] = key end
+        end
+    end
+    local seal = toolchain.seals(extra)
 
     -- Data-driven fan-out carve-out (explicit-recipes contract): minted
     -- names the user never wrote must carry origin metadata so `cook
@@ -281,11 +306,6 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
                           .. depfold.depfile_command(rel_dirs, dpath, predicate)
                 discovered = { from = dpath, format = "make" }
             end
-            -- Consulted env: workspace-level keys + per-task keys, in that
-            -- order (§17.1.2.1 auto-fold; values fold, dup keys harmless).
-            local env_keys = {}
-            for _, k in ipairs(ctx.workspace_env or {}) do env_keys[#env_keys + 1] = k end
-            for _, k in ipairs(cfg.env or {}) do env_keys[#env_keys + 1] = k end
             cook.add_unit({
                 inputs   = unit_inputs,
                 outputs  = globs.anchor_globs(outputs, pkg.dir, false),
@@ -297,7 +317,6 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
                 probes   = { toolchain.get_probe_key() },
                 seal     = seal,
                 discovered_inputs  = discovered,
-                consulted_env_keys = (#env_keys > 0) and env_keys or nil,
             })
         else
             local unit_inputs = {}
