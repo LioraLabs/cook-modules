@@ -27,6 +27,9 @@
 --          PATH, and the lockfile determinant rides as a declared INPUT
 --          (content-fingerprinted) rather than a seal.
 --
+-- Both shapes seal toolchain.seals() — the toolchain identity probe
+-- (node/pnpm versions), so a toolchain change re-keys every minted unit.
+--
 -- `requires` (0.2.1, the polyglot escape hatch): extra recipe names
 -- appended verbatim to every minted recipe. When a pnpm task reads files
 -- produced by a non-pnpm recipe (a wasm-pack step, codegen, a Rust
@@ -229,6 +232,12 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
 
     local r_name = recipe_name(pkg, task_name)
 
+    -- Resolved HERE, outside the recipe body: a probe first registered
+    -- inside one recipe's body is not scheduled for another recipe's unit
+    -- that seals it (`cook test` may never run the registering body), and
+    -- the seal then silently keys on nothing.
+    local seal = toolchain.seals(kind == "build" and { ctx.install_key } or nil)
+
     -- Data-driven fan-out carve-out (explicit-recipes contract): minted
     -- names the user never wrote must carry origin metadata so `cook
     -- list` attributes them to the call that created them (CS-0143).
@@ -281,12 +290,12 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
                 inputs   = unit_inputs,
                 outputs  = globs.anchor_globs(outputs, pkg.dir, false),
                 command  = command,
-                -- Toolchain probe is consumed as DATA (the command
-                -- interpolates the binary path — §12.7.4); the install
-                -- probe is a deterministic, invalidate-only determinant
-                -- (lockfile content hash) → carried as a seal (§12.7.5).
+                -- The toolchain path probe is consumed as DATA (the
+                -- command interpolates the binary path — §12.7.4) and
+                -- never keys (§22.5.7); its identity and the install
+                -- probe (lockfile content hash) key the unit as seals.
                 probes   = { toolchain.get_probe_key() },
-                seal     = { ctx.install_key },
+                seal     = seal,
                 discovered_inputs  = discovered,
                 consulted_env_keys = (#env_keys > 0) and env_keys or nil,
             })
@@ -294,9 +303,9 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
             local unit_inputs = {}
             for _, g in ipairs(input_globs) do unit_inputs[#unit_inputs + 1] = g end
             unit_inputs[#unit_inputs + 1] = pkg.dir .. "/package.json"
-            -- The lockfile is a declared input (content-fingerprinted):
-            -- test units take no seal field, and their commands get no
-            -- probe substitution (CS-0127) — plain `pnpm` from PATH.
+            -- The lockfile is a declared input (content-fingerprinted);
+            -- the command runs plain `pnpm` from PATH, keyed on the
+            -- toolchain identity through toolchain.seals().
             unit_inputs[#unit_inputs + 1] = ctx.lockfile
             -- Dep artifacts as ready-time glob inputs (units.depfold): the
             -- ^build edge above guarantees they exist before resolution.
@@ -329,6 +338,7 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
                 -- expressible as one. A check only stops re-keying on
                 -- sourcemaps if its cfg names what it reads.
                 consumes = cfg.consumes,
+                seal    = seal,
                 line    = 0,
             })
         end

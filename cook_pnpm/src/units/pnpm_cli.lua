@@ -23,15 +23,16 @@ function M.install(opts)
     if not snap.install_key then
         error("[pnpm.install] pnpm.workspace(...) must be called first", 2)
     end
+    local seal = toolchain.seals({ snap.install_key })   -- outside the body (units.tasks)
     cook.recipe(opts.name or "pnpm:install", { requires = opts.requires or {} }, function()
         cook.add_unit({
             inputs  = { (snap.root_dir or ".") .. "/pnpm-lock.yaml" },
             outputs = {},
             command = "$<" .. toolchain.get_probe_key() .. ".pnpm> install --frozen-lockfile ",
-            -- toolchain: data-consumed (§12.7.4); install: invalidate-only
-            -- lockfile-hash determinant → seal (§12.7.5).
+            -- toolchain paths: data-consumed (§12.7.4), never keyed
+            -- (§22.5.7); toolchain identity + install lockfile hash: seals.
             probes  = { toolchain.get_probe_key() },
-            seal    = { snap.install_key },
+            seal    = seal,
         })
     end)
     return opts.name or "pnpm:install"
@@ -53,16 +54,17 @@ function M.run(pkg_name, script, opts)
 
     -- Solo workspace (0.8): no --filter — there is no workspace to filter.
     local filter = pkg.solo and "" or ("--filter " .. pkg.name .. " ")
+    local seal = toolchain.seals({ snap.install_key })   -- outside the body (units.tasks)
     cook.recipe(r_name, { requires = opts.requires or {} }, function()
         cook.add_unit({
             inputs  = inputs,
             outputs = opts.outputs or {},
             command = "$<" .. toolchain.get_probe_key() .. ".pnpm> " .. filter
                       .. "run " .. script .. " ",
-            -- toolchain: data-consumed (§12.7.4); install: invalidate-only
-            -- lockfile-hash determinant → seal (§12.7.5).
+            -- toolchain paths: data-consumed (§12.7.4), never keyed
+            -- (§22.5.7); toolchain identity + install lockfile hash: seals.
             probes  = { toolchain.get_probe_key() },
-            seal    = { snap.install_key },
+            seal    = seal,
         })
     end)
     return r_name

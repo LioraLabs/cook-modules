@@ -88,6 +88,39 @@ function M.get_probe_key()
     return probe_key()
 end
 
+-- The toolchain's IDENTITY: { node_version, pnpm_version } read off the
+-- path probe above. This is the key minted units SEAL — a `probes`
+-- reference only orders and substitutes, it never keys (§22.5.7) — and it
+-- is a separate, path-free probe because a resolved path is location, not
+-- identity: sealing it would re-key every unit across install locations
+-- and machines (the CS-0157 portability rule). Reads the path probe via
+-- `requires`, so node/pnpm are still asked once per invocation.
+function M.ensure_identity_registered()
+    M.ensure_probe_registered()
+    local tool_key = probe_key()
+    local key = tool_key .. ":identity"
+    if state.probe_registered[key] then return key end
+    cook.probe(key, {
+        inputs = { requires = { tool_key } },
+        produce = string.format([[
+            local t = cook.probes.get(%q)
+            return { node_version = t.node_version, pnpm_version = t.pnpm_version }
+        ]], tool_key),
+    })
+    state.probe_registered[key] = true
+    return key
+end
+
+-- The seal set of EVERY unit cook_pnpm mints (task builds and checks,
+-- install, run): the toolchain identity, then the unit's own sealed
+-- determinants (`extra`, e.g. the install probe). One function so an
+-- observed determinant reaches every minted unit or none.
+function M.seals(extra)
+    local out = { M.ensure_identity_registered() }
+    for _, k in ipairs(extra or {}) do out[#out + 1] = k end
+    return out
+end
+
 function M.set(opts)
     opts = opts or {}
     if opts.pm   then state.pin_pm   = opts.pm   end

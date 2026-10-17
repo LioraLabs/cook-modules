@@ -90,7 +90,7 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
         assert.equals(2, #stub.added_tests())
     end)
 
-    it("carries the lockfile + package.json as CHECK inputs (no seal field on test units)", function()
+    it("carries the lockfile + package.json as CHECK inputs", function()
         bootstrap_two_pkg_workspace()
         workspace.bootstrap({})
         tasks.task("lint", {})   -- only @scope/web declares lint
@@ -105,7 +105,48 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
         assert.is_true(has_lock,
             "lockfile must be a declared input — the check's install determinant")
         assert.is_true(has_manifest)
-        assert.is_nil(t.seal, "test units take no seal field")
+    end)
+
+    it("seals the toolchain identity on BUILD and CHECK units (§22.5.7: probes never key)", function()
+        local registered_before_bodies   -- snapshot at the FIRST recipe call
+        local recipe = cook.recipe
+        cook.recipe = function(name, opts, body)
+            if not registered_before_bodies then
+                registered_before_bodies = {}
+                for _, k in ipairs(stub.probe_keys()) do registered_before_bodies[k] = true end
+            end
+            return recipe(name, opts, body)
+        end
+        bootstrap_two_pkg_workspace()
+        local result = workspace.bootstrap({})
+        tasks.task("build", { outputs = { ".next/**" } })
+        tasks.task("lint", {})
+
+        local id = "pnpm:toolchain:auto:identity"
+        assert.is_true(registered_before_bodies[id] == true,
+            "the sealed probe must be registered outside any recipe body — "
+            .. "the engine does not schedule one registered in another recipe's body")
+        local web = unit_for("@scope/web")
+        assert.same({ id, result.install_key }, web.seal)
+        assert.same({ "pnpm:toolchain:auto" }, web.probes,
+            "the path probe stays a substitution-only data probe")
+        assert.same({ id }, test_for("@scope/web").seal)
+
+        -- The identity is path-free: it reads versions off the path probe.
+        local opts = stub.probe_opts(id)
+        assert.same({ "pnpm:toolchain:auto" }, opts.inputs.requires)
+        assert.is_not_nil(opts.produce:find("node_version", 1, true))
+        assert.is_nil(opts.produce:find("t.node,", 1, true))
+
+        -- The low-level install / run units are minted units too.
+        local pnpm_cli = require("cook_pnpm.units.pnpm_cli")
+        local before = #stub.added_units()
+        pnpm_cli.install({})
+        pnpm_cli.run("@scope/web", "lint", { recipe_name = "web-lint" })
+        local units = stub.added_units()
+        assert.equals(before + 2, #units)
+        assert.same({ id, result.install_key }, units[before + 1].seal)
+        assert.same({ id, result.install_key }, units[before + 2].seal)
     end)
 
     it("rejects kind=\"check\" with declared outputs", function()
@@ -133,7 +174,7 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
 
         local web = unit_for("@scope/web")
         assert.is_not_nil(web)
-        assert.same({ result.install_key }, web.seal,
+        assert.same({ "pnpm:toolchain:auto:identity", result.install_key }, web.seal,
             "install probe must be sealed, not consumed as a data probe")
         for _, k in ipairs(web.probes or {}) do
             assert.is_nil(k:match("^pnpm:install:"),
