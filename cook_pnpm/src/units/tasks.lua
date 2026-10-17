@@ -259,7 +259,7 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
     if kind == "build" then extra[1] = ctx.install_key end
     for _, list in ipairs({ ctx.workspace_env or {}, cfg.env or {} }) do
         if type(list) ~= "table" then
-            error("[pnpm.task] env must be a list of variable names, e.g. env = { \"NODE_ENV\" }", 2)
+            error("[pnpm.task] env must be a list of variable names, e.g. env = { \"NODE_ENV\" }", 3)
         end
         for _, name in ipairs(list) do
             local key = env_probe_key(name)
