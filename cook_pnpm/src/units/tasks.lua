@@ -1,7 +1,7 @@
 -- cook_pnpm.units.tasks — pnpm task minting: recipes, build units, check units
 -- domain:  units — builds commands and registers work on the engine
--- effects: cook.recipe, cook.add_unit, fs.glob
--- std:     §8.6, §17.4, §17.1.2.1
+-- effects: cook.recipe, cook.add_unit, cook.probe, fs.glob
+-- std:     §8.6, §17.4
 --
 -- Two unit shapes, inferred from declared outputs (override with
 -- `kind = "build" | "check"`):
@@ -57,11 +57,11 @@
 -- `env`, applied to every minted task) keys the unit on each declared
 -- variable's value — builds and checks alike. The engine folds no ambient
 -- environment into a key (only `var.*` config), so each name becomes a
--- shell probe `pnpm:env:<NAME>` = { set, value } (CS-0244's replacement
+-- probe `pnpm:env:<NAME>` = { set, value } (CS-0244's replacement
 -- for probe-level env inputs) sealed through toolchain.seals(). `set`
 -- keeps "unset" and "set to empty" apart. Only declared names are read,
 -- never the whole environment.
-
+--
 -- `consumes` (0.7): basename globs naming the dependency artifact
 -- classes this task actually reads, filtering the dep-output content
 -- fold — see units.depfold for why a whole-directory fold silently
@@ -157,8 +157,10 @@ local function build_command_for(pkg, task_name)
 end
 
 -- One probe per declared variable, so the probe and its key are shared by
--- every unit that names it. The name is spliced into a produce body, so
--- anything but a POSIX identifier is refused.
+-- every unit that names it. The name must be a POSIX env-var name (the
+-- variable grammar), and it becomes a probe-key segment, whose alphabet
+-- the sigil resolver restricts (see `sanitize` in toolchain/init.lua).
+-- `%q` keeps the produce-body splice safe regardless.
 local env_registered = {}
 local function env_probe_key(name)
     if type(name) ~= "string" or not name:match("^[A-Za-z_][A-Za-z0-9_]*$") then
@@ -256,6 +258,9 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
     local extra, seen = {}, {}
     if kind == "build" then extra[1] = ctx.install_key end
     for _, list in ipairs({ ctx.workspace_env or {}, cfg.env or {} }) do
+        if type(list) ~= "table" then
+            error("[pnpm.task] env must be a list of variable names, e.g. env = { \"NODE_ENV\" }", 2)
+        end
         for _, name in ipairs(list) do
             local key = env_probe_key(name)
             if not seen[key] then seen[key] = true; extra[#extra + 1] = key end

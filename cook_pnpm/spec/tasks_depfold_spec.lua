@@ -203,4 +203,19 @@ describe("cook_pnpm 0.4 dependency-output folding + env", function()
             })
         end, "not an environment variable name")
     end)
+
+    it("rejects a non-list env, task-level and workspace-level", function()
+        bootstrap_two_pkg_workspace()
+        workspace.bootstrap({})
+        assert.error_matches(function()
+            tasks.mint_from_workspace({
+                tasks = { build = { outputs = { "dist/**" }, env = "NODE_ENV" } }, checks = false,
+            })
+        end, "env must be a list of variable names")
+        assert.error_matches(function()
+            tasks.mint_from_workspace({
+                env = "NODE_ENV", tasks = { build = { outputs = { "dist/**" } } }, checks = false,
+            })
+        end, "env must be a list of variable names")
+    end)
 end)
