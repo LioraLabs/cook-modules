@@ -10,3 +10,5 @@
 
 # Local worktrees for isolated feature work
 .worktrees/
+.env
+.env.local
