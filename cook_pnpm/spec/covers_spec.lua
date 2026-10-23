@@ -12,14 +12,16 @@ local function load()
     end
 end
 
--- tool -> { found = "/path/to/bin/tool", real = readlink -f result or nil }
+-- tool -> { real = readlink -f result, or nil when the tool is missing or readlink fails }
 local function host(tools)
-    for tool, t in pairs(tools) do
-        stub.set_tool_path(tool, t.found)
-        stub.set_sh_handler("readlink -f '" .. t.found .. "'", function()
-            return t.real and (t.real .. "\n") or ""
-        end)
-    end
+    stub.set_sh_handler("for t in pnpm node", function()
+        local out = {}
+        for _, tool in ipairs({ "pnpm", "node" }) do
+            local t = tools[tool]
+            if t and t.real then out[#out + 1] = tool .. "\t" .. t.real .. "\n" end
+        end
+        return table.concat(out)
+    end)
 end
 
 describe("install probe covers", function()
@@ -57,8 +59,8 @@ describe("toolchain identity probe covers", function()
 
     it("lists the install dirs of pnpm and node; the path probe has none", function()
         host({
-            pnpm = { found = "/opt/n/bin/pnpm", real = "/opt/n/lib/node_modules/pnpm/bin/pnpm.cjs" },
-            node = { found = "/opt/n/bin/node", real = "/opt/n/bin/node" },
+            pnpm = { real = "/opt/n/lib/node_modules/pnpm/bin/pnpm.cjs" },
+            node = { real = "/opt/n/bin/node" },
         })
         assert.same({ "/opt/n/lib/node_modules/pnpm", "/opt/n" }, covers())
         assert.is_nil(stub.probe_opts("pnpm:toolchain:auto").covers)
@@ -67,21 +69,21 @@ describe("toolchain identity probe covers", function()
     it("skips top-level dirs, / and $HOME, and tools that do not resolve", function()
         local home = os.getenv("HOME") or "/home/x"
         host({
-            pnpm = { found = "/usr/bin/pnpm", real = nil },          -- readlink fails
-            node = { found = "/usr/bin/node", real = "/usr/bin/node" }, -- /usr: too broad
+            pnpm = { real = nil },                       -- readlink fails
+            node = { real = "/usr/bin/node" },           -- /usr: too broad
         })
         assert.same({}, covers())
 
         load()
         host({
-            pnpm = { found = home .. "/bin/pnpm", real = home .. "/bin/pnpm" }, -- $HOME
-            node = { found = "/bin/node", real = "/bin/node" },                -- /
+            pnpm = { real = home .. "/bin/pnpm" }, -- $HOME
+            node = { real = "/bin/node" },                -- /
         })
         assert.same({}, covers())
     end)
 
     it("a tool missing from PATH yields no entry", function()
-        host({ node = { found = "/opt/n/bin/node", real = "/opt/n/bin/node" } })
+        host({ node = { real = "/opt/n/bin/node" } })
         assert.same({ "/opt/n" }, covers())
     end)
 end)

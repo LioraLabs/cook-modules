@@ -88,6 +88,24 @@ function M.get_probe_key()
     return probe_key()
 end
 
+-- Install dirs of pnpm and node (`command -v` -> symlink target -> parent
+-- of its bin/). Audit-only input: any failure just yields no entry.
+local function tool_covers()
+    -- Fixed-literal script: no path is ever interpolated into shell text.
+    local out = cook.sh([[for t in pnpm node; do p=$(command -v "$t") && p=$(readlink -f "$p") && printf '%s\t%s\n' "$t" "$p"; done 2>/dev/null]])
+    local covers = {}
+    for line in out:gmatch("[^\n]+") do
+        local real = line:match("^%w+\t(/.+)$")
+        local dir = real and real:match("^(.*)/[^/]+$")
+        if dir and dir:match("/bin$") then dir = dir:match("^(.*)/bin$") end
+        -- Mirrors the engine's registration refusal: `/`, a top-level dir, $HOME.
+        if dir and dir:match("^/[^/]+/.") and dir ~= os.getenv("HOME") then
+            covers[#covers + 1] = dir
+        end
+    end
+    return covers
+end
+
 -- The toolchain's IDENTITY: { node_version, pnpm_version } read off the
 -- path probe above. This is the key minted units SEAL — a `probes`
 -- reference only orders and substitutes, it never keys (§22.5.7) — and it
@@ -95,27 +113,6 @@ end
 -- identity: sealing it would re-key every unit across install locations
 -- and machines (the CS-0157 portability rule). Reads the path probe via
 -- `requires`, so node/pnpm are still asked once per invocation.
--- Install dir of a tool (`command -v` -> symlink target -> parent of its
--- bin/), or nil. Audit-only input: any failure just yields no entry.
-local function install_dir(tool)
-    local p = cook.sh("command -v " .. tool .. " 2>/dev/null"):match("^(%S+)")
-    if not p then return nil end
-    local real = cook.sh("readlink -f '" .. p .. "' 2>/dev/null"):match("^(%S+)")
-    local dir = real and real:match("^(.*)/[^/]+$")
-    if dir and dir:match("/bin$") then dir = dir:match("^(.*)/bin$") end
-    -- Too broad to own (engine refuses these): `/`, a top-level dir, $HOME.
-    if not dir or not dir:match("^/[^/]+/.") or dir == os.getenv("HOME") then return nil end
-    return dir
-end
-
-local function tool_covers()
-    local out = {}
-    for _, tool in ipairs({ "pnpm", "node" }) do
-        out[#out + 1] = install_dir(tool)
-    end
-    return out
-end
-
 function M.ensure_identity_registered()
     M.ensure_probe_registered()
     local tool_key = probe_key()
