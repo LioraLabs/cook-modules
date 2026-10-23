@@ -69,8 +69,9 @@ function M.compile(source, opts)
     -- §12.7.5 seal policy: fold the resolved, deterministic toolchain identity
     -- (cc:compiler:<override>), its target (cc:host:<override>) and finder
     -- results (cc:find:<name>) into the cache key as explicit, auditable
-    -- named-probe determinants. Values are pure functions of declared
-    -- tool/env inputs, and are value-folded (not candidate-tool fingerprints)
+    -- named-probe determinants. The compiler identity and finder results are
+    -- functions of declared tool/env inputs; the host is the chosen compiler's
+    -- own target report, re-observed on every run. All are value-folded (not candidate-tool fingerprints)
     -- so the key stays stable across machines with the same compiler bytes AND
     -- the same reported target. Default 'shared' disposition is correct — compile
     -- output is reproducible.

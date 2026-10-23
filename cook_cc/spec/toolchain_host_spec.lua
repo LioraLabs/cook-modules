@@ -49,7 +49,7 @@ describe("cook_cc.toolchain cc:host", function()
 
     it("returns each accepted triple verbatim", function()
         for _, t in ipairs({ "x86_64-pc-linux-gnu", "x86_64-linux-gnu", "arm64-apple-darwin24.6.0",
-                             "x86_64-w64-mingw32", "aarch64-linux-gnu" }) do
+                             "x86_64-w64-mingw32", "aarch64-linux-gnu", "wasm32-wasi", "riscv64-elf" }) do
             assert.same({ host = t }, observe("cc:host:auto", "g++", t .. "\n"))
         end
     end)
