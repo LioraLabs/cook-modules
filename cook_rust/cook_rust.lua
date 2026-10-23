@@ -221,10 +221,29 @@ function M.project(manifest)
     table.sort(identities, function(a, b) return a[2] < b[2] end)
     local tool_inputs = {}
     for i, tool in ipairs(tools) do tool_inputs[i] = tool[2] end
+    -- The HOST rustc builds for: the `host:` triple of `$RUSTC -vV`, the very
+    -- line cargo reads to learn its host. Cook infers no machine identity
+    -- (§17.1.1), so this declared probe keeps one host's artifact from serving
+    -- another (linux vs macOS, windows-gnu vs -msvc). rust:project composes it,
+    -- since `requires` orders but never folds. rustc's stderr is not redirected:
+    -- cook.sh keeps it in the failure.
+    cook.probe("rust:host", {
+        inputs = { tools = { rustc_command } },
+        produce = string.format([=[
+            local out = cook.sh(%q)
+            local hosts = {}
+            for triple in ("\n" .. out):gmatch("\nhost: ([^\r\n]*)") do hosts[#hosts + 1] = triple end
+            if not out:match("^rustc ") or #hosts ~= 1 or not hosts[1]:match("^[%%w_]+%%-[%%w_.%%-]+$") then
+                error("[cook_rust.project] could not read the host from rustc -vV: " .. out)
+            end
+            return { host = hosts[1] }
+        ]=], quote(rustc_command) .. " -vV"),
+    })
     cook.probe("rust:project", {
         inputs = {
             files = files,
             tools = tool_inputs,
+            requires = { "rust:host" },
         },
         produce = [=[
             local files = ]=] .. lua_pairs(identities) .. [=[
@@ -278,7 +297,8 @@ function M.project(manifest)
                 tool_ids[tool[1]] = assert(cook.tools.id(tool[2])).hash
             end
             return {
-                schema = 3,
+                schema = 4,
+                host = cook.probes.get("rust:host").host,
                 files = identities,
                 environment = env,
                 tools = tool_ids,

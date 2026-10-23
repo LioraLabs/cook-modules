@@ -20,11 +20,19 @@ recipe wasm
 all-features graph, active ancestor and Cargo-home configuration, rustup
 override files and environment, and the content identities of the PATH-selected
 Cargo, configured compiler wrappers, and active toolchain's real `cargo` and
-`rustc` binaries. Configuration
+`rustc` binaries, and the host triple from `rust:host`. Configuration
 and environment values are represented only by hashes; credentials are never
 serialized into the probe value.
 Registry and git dependency source trees are not included. Local package directories are tracked conservatively, excluding
 their `target/` and `.git/` directories.
+
+`rust:host` is `{ host = "<triple>" }`, the `host:` line of `$RUSTC -vV` (the
+line Cargo reads to learn its host), so a store shared across machines never
+serves one host's build to another — linux to macOS, or `windows-gnu` to
+`windows-msvc` — while the same host still hits. `rust:project` already carries
+it, so `seal rust:project` needs no second seal; `rust:host` exists once
+`cook_rust.project(...)` has run. Output that is not rustc's `-vV` with exactly one host triple is
+refused, with what rustc printed.
 
 Only one project may be registered per Cookfile. Build scripts that read
 undeclared files outside reachable local packages must be sealed separately.
