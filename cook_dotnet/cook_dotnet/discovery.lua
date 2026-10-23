@@ -33,6 +33,28 @@ return {
 ]]
 end
 
+-- The HOST the SDK builds for: its runtime identifier (RID) from `dotnet --info`,
+-- e.g. linux-x64, linux-musl-x64, osx-arm64, win-x64 — the axis restore selects
+-- RID-specific packages and apphosts on. Cook infers no machine identity, so every
+-- minted unit seals this declared value. Source-built SDKs report a distro RID
+-- (arch-x64), which only splits more finely. stderr is kept: cook.sh attributes it
+-- to the probe, so a failing dotnet reports why.
+function M.host_producer()
+    return [[
+local arches = { x64 = true, x86 = true, arm = true, arm64 = true, armel = true, armv6 = true,
+    s390x = true, ppc64le = true, riscv64 = true, loongarch64 = true }
+local tool = cook.tools.id("dotnet")
+if not tool then error("[cook_dotnet] dotnet not on PATH") end
+local out = cook.sh("'" .. tool.path:gsub("'", "'\\''") .. "' --info")
+local rid = ("\n" .. out .. "\n"):match("\n[ \t]*RID:[ \t]*([^\r\n]-)[ \t]*\r?\n") or ""
+local arch = rid:match("^%l[%l%d%.]*%-(%w+)$") or rid:match("^%l[%l%d%.]*%-musl%-(%w+)$")
+if not arches[arch] then
+    error("[cook_dotnet] could not read the host RID from dotnet --info: " .. out)
+end
+return { host = rid }
+]]
+end
+
 -- ponytail: scan native root subtrees; retain full glob predicates only if intra-project noise becomes costly.
 -- MSBuild owns include expansion. Keep its native glob roots, with the old broad
 -- inventory when authored imports, conditions, or expressions hide filesystem reads.

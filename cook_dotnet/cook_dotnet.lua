@@ -2,6 +2,8 @@ local M = { name = "cook_dotnet" }
 local discovery = require("cook_dotnet.discovery")
 local probe_registered = false
 local tool_registered = false
+-- Every unit and materializer cook_dotnet mints seals the toolchain and the host.
+local SEALS = { "dotnet:toolchain", "dotnet:host" }
 
 local function quote(s)
     return "'" .. s:gsub("'", "'\\''") .. "'"
@@ -55,13 +57,16 @@ local function ensure_toolchain()
         })
         tool_registered = true
     end
-    if probe_registered then return "dotnet:toolchain" end
+    if probe_registered then return end
     cook.probe("dotnet:toolchain", {
         inputs = { tools = { "dotnet" } },
         produce = discovery.toolchain_producer(),
     })
+    cook.probe("dotnet:host", {
+        inputs = { tools = { "dotnet" } },
+        produce = discovery.host_producer(),
+    })
     probe_registered = true
-    return "dotnet:toolchain"
 end
 
 local function check_relative(name, value, allow_dot)
@@ -124,7 +129,7 @@ function M.build(opts)
     local seen = {}; for _, input in ipairs(inputs) do seen[input] = true end
     for _, lock in ipairs(locks) do if not seen[lock] then inputs[#inputs + 1], seen[lock] = lock, true end end
     table.sort(inputs)
-    local probe = ensure_toolchain()
+    ensure_toolchain()
 
     -- ponytail: shared CLI/NuGet caches; split per SDK only if dotnet proves they conflict.
     local dotnet = '"$<dotnet:tool.dotnet.path>"'
@@ -154,8 +159,8 @@ function M.build(opts)
         inputs = inputs,
         outputs = { artifacts .. "/**" },
         command = command,
-        probes = { "dotnet:tool", probe },
-        seal = { probe },
+        probes = { "dotnet:tool", "dotnet:toolchain" },
+        seal = SEALS,
     })
     cook.export(qualified, { artifacts = artifacts, outputs = { artifacts .. "/**" } })
 end
@@ -487,7 +492,7 @@ local function mint_graph(opts, mode, context_files, graph, target)
       local restore_outputs = { artifacts .. "/obj/" .. project.name .. "/*" }
       cook.recipe(restore_recipe, { origin = "cook_dotnet.workspace" }, function()
           cook.add_unit({ inputs = context_files, outputs = restore_outputs, command = command, sharing = "local",
-              probes = { "dotnet:tool", "dotnet:toolchain" }, seal = { "dotnet:toolchain" } })
+              probes = { "dotnet:tool", "dotnet:toolchain" }, seal = SEALS })
       end)
       if selected_projects[project.path] then
           aggregate_outputs[#aggregate_outputs + 1] = restore_outputs[1]
@@ -544,7 +549,7 @@ local function mint_graph(opts, mode, context_files, graph, target)
                 outputs = { bin .. "/**", obj .. "/**" },
                 command = command,
                 probes = { "dotnet:tool", "dotnet:toolchain" },
-                seal = { "dotnet:toolchain" },
+                seal = SEALS,
             })
             cook.export(project_recipe, {
                 project = project.path,
@@ -610,7 +615,7 @@ local function mint_graph(opts, mode, context_files, graph, target)
                 inputs = { run_dir .. "/" .. build.target_file },
                 command = command,
                 probes = { "dotnet:tool", "dotnet:toolchain" },
-                seal = { "dotnet:toolchain" },
+                seal = SEALS,
                 interactive = true,
                 cache = false,
                 sharing = "local",
@@ -738,7 +743,7 @@ function M.workspace(opts)
     local inputs = cook.resolve_gather(workspace_globs(root, solution, true),
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
     -- Cache native membership roots independently from the files currently beneath them.
-    local relevance = cook.materialize("inventory", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
+    local relevance = cook.materialize("inventory", { files = graph_inputs, tools = { "dotnet" }, seals = SEALS },
         discovery.inventory_producer(solution, configuration, root, artifacts))
     local inventory_globs = {}
     for _, directory in ipairs(relevance.roots) do
@@ -748,7 +753,7 @@ function M.workspace(opts)
     local inventory = cook.resolve_gather(inventory_globs,
         { "**/bin/**", "**/obj/**", ".git/**", ".cook/**", artifacts .. "/**" })
     table.sort(inventory)
-    local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = { "dotnet:toolchain" } },
+    local graph = cook.materialize("graph", { files = graph_inputs, tools = { "dotnet" }, seals = SEALS },
         discovery.producer(solution, configuration, inventory))
     local settings = { artifacts = artifacts, configuration = configuration, root = root,
         project = project, framework = framework, arguments = table.concat(arguments),

@@ -44,7 +44,12 @@ Builds restore explicitly, then compile with `--no-restore`. When a project has
 restore is unlocked. Commit lockfiles appropriate to each evaluated configuration;
 a changed dependency graph must update its lockfile before locked restore can pass. The sealed toolchain
 probe carries the chosen SDK, canonical `dotnet` identity, and paired reference-pack
-versions without sealing a machine path. The Web-SDK-only ref-pack workaround is
+versions without sealing a machine path. Every unit and materializer also seals
+`dotnet:host`, the SDK's runtime identifier from `dotnet --info` (`linux-x64`,
+`linux-musl-x64`, `osx-arm64`, `win-x64`), so a store shared across machines never
+serves one platform's restore or build to another. Source-built SDKs report a distro
+RID such as `arch-x64`; those key apart from Microsoft-built SDKs on the same
+platform. Output without a recognised RID fails the probe. The Web-SDK-only ref-pack workaround is
 applied from MSBuild's evaluated `UsingMicrosoftNETSdkWeb` property.
 
 ## Project graph

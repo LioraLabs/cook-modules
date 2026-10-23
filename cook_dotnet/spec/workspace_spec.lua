@@ -53,6 +53,33 @@ describe("cook_dotnet.workspace", function()
         assert.same({ "src/**" }, stub.gathers()[3].globs)
     end)
 
+    it("seals the toolchain and the host on every minted unit and both materializers", function()
+        local dotnet = load_workspace()
+        local seals = {}
+        local materialize = cook.materialize
+        cook.materialize = function(name, spec, produce)
+            seals[name] = spec.seals
+            return materialize(name, spec, produce)
+        end
+        dotnet.workspace({ solution = "src/Graph.slnx", test_filter = "Name~Pass" })
+        stub.execute("dotnet:build")
+        stub.execute("__dotnet:restore:App")
+        stub.execute("dotnet:App:test")
+        local pair = { "dotnet:toolchain", "dotnet:host" }
+        assert.same({ inventory = pair, graph = pair }, seals)
+        assert.is_table(stub.probe("dotnet:host"))
+        local sealed = { restore = 0, build = 0, vstest = 0 }
+        for _, unit in ipairs(stub.units()) do
+            for kind in pairs(sealed) do
+                if unit.command:find('"$<dotnet:tool.dotnet.path>" ' .. kind, 1, true) then
+                    assert.same(pair, unit.seal)
+                    sealed[kind] = sealed[kind] + 1
+                end
+            end
+        end
+        for kind, count in pairs(sealed) do assert.is_true(count > 0, kind .. " unit not minted") end
+    end)
+
     it("registers one uncached generic test root over the native chore", function()
         local dotnet = load_workspace()
         dotnet.workspace({ solution = "src/Graph.slnx" })
@@ -142,7 +169,7 @@ describe("cook_dotnet.workspace", function()
         local materialized = stub.materialized()
         assert.equal("graph", materialized.name)
         assert.same({ "dotnet" }, materialized.spec.tools)
-        assert.same({ "dotnet:toolchain" }, materialized.spec.seals)
+        assert.same({ "dotnet:toolchain", "dotnet:host" }, materialized.spec.seals)
         assert.is_falsy(table.concat(materialized.spec.files, "\n"):find("packages.lock.json", 1, true))
         assert.is_function(materialized.produce)
         local by_output = {}
@@ -192,7 +219,7 @@ describe("cook_dotnet.workspace", function()
         assert.equal(2, #stub.units())
         for _, unit in ipairs(stub.units()) do
             assert.is_truthy(unit.command:find("--framework 'net", 1, true))
-            assert.same({ "dotnet:toolchain" }, unit.seal)
+            assert.same({ "dotnet:toolchain", "dotnet:host" }, unit.seal)
         end
     end)
 
