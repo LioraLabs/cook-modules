@@ -94,6 +94,11 @@ describe("toolchain identity probe covers", function()
         assert.same({}, got)
     end)
 
+    it("skips an install dir holding a glob character", function()
+        host({ node = { real = "/opt/node[20]/bin/node" }, pnpm = { real = "/opt/p{x}/bin/pnpm" } })
+        assert.same({}, covers())
+    end)
+
     it("a tool missing from PATH yields no entry", function()
         host({ node = { real = "/opt/n/bin/node" } })
         assert.same({ "/opt/n" }, covers())

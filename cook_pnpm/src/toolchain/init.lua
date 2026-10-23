@@ -100,8 +100,10 @@ local function tool_covers()
         if dir and dir:match("/bin$") then dir = dir:match("^(.*)/bin$") end
         -- `/` and a top-level dir mirror the engine's registration refusal;
         -- $HOME (trailing `/` dropped, as the engine's lexical normalize
-        -- does) is judged at audit and would error the unit there.
-        if dir and dir:match("^/[^/]+/.") and dir ~= (os.getenv("HOME") or ""):gsub("/+$", "") then
+        -- does) is judged at audit and would error the unit there. A dir
+        -- holding a glob character would be read as a glob, so it is skipped.
+        if dir and dir:match("^/[^/]+/.") and not dir:find("[%*%?%[{]")
+            and dir ~= (os.getenv("HOME") or ""):gsub("/+$", "") then
             covers[#covers + 1] = dir
         end
     end
