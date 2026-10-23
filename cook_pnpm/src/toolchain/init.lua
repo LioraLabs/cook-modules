@@ -98,8 +98,10 @@ local function tool_covers()
         local real = line:match("^%w+\t(/.+)$")
         local dir = real and real:match("^(.*)/[^/]+$")
         if dir and dir:match("/bin$") then dir = dir:match("^(.*)/bin$") end
-        -- Mirrors the engine's registration refusal: `/`, a top-level dir, $HOME.
-        if dir and dir:match("^/[^/]+/.") and dir ~= os.getenv("HOME") then
+        -- `/` and a top-level dir mirror the engine's registration refusal;
+        -- $HOME (trailing `/` dropped, as the engine's lexical normalize
+        -- does) is judged at audit and would error the unit there.
+        if dir and dir:match("^/[^/]+/.") and dir ~= (os.getenv("HOME") or ""):gsub("/+$", "") then
             covers[#covers + 1] = dir
         end
     end

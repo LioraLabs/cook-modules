@@ -82,6 +82,18 @@ describe("toolchain identity probe covers", function()
         assert.same({}, covers())
     end)
 
+    it("skips $HOME spelled with a trailing slash", function()
+        local getenv = os.getenv
+        os.getenv = function(k) if k == "HOME" then return "/home/u//" end return getenv(k) end
+        local ok, got = pcall(function()
+            host({ pnpm = { real = "/home/u/bin/pnpm" } })
+            return covers()
+        end)
+        os.getenv = getenv
+        assert(ok, got)
+        assert.same({}, got)
+    end)
+
     it("a tool missing from PATH yields no entry", function()
         host({ node = { real = "/opt/n/bin/node" } })
         assert.same({ "/opt/n" }, covers())
