@@ -41,14 +41,11 @@ end
 -- to the probe, so a failing dotnet reports why.
 function M.host_producer()
     return [[
-local arches = { x64 = true, x86 = true, arm = true, arm64 = true, armel = true, armv6 = true,
-    s390x = true, ppc64le = true, riscv64 = true, loongarch64 = true }
 local tool = cook.tools.id("dotnet")
 if not tool then error("[cook_dotnet] dotnet not on PATH") end
 local out = cook.sh("'" .. tool.path:gsub("'", "'\\''") .. "' --info")
 local rid = ("\n" .. out .. "\n"):match("\n[ \t]*RID:[ \t]*([^\r\n]-)[ \t]*\r?\n") or ""
-local arch = rid:match("^%l[%l%d%.]*%-(%w+)$") or rid:match("^%l[%l%d%.]*%-musl%-(%w+)$")
-if not arches[arch] then
+if not rid:match("^%l[%l%d%.]*%-[%l%d%-]*[%l%d]$") or rid:find("--", 1, true) then
     error("[cook_dotnet] could not read the host RID from dotnet --info: " .. out)
 end
 return { host = rid }

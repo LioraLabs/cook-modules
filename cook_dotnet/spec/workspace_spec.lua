@@ -65,6 +65,11 @@ describe("cook_dotnet.workspace", function()
         stub.execute("dotnet:build")
         stub.execute("__dotnet:restore:App")
         stub.execute("dotnet:App:test")
+        local copies = 0
+        for _, unit in ipairs(stub.units()) do
+            if unit.command:find("rm -rf --", 1, true) then copies = copies + 1 end
+        end
+        assert.is_true(copies > 0, "projection copy unit not minted")
         local pair = { "dotnet:toolchain", "dotnet:host" }
         assert.same({ inventory = pair, graph = pair }, seals)
         assert.is_table(stub.probe("dotnet:host"))
@@ -72,10 +77,11 @@ describe("cook_dotnet.workspace", function()
         for _, unit in ipairs(stub.units()) do
             for kind in pairs(sealed) do
                 if unit.command:find('"$<dotnet:tool.dotnet.path>" ' .. kind, 1, true) then
-                    assert.same(pair, unit.seal)
                     sealed[kind] = sealed[kind] + 1
+                    assert.same(pair, unit.seal)
                 end
             end
+            if unit.cache ~= false then assert.same(pair, unit.seal, unit.command) end
         end
         for kind, count in pairs(sealed) do assert.is_true(count > 0, kind .. " unit not minted") end
     end)

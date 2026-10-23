@@ -28,10 +28,10 @@ describe("cook_dotnet dotnet:host", function()
     end)
 
     it("asks the same dotnet the toolchain probe resolves", function()
-        assert.same({ "dotnet" }, stub.probe("dotnet:host").inputs.tools)
+        assert.same(stub.probe("dotnet:toolchain").inputs.tools, stub.probe("dotnet:host").inputs.tools)
     end)
 
-    it("keys two hosts apart and one host alike", function()
+    it("reports each host's RID, the same RID alike", function()
         local linux, mac = observe(info("linux-x64")), observe(info("osx-arm64"))
         assert.same({ host = "linux-x64" }, linux)
         assert.same({ host = "osx-arm64" }, mac)
@@ -49,12 +49,14 @@ describe("cook_dotnet dotnet:host", function()
         assert.same({ host = "arch-x64" }, observe(info("arch-x64")))
         assert.same({ host = "ubuntu.24.04-arm64" }, observe(info("ubuntu.24.04-arm64")))
         assert.same({ host = "linux-x64" }, observe(" RID: linux-x64"))
+        assert.same({ host = "linux-bionic-arm64" }, observe(info("linux-bionic-arm64")))
+        assert.same({ host = "linux-sparc" }, observe(info("linux-sparc")))
     end)
 
-    it("refuses output that does not name a known RID", function()
+    it("refuses output that does not name a RID of the right shape", function()
         for _, bad in ipairs({ "", "dotnet: command failed\n", info(""), info("linux"),
-                               info("linux-sparc"), info("Linux-x64"), info("linux-x64 extra"),
-                               info("linux-bionic-arm64"), " XRID: linux-x64\n" }) do
+                               info("Linux-x64"), info("linux-x64 extra"), info("linux--x64"),
+                               " XRID: linux-x64\n" }) do
             assert.error_matches(function() observe(bad) end, "could not read the host RID", 1, true)
         end
     end)
