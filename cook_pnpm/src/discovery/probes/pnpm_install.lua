@@ -1,6 +1,6 @@
 -- cook_pnpm.discovery.probes.pnpm_install — the pnpm:install:<lockfile-hash> side-effecting probe
 -- domain:  discovery — registers probes (workspace facts, tool finders); facts in, no work units
--- effects: cook.probe, cook.sh (register-time lockfile hash — see hash_file)
+-- effects: cook.probe (declares covers), cook.sh (register-time lockfile hash — see hash_file)
 -- std:     §12.7.5
 --
 -- pnpm:install:<lockfile-hash> probe.
@@ -56,7 +56,12 @@ function M.ensure_probe_registered(lockfile_path)
     local h = hash_file(lockfile_path)
     local key = "pnpm:install:" .. h
     if state.registered[key] then return key end
+    -- covers: `cook audit` counts reads under the workspace's node_modules
+    -- (root, every member, nested absent lookups) as owned by this probe.
+    -- Audit-only; never keys.
+    local root = lockfile_path:match("^(.*)/[^/]*$")
     cook.probe(key, {
+        covers = { (root and root ~= "" and (root .. "/") or "") .. "**/node_modules" },
         inputs = {
             requires = { toolchain.get_probe_key() },
             files    = { lockfile_path },

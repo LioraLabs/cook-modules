@@ -1,6 +1,6 @@
 -- cook_pnpm.toolchain — node/pnpm selection: registers the pnpm:toolchain:<pin> probe, holds the pin state
 -- domain:  toolchain — pure resolution: which node, which pnpm, probe identity
--- effects: cook.probe
+-- effects: cook.probe (declares covers), cook.sh (register-time install-dir lookup)
 -- std:     §12.7
 --
 -- pnpm + node toolchain probe.
@@ -95,12 +95,34 @@ end
 -- identity: sealing it would re-key every unit across install locations
 -- and machines (the CS-0157 portability rule). Reads the path probe via
 -- `requires`, so node/pnpm are still asked once per invocation.
+-- Install dir of a tool (`command -v` -> symlink target -> parent of its
+-- bin/), or nil. Audit-only input: any failure just yields no entry.
+local function install_dir(tool)
+    local p = cook.sh("command -v " .. tool .. " 2>/dev/null"):match("^(%S+)")
+    if not p then return nil end
+    local real = cook.sh("readlink -f '" .. p .. "' 2>/dev/null"):match("^(%S+)")
+    local dir = real and real:match("^(.*)/[^/]+$")
+    if dir and dir:match("/bin$") then dir = dir:match("^(.*)/bin$") end
+    -- Too broad to own (engine refuses these): `/`, a top-level dir, $HOME.
+    if not dir or not dir:match("^/[^/]+/.") or dir == os.getenv("HOME") then return nil end
+    return dir
+end
+
+local function tool_covers()
+    local out = {}
+    for _, tool in ipairs({ "pnpm", "node" }) do
+        out[#out + 1] = install_dir(tool)
+    end
+    return out
+end
+
 function M.ensure_identity_registered()
     M.ensure_probe_registered()
     local tool_key = probe_key()
     local key = tool_key .. ":identity"
     if state.probe_registered[key] then return key end
     cook.probe(key, {
+        covers = tool_covers(),
         inputs = { requires = { tool_key } },
         produce = string.format([[
             local t = cook.probes.get(%q)

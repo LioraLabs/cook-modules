@@ -111,7 +111,7 @@ Two consequences of the test-unit contract (commands run verbatim via
 `/bin/sh`, no probe substitution — CS-0127): check commands use plain
 `pnpm` from `PATH` (the pnpm *version* is not folded into a check's key;
 the lockfile and manifests are), and the lockfile determinant rides as a
-declared **input** rather than a seal.
+declared **input** (checks also seal the install probe, for its audit `covers`).
 
 ## Default inputs
 
@@ -367,7 +367,7 @@ the module-authoring seal policy (§12.7.5): the **toolchain** probe is
 consumed as data (the command interpolates the resolved `pnpm` path —
 §12.7.4); the **install** probe is a deterministic, invalidate-only
 determinant, carried as a **seal**. Lockfile drift invalidates every
-task downstream (builds via the seal, checks via the lockfile input);
+task downstream (builds via the seal, checks via the lockfile input and the seal);
 source-only edits invalidate only the affected packages and their topo
 descendants.
 
@@ -383,6 +383,14 @@ unit that runs node over the installed tree can opt in with
 (`cook_pnpm.workspace`, `task`, `run` or `install`): that call registers
 the probe, and `use cook_pnpm` alone does not, since a module's `init()`
 also runs on execute-phase VMs where `cook.probe` is refused.
+
+**`cook audit` coverage.** Probes declare `covers` (audit-only, never part
+of a key; older cook ignores it): the install probe covers
+`<workspace root>/**/node_modules` (root, every member, nested absent
+lookups), and the toolchain identity probe covers the install dirs of
+`pnpm` and `node` (`command -v` -> `readlink -f` -> parent of `bin/`). A dir
+that is `/`, a single top-level dir (node at `/usr/bin/node` -> `/usr`) or
+`$HOME` is skipped, so those reads stay audit findings.
 
 ## Surface reference
 

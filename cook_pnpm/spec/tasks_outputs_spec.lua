@@ -132,7 +132,8 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
         assert.same({ id, "pnpm:host", result.install_key }, web.seal)
         assert.same({ "pnpm:toolchain:auto" }, web.probes,
             "the path probe stays a substitution-only data probe")
-        assert.same({ id, "pnpm:host" }, test_for("@scope/web").seal)
+        assert.same({ id, "pnpm:host", result.install_key }, test_for("@scope/web").seal,
+            "checks seal install too: its covers own their node_modules reads")
 
         -- The identity is path-free: it reads versions off the path probe.
         local opts = stub.probe_opts(id)

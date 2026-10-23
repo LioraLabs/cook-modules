@@ -25,11 +25,14 @@
 --          (test commands run verbatim via /bin/sh, no probe
 --          substitution — CS-0127): the command uses plain `pnpm` from
 --          PATH, and the lockfile determinant rides as a declared INPUT
---          (content-fingerprinted) rather than a seal.
+--          (content-fingerprinted) AND seals the install probe too, so
+--          the probe's `covers` owns the check's node_modules reads
+--          under `cook audit`.
 --
 -- Both shapes seal toolchain.seals() — the toolchain identity probe
 -- (node/pnpm versions) and pnpm:host (node's platform-arch), so a
--- toolchain or host change re-keys every minted unit.
+-- toolchain or host change re-keys every minted unit — plus the install
+-- probe, whose `covers` owns their node_modules reads.
 --
 -- `requires` (0.2.1, the polyglot escape hatch): extra recipe names
 -- appended verbatim to every minted recipe. When a pnpm task reads files
@@ -257,7 +260,8 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
     -- that seals it (`cook test` may never run the registering body), and
     -- the seal then silently keys on nothing (COOK-587).
     local extra, seen = {}, {}
-    if kind == "build" then extra[1] = ctx.install_key end
+    -- Builds AND checks seal install: its `covers` owns their node_modules reads.
+    extra[1] = ctx.install_key
     for _, list in ipairs({ ctx.workspace_env or {}, cfg.env or {} }) do
         if type(list) ~= "table" then
             error("[pnpm.task] env must be a list of variable names, e.g. env = { \"NODE_ENV\" }", 3)
@@ -330,7 +334,8 @@ local function mint_one(pkg, task_name, cfg, ctx, origin)
             unit_inputs[#unit_inputs + 1] = pkg.dir .. "/package.json"
             -- The lockfile is a declared input (content-fingerprinted);
             -- the command runs plain `pnpm` from PATH, keyed on the
-            -- toolchain identity through toolchain.seals().
+            -- toolchain identity through toolchain.seals() (install sealed
+            -- too, for its audit `covers`).
             unit_inputs[#unit_inputs + 1] = ctx.lockfile
             -- Dep artifacts as ready-time glob inputs (units.depfold): the
             -- ^build edge above guarantees they exist before resolution.
