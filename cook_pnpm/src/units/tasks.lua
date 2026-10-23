@@ -28,7 +28,8 @@
 --          (content-fingerprinted) rather than a seal.
 --
 -- Both shapes seal toolchain.seals() — the toolchain identity probe
--- (node/pnpm versions), so a toolchain change re-keys every minted unit.
+-- (node/pnpm versions) and pnpm:host (node's platform-arch), so a
+-- toolchain or host change re-keys every minted unit.
 --
 -- `requires` (0.2.1, the polyglot escape hatch): extra recipe names
 -- appended verbatim to every minted recipe. When a pnpm task reads files

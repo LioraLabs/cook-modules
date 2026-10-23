@@ -111,8 +111,38 @@ function M.ensure_identity_registered()
     return key
 end
 
+-- The HOST the toolchain installs for: node's `<platform>-<arch>`, the
+-- axis pnpm selects native optional deps on (esbuild, oxlint binaries).
+-- Cook infers no machine identity (§17.1.1), so a linux artifact or
+-- verdict would otherwise serve macOS; this declared probe, sealed on
+-- every minted unit, keeps them apart. Path-free, and its key carries no
+-- pin, so a Cookfile can `seal pnpm:host` on hand-written node units.
+-- shortcut: no libc axis (glibc vs musl pick different linux binaries);
+-- add it when a musl runner shares a store with a glibc one.
+local HOST_KEY = "pnpm:host"
+
+function M.ensure_host_registered()
+    M.ensure_probe_registered()
+    if state.probe_registered[HOST_KEY] then return HOST_KEY end
+    local tool_key = probe_key()
+    cook.probe(HOST_KEY, {
+        inputs = { requires = { tool_key } },
+        produce = string.format([[
+            local t = cook.probes.get(%q)
+            local out = cook.sh("'" .. t.node .. "' -p \"process.platform + '-' + process.arch\" 2>/dev/null")
+            local host = out:match("^([%%w_]+%%-[%%w_]+)%%s*$")
+            if not host then
+                error("[pnpm.toolchain] could not read the host from node: " .. out)
+            end
+            return { host = host }
+        ]], tool_key),
+    })
+    state.probe_registered[HOST_KEY] = true
+    return HOST_KEY
+end
+
 -- The seal set of EVERY unit cook_pnpm mints (task builds and checks,
--- install, run): the toolchain identity, then the unit's own sealed
+-- install, run): the toolchain identity, the host, then the unit's own sealed
 -- determinants (`extra`: the install probe, declared `pnpm:env:<NAME>`
 -- probes from units.tasks). One function so an observed determinant
 -- reaches every minted unit or none. It lives here because the identity
@@ -121,7 +151,7 @@ end
 -- one recipe's body is not scheduled for another recipe's unit that
 -- seals it, and the seal keys on nothing (COOK-587).
 function M.seals(extra)
-    local out = { M.ensure_identity_registered() }
+    local out = { M.ensure_identity_registered(), M.ensure_host_registered() }
     for _, k in ipairs(extra or {}) do out[#out + 1] = k end
     return out
 end

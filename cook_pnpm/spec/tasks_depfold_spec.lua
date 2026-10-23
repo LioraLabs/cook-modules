@@ -156,11 +156,11 @@ describe("cook_pnpm 0.4 dependency-output folding + env", function()
         })
 
         local id = "pnpm:toolchain:auto:identity"
-        assert.same({ id, result.install_key, "pnpm:env:CI" },
+        assert.same({ id, "pnpm:host", result.install_key, "pnpm:env:CI" },
             unit_for("--filter @scope/lib run build").seal)
-        assert.same({ id, result.install_key, "pnpm:env:CI", "pnpm:env:API_URL" },
+        assert.same({ id, "pnpm:host", result.install_key, "pnpm:env:CI", "pnpm:env:API_URL" },
             unit_for("--filter @scope/app run build").seal, "duplicates collapse")
-        assert.same({ id, "pnpm:env:CI", "pnpm:env:NODE_ENV" },
+        assert.same({ id, "pnpm:host", "pnpm:env:CI", "pnpm:env:NODE_ENV" },
             test_for("--filter @scope/app run typecheck").seal)
         assert.is_nil(unit_for("--filter @scope/app run build").consulted_env_keys)
         for _, k in ipairs({ "pnpm:env:CI", "pnpm:env:API_URL", "pnpm:env:NODE_ENV" }) do

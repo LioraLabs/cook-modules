@@ -123,14 +123,16 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
         tasks.task("lint", {})
 
         local id = "pnpm:toolchain:auto:identity"
+        assert.is_true(registered_before_bodies["pnpm:host"] == true,
+            "the host probe is sealed too, so it registers outside bodies too")
         assert.is_true(registered_before_bodies[id] == true,
             "the sealed probe must be registered outside any recipe body — "
             .. "the engine does not schedule one registered in another recipe's body")
         local web = unit_for("@scope/web")
-        assert.same({ id, result.install_key }, web.seal)
+        assert.same({ id, "pnpm:host", result.install_key }, web.seal)
         assert.same({ "pnpm:toolchain:auto" }, web.probes,
             "the path probe stays a substitution-only data probe")
-        assert.same({ id }, test_for("@scope/web").seal)
+        assert.same({ id, "pnpm:host" }, test_for("@scope/web").seal)
 
         -- The identity is path-free: it reads versions off the path probe.
         local opts = stub.probe_opts(id)
@@ -145,8 +147,8 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
         pnpm_cli.run("@scope/web", "lint", { recipe_name = "web-lint" })
         local units = stub.added_units()
         assert.equals(before + 2, #units)
-        assert.same({ id, result.install_key }, units[before + 1].seal)
-        assert.same({ id, result.install_key }, units[before + 2].seal)
+        assert.same({ id, "pnpm:host", result.install_key }, units[before + 1].seal)
+        assert.same({ id, "pnpm:host", result.install_key }, units[before + 2].seal)
     end)
 
     it("rejects kind=\"check\" with declared outputs", function()
@@ -174,7 +176,7 @@ describe("cook_pnpm.units.tasks 0.3 shape inference", function()
 
         local web = unit_for("@scope/web")
         assert.is_not_nil(web)
-        assert.same({ "pnpm:toolchain:auto:identity", result.install_key }, web.seal,
+        assert.same({ "pnpm:toolchain:auto:identity", "pnpm:host", result.install_key }, web.seal,
             "install probe must be sealed, not consumed as a data probe")
         for _, k in ipairs(web.probes or {}) do
             assert.is_nil(k:match("^pnpm:install:"),
