@@ -57,6 +57,32 @@ local function produce_body(override)
     ]], override_literal)
 end
 
+-- A compiled object is bound to its target, and cook infers no machine
+-- identity (§17.1.1): sealed on every compile and link unit, this keeps two
+-- hosts' artifacts apart. Asks the CHOSEN compiler (same suffix as the
+-- compiler key). Its stderr is not redirected: cook.sh attributes it to
+-- the probe unit, so a crash reports why (CS-0188).
+local function host_key()
+    return "cc:host:" .. (state.compiler_override or "auto")
+end
+
+local HOST_BODY = [[
+    local c = cook.probes.get(%q)
+    local cmd = c.cxx .. " -dumpmachine"
+    local out = cook.sh(cmd)
+    local triple = out:match("^%%s*(.-)%%s*$")
+    local ok = triple ~= ""
+    local n = 0
+    for part in (triple .. "-"):gmatch("([^-]*)-") do
+        n = n + 1
+        if not part:match("^[%%w_.]+$") then ok = false end
+    end
+    if not ok or n < 2 then
+        error("[cc.toolchain] could not read the target from '" .. cmd .. "': " .. out)
+    end
+    return { host = triple }
+]]
+
 function M.ensure_probe_registered()
     local key = probe_key()
     if state.probe_registered[key] then return end
@@ -71,10 +97,22 @@ function M.ensure_probe_registered()
         produce = produce_body(state.compiler_override),
     })
     state.probe_registered[key] = true
+    -- Registered here, never from init(): init also runs on execute-phase
+    -- VMs, where cook.probe raises.
+    local hk = host_key()
+    cook.probe(hk, {
+        inputs = { requires = { key } },
+        produce = string.format(HOST_BODY, key),
+    })
+    state.probe_registered[hk] = true
 end
 
 function M.get_probe_key()
     return probe_key()
+end
+
+function M.get_host_key()
+    return host_key()
 end
 
 function M.get_compiler()

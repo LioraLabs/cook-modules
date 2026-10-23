@@ -54,6 +54,11 @@ set rather than walking a dependency graph, the database is complete by
 construction, including a target in no `links` closure at all (a
 dlopen'd plugin, say).
 
+Compile and link units seal `cc:host:<override-or-auto>`, the chosen
+compiler's `-dumpmachine`, so two targets never share an artifact. A
+hand-written unit may `seal cc:host:auto` only if the Cookfile also makes a
+cook_cc call that registers it (`toolchain()` or a target maker).
+
 ## Project-management verbs
 
 `cook_cc` also registers chores you invoke directly, so a target can be added

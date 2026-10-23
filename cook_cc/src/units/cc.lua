@@ -52,7 +52,7 @@ function M.compile(source, opts)
     end
 
     local needs = opts.needs or {}
-    local probes = { cc_probe_key }
+    local probes = { cc_probe_key, toolchain.get_host_key() }
     local cflags_sigils = {}
     for _, n in ipairs(needs) do
         probes[#probes + 1] = "cc:find:" .. n
@@ -67,11 +67,12 @@ function M.compile(source, opts)
     cmd = cmd .. " "
 
     -- §12.7.5 seal policy: fold the resolved, deterministic toolchain identity
-    -- (cc:compiler:<override>) and finder results (cc:find:<name>) into the cache
-    -- key as explicit, auditable named-probe determinants. Values are pure
-    -- functions of declared tool/env inputs, and are value-folded (not
-    -- candidate-tool fingerprints) so the key stays stable across machines with
-    -- equivalent toolchains. Default 'shared' disposition is correct — compile
+    -- (cc:compiler:<override>), its target (cc:host:<override>) and finder
+    -- results (cc:find:<name>) into the cache key as explicit, auditable
+    -- named-probe determinants. Values are pure functions of declared
+    -- tool/env inputs, and are value-folded (not candidate-tool fingerprints)
+    -- so the key stays stable across machines with the same compiler bytes AND
+    -- the same reported target. Default 'shared' disposition is correct — compile
     -- output is reproducible.
     -- Generated config headers (opts.generated_headers) become declared
     -- compile-unit inputs — the data edge to the config_header gen unit.
@@ -123,7 +124,7 @@ function M.link(objects, output, opts)
     local compiler_sigil = "$<" .. cc_probe_key .. ".cxx>"
 
     local needs = opts.needs or {}
-    local probes = { cc_probe_key }
+    local probes = { cc_probe_key, toolchain.get_host_key() }
     local libs_sigils = {}
     for _, n in ipairs(needs) do
         probes[#probes + 1] = "cc:find:" .. n

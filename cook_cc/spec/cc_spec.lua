@@ -125,7 +125,15 @@ describe("cc.compile", function()
         local cc = require("cook_cc.units.cc")
         cc.compile("src/main.cpp", { target_name = "app" })
         local u = stub.added_units()[1]
-        assert.same({ "cc:compiler:auto" }, u.probes)
+        assert.same({ "cc:compiler:auto", "cc:host:auto" }, u.probes)
+        assert.same(u.probes, u.seal)
+    end)
+
+    it("seals the host after the compiler, before the finders", function()
+        local cc = require("cook_cc.units.cc")
+        cc.compile("src/main.cpp", { target_name = "app", needs = { "sdl2" } })
+        local u = stub.added_units()[1]
+        assert.same({ "cc:compiler:auto", "cc:host:auto", "cc:find:sdl2" }, u.probes)
         assert.same(u.probes, u.seal)
     end)
 end)
@@ -147,6 +155,14 @@ describe("cc.archive", function()
         assert.matches("build/obj/a/x%.o", u.command)
         assert.matches("build/obj/a/y%.o", u.command)
         assert.equals("build/lib/liba.a", u.output)
+    end)
+
+    it("seals nothing: its inputs are already per-target objects", function()
+        local cc = require("cook_cc.units.cc")
+        cc.archive({ "build/obj/a/x.o" }, "build/lib/liba.a")
+        local u = stub.added_units()[1]
+        assert.is_nil(u.probes)
+        assert.is_nil(u.seal)
     end)
 end)
 
@@ -185,6 +201,14 @@ describe("cc.link", function()
         for _, k in ipairs(u.seal or {}) do sealed[k] = true end
         assert.is_true(sealed["cc:compiler:auto"], "expected cc:compiler:auto in seal")
         assert.is_true(sealed["cc:find:sdl2"], "expected cc:find:sdl2 in seal")
+        assert.same({ "cc:compiler:auto", "cc:host:auto", "cc:find:sdl2" }, u.probes)
+        assert.same(u.probes, u.seal)
+    end)
+
+    it("seals the host without needs", function()
+        local cc = require("cook_cc.units.cc")
+        cc.link({ "a.o" }, "build/bin/x")
+        assert.same({ "cc:compiler:auto", "cc:host:auto" }, stub.added_units()[1].seal)
     end)
 end)
 
