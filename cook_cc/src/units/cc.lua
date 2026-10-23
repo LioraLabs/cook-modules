@@ -32,7 +32,6 @@ function M.compile(source, opts)
     fs.mkdir_p(dep_dir)
 
     -- Compiler comes from the cc:compiler:<override> probe at execute time.
-    toolchain.ensure_probe_registered()
     local cc_probe_key = toolchain.get_probe_key()
     local cc_field = is_c(source) and "cc" or "cxx"
     local compiler_sigil = "$<" .. cc_probe_key .. "." .. cc_field .. ">"
@@ -52,12 +51,13 @@ function M.compile(source, opts)
     end
 
     local needs = opts.needs or {}
-    local probes = { cc_probe_key, toolchain.get_host_key() }
+    local finds = {}
     local cflags_sigils = {}
     for _, n in ipairs(needs) do
-        probes[#probes + 1] = "cc:find:" .. n
+        finds[#finds + 1] = "cc:find:" .. n
         cflags_sigils[#cflags_sigils + 1] = "$<cc:find:" .. n .. ".cflags>"
     end
+    local probes = toolchain.seals(finds)
 
     local cmd = compiler_sigil .. " " .. table.concat(flags, " ")
         .. " " .. source .. " -o " .. obj_out
@@ -119,17 +119,17 @@ function M.link(objects, output, opts)
     opts = opts or {}
     fs.mkdir_p(path.dir(output))
 
-    toolchain.ensure_probe_registered()
     local cc_probe_key = toolchain.get_probe_key()
     local compiler_sigil = "$<" .. cc_probe_key .. ".cxx>"
 
     local needs = opts.needs or {}
-    local probes = { cc_probe_key, toolchain.get_host_key() }
+    local finds = {}
     local libs_sigils = {}
     for _, n in ipairs(needs) do
-        probes[#probes + 1] = "cc:find:" .. n
+        finds[#finds + 1] = "cc:find:" .. n
         libs_sigils[#libs_sigils + 1] = "$<cc:find:" .. n .. ".libs>"
     end
+    local probes = toolchain.seals(finds)
 
     local parts = { compiler_sigil, table.concat(objects, " "), "-o", output }
     for _, lib in ipairs(opts.system_libs or {}) do

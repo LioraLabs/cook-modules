@@ -138,6 +138,24 @@ describe("cc.compile", function()
     end)
 end)
 
+describe("cc.compile --target", function()
+    before_each(function()
+        stub.reset(); stub.install()
+        stub.set_sh_handler("__exists", function() return true end)
+        package.loaded["cook_cc.units.cc"] = nil
+        package.loaded["cook_cc.toolchain"] = nil
+        with_toolchain()
+    end)
+
+    it("carries the flag and seals no second target determinant", function()
+        local cc = require("cook_cc.units.cc")
+        cc.compile("src/main.cpp", { target_name = "app", extra_cflags = "--target=aarch64-linux-gnu" })
+        local u = stub.added_units()[1]
+        assert.is_truthy(u.command:find("--target=aarch64-linux-gnu", 1, true))
+        assert.same({ "cc:compiler:auto", "cc:host:auto" }, u.seal)
+    end)
+end)
+
 describe("cc.archive", function()
     before_each(function()
         stub.reset(); stub.install()

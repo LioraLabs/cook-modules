@@ -56,8 +56,9 @@ dlopen'd plugin, say).
 
 Compile and link units seal `cc:host:<override-or-auto>`, the chosen
 compiler's `-dumpmachine`, so two targets never share an artifact. A
-hand-written unit may `seal cc:host:auto` only if the Cookfile also makes a
-cook_cc call that registers it (`toolchain()` or a target maker).
+hand-written unit seals the key matching the compiler (`cc:host:auto`
+without an override, `cc:host:<override>` with one), and the Cookfile must
+also make a cook_cc call that registers it (`toolchain()` or a target maker).
 
 ## Project-management verbs
 

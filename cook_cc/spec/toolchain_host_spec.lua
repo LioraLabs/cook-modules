@@ -74,8 +74,17 @@ describe("cook_cc.toolchain cc:host", function()
             local ok, err = pcall(observe, "cc:host:auto", "g++", bad)
             assert.is_false(ok, "accepted " .. bad)
             assert.matches("could not read the target from 'g%+%+ %-dumpmachine': ", err)
-            assert.matches(bad, err, 1, true)
+            assert.is_truthy(err:find(": " .. bad, 1, true), err)
         end
+    end)
+
+    it("seals() lists compiler, host, then extras, registering on first use", function()
+        package.loaded["cook_cc.toolchain"] = nil
+        stub.reset(); stub.install()
+        tc = require("cook_cc.toolchain")
+        assert.same({ "cc:compiler:auto", "cc:host:auto", "x", "y" }, tc.seals({ "x", "y" }))
+        assert.same({ "cc:compiler:auto", "cc:host:auto" }, stub.probe_keys())
+        assert.same({ "cc:compiler:auto", "cc:host:auto" }, tc.seals())
     end)
 
     it("lets a compiler crash through, with what it said", function()

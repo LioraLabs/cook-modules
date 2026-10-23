@@ -1,4 +1,4 @@
--- cook_cc.toolchain — compiler selection: registers the cc:compiler:<override> probe, holds standard/warnings/default-flag state
+-- cook_cc.toolchain — compiler selection: registers the cc:compiler:<override> and cc:host:<override> probes, holds standard/warnings/default-flag state
 -- domain:  toolchain — pure resolution: which compiler, identity, flag dialects
 -- effects: cook.probe
 -- std:     §12.7
@@ -16,9 +16,9 @@ local state = {
     probe_registered      = {},          -- set: key -> true
 }
 
-local function probe_key()
-    return "cc:compiler:" .. (state.compiler_override or "auto")
-end
+local function suffix() return state.compiler_override or "auto" end
+
+local function probe_key() return "cc:compiler:" .. suffix() end
 
 local function produce_body(override)
     local override_literal = override and string.format("%q", override) or "nil"
@@ -63,7 +63,7 @@ end
 -- compiler key). Its stderr is not redirected: cook.sh attributes it to
 -- the probe unit, so a crash reports why (CS-0188).
 local function host_key()
-    return "cc:host:" .. (state.compiler_override or "auto")
+    return "cc:host:" .. suffix()
 end
 
 local HOST_BODY = [[
@@ -71,40 +71,52 @@ local HOST_BODY = [[
     local cmd = c.cxx .. " -dumpmachine"
     local out = cook.sh(cmd)
     local triple = out:match("^%%s*(.-)%%s*$")
-    local ok = triple ~= ""
-    local n = 0
-    for part in (triple .. "-"):gmatch("([^-]*)-") do
-        n = n + 1
-        if not part:match("^[%%w_.]+$") then ok = false end
-    end
-    if not ok or n < 2 then
+    -- two or more non-empty dash-separated [%%w_.] fields
+    if not (triple:match("^[%%w_.]+%%-[%%w_.%%-]*[%%w_.]$") and not triple:find("--", 1, true)) then
         error("[cc.toolchain] could not read the target from '" .. cmd .. "': " .. out)
     end
     return { host = triple }
 ]]
 
-function M.ensure_probe_registered()
-    local key = probe_key()
-    if state.probe_registered[key] then return end
-    local tools
-    if state.compiler_override then
-        tools = { state.compiler_override }
-    else
-        tools = { "g++", "clang++" }
-    end
-    cook.probe(key, {
-        inputs = { tools = tools },
-        produce = produce_body(state.compiler_override),
-    })
-    state.probe_registered[key] = true
-    -- Registered here, never from init(): init also runs on execute-phase
-    -- VMs, where cook.probe raises.
+-- Registered here, never from init(): init also runs on execute-phase VMs,
+-- where cook.probe raises. Idempotent; returns the key.
+local function ensure_host_registered(compiler_key)
     local hk = host_key()
+    if state.probe_registered[hk] then return hk end
     cook.probe(hk, {
-        inputs = { requires = { key } },
-        produce = string.format(HOST_BODY, key),
+        inputs = { requires = { compiler_key } },
+        produce = string.format(HOST_BODY, compiler_key),
     })
     state.probe_registered[hk] = true
+    return hk
+end
+
+function M.ensure_probe_registered()
+    local key = probe_key()
+    if not state.probe_registered[key] then
+        local tools
+        if state.compiler_override then
+            tools = { state.compiler_override }
+        else
+            tools = { "g++", "clang++" }
+        end
+        cook.probe(key, {
+            inputs = { tools = tools },
+            produce = produce_body(state.compiler_override),
+        })
+        state.probe_registered[key] = true
+    end
+    ensure_host_registered(key)
+end
+
+-- The seal set of every compile and link unit: compiler, host, then the
+-- unit's own `extra` probes (cc:find:*). One function, so a determinant
+-- reaches every unit or none.
+function M.seals(extra)
+    M.ensure_probe_registered()
+    local out = { probe_key(), host_key() }
+    for _, k in ipairs(extra or {}) do out[#out + 1] = k end
+    return out
 end
 
 function M.get_probe_key()
