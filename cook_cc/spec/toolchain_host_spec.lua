@@ -49,7 +49,7 @@ describe("cook_cc.toolchain cc:host", function()
 
     it("returns each accepted triple verbatim", function()
         for _, t in ipairs({ "x86_64-pc-linux-gnu", "x86_64-linux-gnu", "arm64-apple-darwin24.6.0",
-                             "x86_64-w64-mingw32", "aarch64-linux-gnu", "wasm32-wasi", "riscv64-elf" }) do
+                             "x86_64-w64-mingw32", "aarch64-linux-gnu", "wasm32-wasi", "riscv64-elf", "avr", "x86_64" }) do
             assert.same({ host = t }, observe("cc:host:auto", "g++", t .. "\n"))
         end
     end)
@@ -68,9 +68,9 @@ describe("cook_cc.toolchain cc:host", function()
         assert.equals("aarch64-linux-gnu-g++ -dumpmachine", ran)
     end)
 
-    it("refuses output that is not a dash-separated target", function()
+    it("refuses output that is neither one token nor a dash-separated target", function()
         for _, bad in ipairs({ "", "\n", "g++: command not found\n", "x86_64: pc\n", "gcc version 13",
-                               "x86_64\n", "x86_64-\n", "-linux\n", "x86_64--gnu\n", "a-b-\n" }) do
+                               "hello world\n", "avr.5\n", "x86_64-\n", "-linux\n", "x86_64--gnu\n", "a-b-\n" }) do
             local ok, err = pcall(observe, "cc:host:auto", "g++", bad)
             assert.is_false(ok, "accepted " .. bad)
             assert.matches("could not read the target from 'g%+%+ %-dumpmachine': ", err)

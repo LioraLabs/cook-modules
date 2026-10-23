@@ -71,8 +71,9 @@ local HOST_BODY = [[
     local cmd = c.cxx .. " -dumpmachine"
     local out = cook.sh(cmd)
     local triple = out:match("^%%s*(.-)%%s*$")
-    -- two or more non-empty dash-separated [%%w_.] fields
-    if not (triple:match("^[%%w_.]+%%-[%%w_.%%-]*[%%w_.]$") and not triple:find("--", 1, true)) then
+    -- one bare-metal token (avr), or two or more non-empty dash-separated [%%w_.] fields
+    if not (triple:match("^[%%w_]+$")
+            or (triple:match("^[%%w_.]+%%-[%%w_.%%-]*[%%w_.]$") and not triple:find("--", 1, true))) then
         error("[cc.toolchain] could not read the target from '" .. cmd .. "': " .. out)
     end
     return { host = triple }
