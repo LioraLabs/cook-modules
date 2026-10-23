@@ -111,31 +111,40 @@ function M.ensure_identity_registered()
     return key
 end
 
--- The HOST the toolchain installs for: node's `<platform>-<arch>`, the
--- axis pnpm selects native optional deps on (esbuild, oxlint binaries).
--- Cook infers no machine identity (§17.1.1), so a linux artifact or
--- verdict would otherwise serve macOS; this declared probe, sealed on
--- every minted unit, keeps them apart. Path-free, and its key carries no
--- pin, so a Cookfile can `seal pnpm:host` on hand-written node units.
--- shortcut: no libc axis (glibc vs musl pick different linux binaries);
--- add it when a musl runner shares a store with a glibc one.
+-- The HOST the toolchain installs for: node's `<platform>-<arch>`, plus
+-- `-gnu` / `-musl` on linux — the axes pnpm selects native optional deps
+-- on (esbuild, oxlint ship linux-x64-gnu and linux-x64-musl). Cook infers
+-- no machine identity (§17.1.1), so one host's artifact or verdict would
+-- otherwise serve another; this declared probe, sealed on every minted
+-- unit, keeps them apart. Path-free and pin-free: it asks PATH's node
+-- directly — the same node the toolchain probe resolves; follow the
+-- toolchain if that ever picks another — so it needs no `requires` and
+-- does not bind to whichever pin was current when it first registered.
+-- Registered by seals(), never from init(): init() also runs on
+-- execute-phase VMs, where cook.probe raises. node's stderr is not
+-- redirected: cook.sh attributes it to the probe unit, so a crash
+-- reports why (CS-0188).
 local HOST_KEY = "pnpm:host"
 
+local HOST_JS = "process.platform + '-' + process.arch + (process.platform === 'linux'"
+    .. " ? (process.report.getReport().header.glibcVersionRuntime ? '-gnu' : '-musl') : '')"
+
+local HOST_BODY = string.format([[
+    local out = cook.sh(%q)
+    local platform, arch, libc = out:match("^(%%w+)%%-([%%w_]+)%%-?(%%a*)%%s*$")
+    local libc_ok = platform == "linux" and (libc == "gnu" or libc == "musl")
+        or platform ~= "linux" and libc == ""
+    if not (platform and libc_ok) then
+        error("[pnpm.toolchain] could not read the host from node: " .. out)
+    end
+    return { host = platform .. "-" .. arch .. (libc ~= "" and ("-" .. libc) or "") }
+]], 'node -p "' .. HOST_JS .. '"')
+
 function M.ensure_host_registered()
-    M.ensure_probe_registered()
     if state.probe_registered[HOST_KEY] then return HOST_KEY end
-    local tool_key = probe_key()
     cook.probe(HOST_KEY, {
-        inputs = { requires = { tool_key } },
-        produce = string.format([[
-            local t = cook.probes.get(%q)
-            local out = cook.sh("'" .. t.node .. "' -p \"process.platform + '-' + process.arch\" 2>/dev/null")
-            local host = out:match("^([%%w_]+%%-[%%w_]+)%%s*$")
-            if not host then
-                error("[pnpm.toolchain] could not read the host from node: " .. out)
-            end
-            return { host = host }
-        ]], tool_key),
+        inputs = { tools = { "node" } },
+        produce = HOST_BODY,
     })
     state.probe_registered[HOST_KEY] = true
     return HOST_KEY
@@ -146,8 +155,8 @@ end
 -- determinants (`extra`: the install probe, declared `pnpm:env:<NAME>`
 -- probes from units.tasks). One function so an observed determinant
 -- reaches every minted unit or none. It lives here because the identity
--- is the one seal every unit shares; the per-unit probes stay with their
--- owners. Call it OUTSIDE recipe bodies: a probe first registered inside
+-- and the host are the seals every unit shares; the per-unit probes stay
+-- with their owners. Call it OUTSIDE recipe bodies: a probe first registered inside
 -- one recipe's body is not scheduled for another recipe's unit that
 -- seals it, and the seal keys on nothing (COOK-587).
 function M.seals(extra)

@@ -6,18 +6,15 @@
 
 local stub = require("cook_stub")
 
-local NODE = "/opt/node-20/bin/node"
-
--- Observe pnpm:host as the engine would: run its produce body with the
--- toolchain path probe it requires answering, and node reporting `host`.
-local function observe(host_out)
+-- Observe pnpm:host as the engine would: run its produce body with node
+-- on PATH answering `answer` (a string, or a function that raises).
+local function observe(answer)
     local opts = stub.probe_opts("pnpm:host")
-    assert.same({ "pnpm:toolchain:auto" }, opts.inputs.requires)
-    cook.probes = { get = function(k)
-        assert.equals("pnpm:toolchain:auto", k)
-        return { node = NODE, node_version = "20.11.0", pnpm = "/usr/bin/pnpm" }
-    end }
-    stub.set_sh_handler("'" .. NODE .. "' -p ", function() return host_out end)
+    stub.set_sh_handler("node -p ", function(cmd)
+        assert.is_nil(cmd:find("2>", 1, true))   -- node's stderr is never dropped
+        if type(answer) == "function" then return answer() end
+        return answer
+    end)
     return assert(load(opts.produce))()
 end
 
@@ -41,27 +38,55 @@ describe("cook_pnpm.toolchain pnpm:host", function()
 
     it("keys two hosts apart and one host alike", function()
         toolchain.seals()
-        local linux  = observe("linux-x64\n")
+        local linux  = observe("linux-x64-gnu\n")
         local mac    = observe("darwin-arm64\n")
-        local linux2 = observe("linux-x64\n")
-        assert.same({ host = "linux-x64" }, linux)
+        local linux2 = observe("linux-x64-gnu\n")
+        assert.same({ host = "linux-x64-gnu" }, linux)
         assert.same({ host = "darwin-arm64" }, mac)
         assert.are_not.same(linux, mac)
         assert.same(linux, linux2)
     end)
 
-    it("carries no path, so one host shares across install locations", function()
+    it("keys glibc and musl linux apart", function()
         toolchain.seals()
-        local v = observe("linux-x64\n")
-        for _, field in pairs(v) do
-            assert.is_nil(field:find("/", 1, true))
+        local gnu  = observe("linux-x64-gnu\n")
+        local musl = observe("linux-x64-musl\n")
+        assert.same({ host = "linux-x64-musl" }, musl)
+        assert.are_not.same(gnu, musl)
+    end)
+
+    it("asks node itself for the libc, only on linux", function()
+        toolchain.seals()
+        local js = stub.probe_opts("pnpm:host").produce
+        assert.truthy(js:find("glibcVersionRuntime", 1, true))
+        assert.truthy(js:find("process.platform === 'linux'", 1, true))
+    end)
+
+    it("is pin-free: node from PATH, no requires on the toolchain path probe", function()
+        toolchain.set({ pm = "pnpm@9" })
+        toolchain.seals()
+        local opts = stub.probe_opts("pnpm:host")
+        assert.is_nil(opts.inputs.requires)
+        assert.same({ "node" }, opts.inputs.tools)
+    end)
+
+    it("registers once across minting calls", function()
+        toolchain.seals()
+        assert.same({ "pnpm:toolchain:auto:identity", "pnpm:host" }, toolchain.seals())
+    end)
+
+    it("refuses an answer that is not a known <platform>-<arch>[-libc]", function()
+        toolchain.seals()
+        for _, bad in ipairs({ "", "node: bad option\n", "linux-x64\n",
+                               "linux-x64-uclibc\n", "darwin-arm64-gnu\n" }) do
+            assert.error_matches(function() observe(bad) end, "could not read the host")
         end
     end)
 
-    it("refuses an answer that is not <platform>-<arch>", function()
+    it("lets a node crash through, with what node said", function()
         toolchain.seals()
-        assert.error_matches(function() observe("") end, "could not read the host")
-        assert.error_matches(function() observe("node: bad option\n") end,
-            "could not read the host")
+        assert.error_matches(function()
+            observe(function() error("node exited 1: TypeError: getReport is not a function") end)
+        end, "getReport is not a function")
     end)
 end)

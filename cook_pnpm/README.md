@@ -359,7 +359,7 @@ that created it.
 |---|---|---|
 | `pnpm:toolchain:<pin>` | Resolve absolute paths to node + pnpm | Pin string |
 | `pnpm:install:<hash>` | `pnpm install --frozen-lockfile` once | pnpm-lock.yaml content hash |
-| `pnpm:host` | node's `<platform>-<arch>` (e.g. `linux-x64`) | — |
+| `pnpm:host` | node's `<platform>-<arch>`, `-gnu`/`-musl` on linux (e.g. `linux-x64-gnu`, `darwin-arm64`) | — |
 | `pnpm:find:<tool>` | Locate a JS dev tool (node_modules/.bin → PATH) | Tool name |
 
 Build units fold both workspace probes, by different dispositions per
@@ -373,12 +373,16 @@ descendants.
 
 Every minted unit — builds, checks, install, run — also seals the
 toolchain identity (node + pnpm versions) and **`pnpm:host`**, node's
-`<platform>-<arch>`: the axis pnpm picks native optional deps on
-(esbuild, oxlint). Cook infers no machine identity, so without it a
-store shared by linux and macOS runners would serve one OS's artifacts
-and verdicts to the other. Same-host machines still share. A
-hand-written unit that runs node over the installed tree can opt in with
-`seal pnpm:host`.
+`<platform>-<arch>` with `-gnu` or `-musl` appended on linux: the axes
+pnpm picks native optional deps on (esbuild, oxlint). Cook infers no
+machine identity, so without it a store shared by linux and macOS
+runners — or glibc and musl ones — would serve one host's artifacts and
+verdicts to the other. Same-host machines still share. A hand-written
+unit that runs node over the installed tree can opt in with
+`seal pnpm:host`, provided the Cookfile makes a minting call
+(`cook_pnpm.workspace`, `task`, `run` or `install`): that call registers
+the probe, and `use cook_pnpm` alone does not, since a module's `init()`
+also runs on execute-phase VMs where `cook.probe` is refused.
 
 ## Surface reference
 
