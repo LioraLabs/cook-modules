@@ -23,6 +23,13 @@ cook_cc = "^0.1"
 
 Then `cook modules install`.
 
+**Requires cook ≥ 0.18.0.** Compile and link units seal the host probe
+below; under an older cook a Cookfile with no top-level `toolchain()`
+registers that probe inside a recipe body, where the seals of other recipes
+key on nothing (fixed by CS-0257, first released in cook v0.18.0), so one
+host can be served another host's objects. cook exposes no version for the
+module to check, so this floor is not enforced.
+
 ## Use
 
 ```
@@ -53,6 +60,14 @@ depend on. Because the finalizer snapshots the whole registered-target
 set rather than walking a dependency graph, the database is complete by
 construction, including a target in no `links` closure at all (a
 dlopen'd plugin, say).
+
+Compile and link units seal `cc:host:<override-or-auto>`, the chosen
+compiler's `-dumpmachine` (one token such as `avr`, or a dash-separated
+triple; anything else fails the unit), so two targets never share an
+artifact. A
+hand-written unit seals the key matching the compiler (`cc:host:auto`
+without an override, `cc:host:<override>` with one), and the Cookfile must
+also make a cook_cc call that registers it (`toolchain()` or a target maker).
 
 ## Project-management verbs
 
