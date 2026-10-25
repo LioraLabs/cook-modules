@@ -42,9 +42,16 @@ state, excluded from project inputs and build artifacts.
 Builds restore explicitly, then compile with `--no-restore`. When a project has
 `packages.lock.json`, restore uses `--use-lock-file --locked-mode`; without a lockfile,
 restore is unlocked. Commit lockfiles appropriate to each evaluated configuration;
-a changed dependency graph must update its lockfile before locked restore can pass. The sealed toolchain
-probe carries the chosen SDK, canonical `dotnet` identity, and paired reference-pack
-versions without sealing a machine path. The Web-SDK-only ref-pack workaround is
+a changed dependency graph must update its lockfile before locked restore can pass.
+The sealed toolchain probe carries the chosen SDK, canonical `dotnet` identity, and
+paired reference-pack versions without sealing a machine path. Every unit and
+materializer also seals `dotnet:host`, the SDK's runtime identifier from
+`dotnet --info` (`linux-x64`, `linux-musl-x64`, `osx-arm64`, `win-x64`), so a store
+shared across machines never serves one platform's restore or build to another.
+Source-built SDKs report a distro RID such as `arch-x64`; those key apart from
+Microsoft-built SDKs on the same platform. The RID is taken as reported, checked only
+for shape (an OS segment, then one or more dash-separated lowercase segments); output
+without such a RID fails the probe. The Web-SDK-only ref-pack workaround is
 applied from MSBuild's evaluated `UsingMicrosoftNETSdkWeb` property.
 
 ## Project graph
