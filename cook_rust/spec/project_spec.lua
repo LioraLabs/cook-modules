@@ -29,6 +29,7 @@ local function load_module()
     stub.command("command -v 'cargo'", "/path/bin/cargo\n")
     stub.command("command -v 'rustc'", "/path/bin/rustc\n")
     stub.command("'/path/bin/rustc' --print sysroot", "/toolchains/stable\n")
+    stub.command("'/path/bin/rustc' -vV", "rustc 1.80.0\nhost: x86_64-unknown-linux-gnu\n")
     stub.resolved({ "app/src/lib.rs", ".cargo/config.toml", "Cargo.lock" })
     return require("cook_rust")
 end
@@ -61,6 +62,7 @@ local function relocated_value(root, config_name)
     stub.command("command -v 'cargo'", "/path/bin/cargo\n")
     stub.command("command -v 'rustc'", "/path/bin/rustc\n")
     stub.command("'/path/bin/rustc' --print sysroot", "/toolchains/stable\n")
+    stub.command("'/path/bin/rustc' -vV", "rustc 1.80.0\nhost: x86_64-unknown-linux-gnu\n")
     stub.resolved({ root .. "/app/src/lib.rs", external .. "/src/lib.rs",
         root .. "/.cargo/" .. config_name })
     require("cook_rust").project(root .. "/app/Cargo.toml")
@@ -116,6 +118,7 @@ describe("cook_rust.project", function()
         stub.command("test -x '/work/tools/cache wrapper'", "")
         stub.command("command -v 'workspace-wrapper'", "/path/bin/workspace-wrapper\n")
         stub.command("'/work/tools/rust compiler' --print sysroot", "/toolchains/stable\n")
+        stub.command("'/work/tools/rust compiler' -vV", "rustc 1.80.0\nhost: x86_64-unknown-linux-gnu\n")
         with_env({
             RUSTC = "tools/rust compiler",
             RUSTC_WRAPPER = "tools/cache wrapper",

@@ -24,6 +24,8 @@ function M.reset()
             if probes[key] then error("duplicate probe " .. key) end
             probes[key] = opts
         end,
+        -- A sealed probe's value, observed as the engine would: run its produce.
+        probes = { get = function(key) return assert(load(probes[key].produce))() end },
     }
 end
 
